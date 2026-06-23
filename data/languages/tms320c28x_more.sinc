@@ -363,6 +363,9 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
     ACC = ACC + b;
     setNZ32(ACC);
 }
+# MOVH loc16, ACC<<1   1011 0011 LLLL LLLL  -- store high word of (ACC<<1) to loc16.
+# dis2000-confirmed (DIR image, op_hi8=0xB3). loc16 = bits 16..31 of (ACC<<1).
+:MOVH loc16, "ACC<<1"  is op_hi8=0xB3 & loc16  { local v:4 = ACC << 1; loc16 = v(2); }
 # MOVH loc16, P     0101 0111 LLLL LLLL  -- store high 16 bits of P to loc16.
 # Also MISSING — the next truncation in CAN_postRxEvent (word 0x5703 = MOVH @3,P, in an
 # RPT/PREAD block-copy idiom). [loc16] = (P << PM) >> 16; PM (product-shift) not tracked
@@ -462,6 +465,13 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 }
 # NOT AX   1111 1111 0101 111A  (complement AL/AH; A=bit0).
 :NOT AXb0  is op_hi8=0xFF & op_lo71=0b0101111 & AXb0  { AXb0 = ~AXb0; setNZ16(AXb0); }
+# NEG AX   1111 1111 0101 110A  (negate AL/AH; A=bit0). dis2000-confirmed (DIR image).
+:NEG AXb0  is op_hi8=0xFF & op_lo71=0b0101110 & AXb0  {
+    $(C) = (AXb0 == 0);  # carry set only when result is 0 (per SPRU430F)
+    $(V) = (AXb0 == 0x8000);
+    AXb0 = -AXb0;
+    setNZ16(AXb0);
+}
 
 # =============================================================================
 # Batch 13: remaining firmware tail (each 33-72 sites; verified vs SPRU430F).

@@ -72,6 +72,14 @@ rel8dest:  reloc  is simm8   [ reloc = inst_start + simm8;  ] { export *[ram]:4 
     if (CC8) goto rel8dest;
 }
 
+# SBF 8bitOffset,EQ/NEQ/TC/NTC   1110 11SS CCCC CCCC  (Short Branch Fast, single word;
+# 8-bit signed word offset in the low byte). Four fixed condition encodings — EQ=0xEC
+# NEQ=0xED TC=0xEE NTC=0xEF. dis2000-confirmed (op_hi8=0xEE present in the DIR image).
+:SBF rel8dest,"EQ"   is op_hi8=0xEC & rel8dest & simm8  { if ($(Z) != 0)  goto rel8dest; }
+:SBF rel8dest,"NEQ"  is op_hi8=0xED & rel8dest & simm8  { if ($(Z) == 0)  goto rel8dest; }
+:SBF rel8dest,"TC"   is op_hi8=0xEE & rel8dest & simm8  { if ($(TC) != 0) goto rel8dest; }
+:SBF rel8dest,"NTC"  is op_hi8=0xEF & rel8dest & simm8  { if ($(TC) == 0) goto rel8dest; }
+
 # BANZ 16bitOffset,ARn--   0000 0000 0000 1nnn : CCCC CCCC CCCC CCCC
 # Branch if AR(n) != 0, then post-decrement AR(n).  Bits 7..3 of low byte = 00001.
 :BANZ rel16dest,banz_n^"--"  is op_hi8=0x00 & op_lo_hi5=0b00001 & banz_n; simm16 & rel16dest {
