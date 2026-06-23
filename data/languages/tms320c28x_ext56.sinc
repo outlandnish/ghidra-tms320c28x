@@ -44,6 +44,12 @@
     local sh:4 = zext(shft_hi4:1);
     ACC = sext(loc16) << sh;
 }
+# ADD ACC,loc16<<#1..15   word1=0x5604 ; word2 = 0000 SHFT LLLL LLLL  (2-word; same
+# layout as MOV ACC,loc16<<# above). dis2000-confirmed (RWD image, word 0x5604).
+:ADD ACCreg, loc16^"<<#"^shft_hi4  is op16=0x5604 ; shft_hi4 & loc16 & ACCreg {
+    local sh:4 = zext(shft_hi4:1);
+    ACC = ACC + (sext(loc16) << sh);
+}
 # ADDUL ACC,loc32    0x5653  (add unsigned 32)
 :ADDUL ACCreg, loc32 is op16=0x5653 ; loc32 & ACCreg  { ACC = ACC + loc32; }
 # SUBUL ACC,loc32    0x5655
@@ -190,16 +196,23 @@
 # sweep. word1 = 0x56<sub>; loc16/loc32 (when present) is in word2's low byte.
 # =============================================================================
 # MIN AX,loc16  0101 0110 0111 010A : 0000 0000 LLLL LLLL  (load smaller of AX,[loc16]).
-# 13 sites — the top remaining gap. MAX is the 000A sibling. A=bit0 (AL/AH), so match
-# the high 15 bits (op_hi8 + op_lo71) and let AXb0 pick the register.
+# MAX AX,loc16  0101 0110 0111 001A : 0000 0000 LLLL LLLL  (load larger). A=bit0 (AL/AH),
+# so match the high 15 bits (op_hi8 + op_lo71) and let AXb0 pick the register.
+# NOTE: MAX is 0111 001A (op_lo71=0b0111001), NOT 000A — the manual's opcode wraps two
+# lines (0101 0110 0111 / 001A 0000...) and reads as one 16-bit LSW. dis2000-confirmed
+# (0x5673 = MAX AH); the earlier 0b0111000 was wrong and left 0x5672/0x5673 undecoded.
 :MIN AXb0, loc16  is op_hi8=0x56 & op_lo71=0b0111010 & AXb0 ; loc16  {
     if (AXb0 s<= loc16) goto inst_next;
     AXb0 = loc16;
 }
-:MAX AXb0, loc16  is op_hi8=0x56 & op_lo71=0b0111000 & AXb0 ; loc16  {
+:MAX AXb0, loc16  is op_hi8=0x56 & op_lo71=0b0111001 & AXb0 ; loc16  {
     if (AXb0 s>= loc16) goto inst_next;
     AXb0 = loc16;
 }
+# FLIP AX  0101 0110 0111 000A  (bit-reverse AL/AH). dis2000-confirmed (0x5670/0x5671 —
+# previously MIS-DECODED as the 2-word MAX, which consumed an extra word and skewed flow).
+# No SLEIGH bit-reverse primitive; model opaque (write AX so dataflow continues). 1-word.
+:FLIP AXb0  is op_hi8=0x56 & op_lo71=0b0111000 & AXb0  { AXb0 = AXb0; }
 # CSB ACC  0101 0110 0011 0101  (count sign bits: T = leading-sign-bit count - 1).
 # Modeled opaque (no SLEIGH clz); write T so dataflow continues.
 :CSB "ACC"  is op16=0x5635  { T = T; }
