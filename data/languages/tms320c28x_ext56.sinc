@@ -118,11 +118,13 @@
 }
 
 # MOVB loc16,#8bit,COND  0101 0110 1011 COND : CCCC CCCC LLLL LLLL  (2-word).
-# COND is in word1's low nibble (cond4); word2 = 8-bit const (high byte) + loc16
-# (low byte). Decode-only conditional byte store; render COND + loc16.
-:MOVB loc16, "#8bit", CC  is op_hi8=0x56 & loc_hi4=0b1011 & cond4 & CC ; loc16 {
+# COND is in word1's low nibble (cond4); word2 = 8-bit const (high byte, imm8_hi) +
+# loc16 (low byte). Conditional byte store: if (COND) [loc16] = 0:8bit. Previously the
+# immediate wasn't decoded (rendered literal "#8bit") and the store was never emitted.
+:MOVB loc16, "#"imm8_hi, CC  is op_hi8=0x56 & loc_hi4=0b1011 & cond4 & CC ; loc16 & imm8_hi {
     local take:1 = CC;
     if (take == 0) goto inst_next;
+    loc16 = zext(imm8_hi:1);
 }
 
 # =============================================================================

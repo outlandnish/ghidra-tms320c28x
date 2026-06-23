@@ -147,6 +147,9 @@
 # =============================================================================
 # OR loc16, AX     1001 100A LLLL LLLL  (A bit -> AL/AH)
 :OR loc16, AX     is op_hi7=0x4C & loc16 & AX  { loc16 = loc16 | AX; }
+# AND loc16, AX    1100 000A LLLL LLLL  (store-side AND: [loc16] &= AX). Was MISSING —
+# the truncation point in CAN_rxDispatch (0x9595c = 0xC092). N/Z set per SPRU430F.
+:AND loc16, AX    is op_hi7=0x60 & loc16 & AX  { loc16 = loc16 & AX; setNZ16(loc16); }
 # ANDB AX, #8bit   1001 000A CCCC CCCC
 :ANDB AX, "#"imm8  is op_hi7=0x48 & AX & imm8  { AX = AX & zext(imm8:1); }
 # PUSH loc16       0010 0010 LLLL LLLL  (push 16-bit value: *SP++ = loc16)
