@@ -1,0 +1,8 @@
+# Absolute 22-bit call/branch targets (LCR/LB/LC/FFC). Proves the target is the
+# absolute address built from word1[5:0]<<16 | word2 — NOT pc-relative, and NOT
+# masked by the all-zero relocation fields in unlinked rts .obj test bins.
+# Format: wordaddr <tab> bytes <tab> expected mnemonic+operands
+0x0	41764523	LCR 0x12345
+0x2	42005634	LB 0x23456
+0x4	83006745	LC 0x34567
+0x6	c4005645	FFC 0x44556
