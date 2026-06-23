@@ -25,7 +25,9 @@ define token instr16 (16)
     loc_areg  = (0,2)       # XARn selector (AAA) -> attached to XAR0..XAR7
     loc_areg16= (0,2)       # same bits, attached to AR0..AR7 (16-bit @ARn mode)
     loc_off6  = (0,5)       # 6-bit offset (@6bit, *-SP[6bit])
-    loc_imm3  = (0,2)       # 3-bit index (*+XARn[3bit])
+    loc_imm3  = (3,5)       # 3-bit index III in *+XARn[3bit] (1 1 III AAA) — NOT bits
+                            # 0-2 (those are the XARn selector AAA); was a real bug:
+                            # the index always mis-printed as the register number.
     loc_full8 = (0,7)       # whole loc field (fixed encodings)
     # operand sub-fields that share the opcode word:
     ax_bit    = (8,8)       # 0 = AL, 1 = AH  (the 'A' bit in 1001 xxxA ....)
