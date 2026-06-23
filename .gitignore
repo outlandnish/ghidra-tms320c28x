@@ -10,14 +10,9 @@ dist/
 # Scratch reference extraction (full instruction detail is large; regenerate from PDF)
 docs/c28x/ch6_instruction_detail.txt
 
-# Extracted firmware images (large, derived from the signed bundle via bhx.py)
-firmware/**/*.bin
-
-
-# Large derived dis2000/sleigh dumps + the COFF wrapper (regenerable)
-firmware/**/*.dis2000.txt
-firmware/**/*.sleigh.txt
-firmware/**/*.out
+# Firmware images + all derived dumps (large, regenerable from the signed bundle via
+# bhx.py / dis2000 / sleigh). Blanket-ignore the whole dir — nothing in it is source.
+firmware/
 
 # Large extracted reference chapters (regenerate from spruhs1c/spru430f PDFs)
 docs/c28x/vcu2_instructions.txt
