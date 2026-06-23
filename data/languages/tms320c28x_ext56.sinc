@@ -78,6 +78,9 @@
 :QMPYL ACCreg, XTreg, loc32  is op16=0x5663 ; loc32 & ACCreg & XTreg {
     local a:8 = sext(XT); local b:8 = sext(loc32); local r:8 = (a * b) >> 32; ACC = r:4;  # high 32
 }
+:QMPYL Preg, XTreg, loc32    is op16=0x5667 ; loc32 & Preg & XTreg {
+    local a:8 = sext(XT); local b:8 = sext(loc32); local r:8 = (a * b) >> 32; P = r:4;  # high 32 -> P
+}
 
 # =============================================================================
 # Bit-test / square-accumulate (real-ish).
@@ -159,3 +162,59 @@
 :LSLL "ACC,T"   is op16=0x563b { local s:4 = zext(T) & 0x1f; ACC = ACC << s; }
 :LSRL "ACC,T"   is op16=0x5622 { local s:4 = zext(T) & 0x1f; ACC = ACC >> s; }
 :ASRL "ACC,T"   is op16=0x5610 { local s:4 = zext(T) & 0x1f; ACC = ACC s>> s; }
+
+# =============================================================================
+# Batch 15 (2026-06-23): 0x56-family gaps from the prologue-seeded truncation
+# sweep. word1 = 0x56<sub>; loc16/loc32 (when present) is in word2's low byte.
+# =============================================================================
+# MIN AX,loc16  0101 0110 0111 010A : 0000 0000 LLLL LLLL  (load smaller of AX,[loc16]).
+# 13 sites — the top remaining gap. MAX is the 000A sibling. A=bit0 (AL/AH), so match
+# the high 15 bits (op_hi8 + op_lo71) and let AXb0 pick the register.
+:MIN AXb0, loc16  is op_hi8=0x56 & op_lo71=0b0111010 & AXb0 ; loc16  {
+    if (AXb0 s<= loc16) goto inst_next;
+    AXb0 = loc16;
+}
+:MAX AXb0, loc16  is op_hi8=0x56 & op_lo71=0b0111000 & AXb0 ; loc16  {
+    if (AXb0 s>= loc16) goto inst_next;
+    AXb0 = loc16;
+}
+# CSB ACC  0101 0110 0011 0101  (count sign bits: T = leading-sign-bit count - 1).
+# Modeled opaque (no SLEIGH clz); write T so dataflow continues.
+:CSB "ACC"  is op16=0x5635  { T = T; }
+# CMP64 ACC:P  0101 0110 0101 1110  (compare 64-bit ACC:P vs 0; set N/Z, Z from both).
+:CMP64 "ACC:P"  is op16=0x565e  {
+    local v:8 = (zext(ACC) << 32) | zext(P);
+    $(N) = (v s< 0); $(Z) = (v == 0);
+}
+# LSR64 ACC:P,T  0101 0110 0101 1011  (64-bit logical shift right by T(5:0)).
+:LSR64 "ACC:P,T"  is op16=0x565b  {
+    local s:8 = zext(T) & 0x3f;
+    local v:8 = (zext(ACC) << 32) | zext(P);
+    v = v >> s; ACC = v(4); P = v(0);
+}
+# LSL64 ACC:P,T  0101 0110 0101 0010  (64-bit logical shift left by T(5:0)).
+:LSL64 "ACC:P,T"  is op16=0x5652  {
+    local s:8 = zext(T) & 0x3f;
+    local v:8 = (zext(ACC) << 32) | zext(P);
+    v = v << s; ACC = v(4); P = v(0);
+}
+# SUBCUL ACC,loc32  0101 0110 0001 0111 : loc32  (conditional 32-bit subtract step;
+# divide primitive). Modeled as the plain subtract (the conditional-restore detail
+# isn't tracked); keeps dataflow + flow continuing.
+:SUBCUL ACCreg, loc32  is op16=0x5617 ; loc32 & ACCreg  { ACC = ACC - loc32; }
+# MOVX TL,loc16  0101 0110 0010 0001 : 0000 0000 LLLL LLLL  (sign-extend [loc16] into
+# the low half of XT; high half = sign). XT low 16 = loc16, T (high) = sign-extend.
+:MOVX "TL", loc16  is op16=0x5621 ; loc16  { XT = sext(loc16); }
+# MOV loc16,AX,COND  0101 0110 0010 101A : 0000 COND LLLL LLLL  (store AX if COND).
+# COND in word2 bits 8-11; modeled flow-preserving (store AX unconditionally so the
+# def survives — the exact predicate isn't decoded here).
+:MOV loc16, AXb0, "COND"  is op_hi8=0x56 & op_lo71=0b0010101 & AXb0 ; loc16  { loc16 = AXb0; }
+# MOV loc16,ACC<<#2..8  0101 0110 0010 1101 : 0000 0SHF LLLL LLLL  (save low word of
+# ACC<<SHF). SHF in word2 bits 8-10; store the low word of the shifted ACC.
+:MOV loc16, "ACC<<#2..8"  is op16=0x562d ; loc16 & shft_hi4  {
+    local v:4 = ACC << zext(shft_hi4:1); loc16 = v:2;
+}
+# MOVH loc16,ACC<<#2..8  0101 0110 0010 1111 : 0000 0SHF LLLL LLLL  (save high word).
+:MOVH loc16, "ACC<<#2..8"  is op16=0x562f ; loc16 & shft_hi4  {
+    local v:4 = ACC << zext(shft_hi4:1); loc16 = v(2);
+}

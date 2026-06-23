@@ -66,6 +66,9 @@ define token instr16 (16)
     p_re_hi   = (0,0)       # e    high bit of ReH for that parallel form
     rptb_sel  = (7,7)       # RPTB form select (LSW 1011 0101 Rbbb bbbb): 0=loc16, 1=#RC
     rptb_rsz  = (0,6)       # RPTB block size RSIZE (low 7 bits of the LSW)
+    norm_pm   = (3,3)       # NORM ACC,XARn: bit3 selects ++ (1) vs -- (0)
+    setflg_m6 = (0,5)       # SETFLG FPU flag-mask low 6 bits (LSW 1110 0110 00FF FFFF)
+    lo_b76    = (6,7)        # top 2 bits of the low byte (SETFLG selector: 00)
 ;
 
 # --- trailing 16-bit immediate / extension word -------------------------------
@@ -89,6 +92,10 @@ define token imm16w (16)
 :EDIS           is op16=0x761A  { $(EALLOWF) = 0; } # Disable write access to protected space
 :IDLE           is op16=0x7621  { }                 # Put processor in idle mode
 :ESTOP0         is op16=0x7625  { }                 # Emulation stop 0
+# Stack-pointer align/unalign (common in prologues/epilogues). ASP: if SP odd, SP++ and
+# set SPA; NASP: if SPA, SP-- and clear SPA. SPA = ST1[4]. (0x761b / 0x7617.)
+:ASP            is op16=0x761B  { if ((SP & 1) == 0) goto <even>; SP = SP + 1; $(SPA) = 1; goto inst_next; <even> $(SPA) = 0; }
+:NASP           is op16=0x7617  { if ($(SPA) == 0) goto inst_next; SP = SP - 1; $(SPA) = 0; }
 :ESTOP1         is op16=0x7624  { }                 # Emulation stop 1 (halts only when emulator connected)
 
 # IER/IFR immediate forms (2-word: opcode word + imm16).  SPRU430F encodings:

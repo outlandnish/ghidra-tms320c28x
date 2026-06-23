@@ -73,6 +73,7 @@ macro setFloatFlags(a, b) {
 :I32TOF32 f_ra, f_rb   is op16=0xE689; f_rb & f_ra & f_msw_hi=0 { f_ra = int2float(f_rb); }
 :UI32TOF32 f_ra, f_rb  is op16=0xE68B; f_rb & f_ra & f_msw_hi=0 { f_ra = int2float(f_rb); }
 :I16TOF32 f_ra, f_rb   is op16=0xE68D; f_rb & f_ra & f_msw_hi=0 { local v:2 = f_rb:2; f_ra = int2float(v); }
+:F32TOUI16 f_ra, f_rb  is op16=0xE68E; f_rb & f_ra & f_msw_hi=0 { local v:2 = trunc(f_rb); f_ra = zext(v); }  # float -> uint16 (truncate)
 :UI16TOF32 f_ra, f_rb  is op16=0xE68F; f_rb & f_ra & f_msw_hi=0 { local v:2 = f_rb:2; f_ra = int2float(v); }
 
 # =============================================================================
@@ -83,6 +84,12 @@ macro setFloatFlags(a, b) {
 :POP "RB"    is op16=0xFFF1 { SP = SP - 2; local a:4 = zext(SP); RB = *[ram]:4 a; }
 :RESTORE     is op16=0xE562 { }   # restores saved FP regs from stack frame — no-op stub
 :ZEROA       is op16=0xE563 { R0H=0; R1H=0; R2H=0; R3H=0; R4H=0; R5H=0; R6H=0; R7H=0; }
+
+# SETFLG FLAG,VALUE   LSW: 1110 0110 00FF FFFF ; MSW: FFFFF VVV VVVV VVVV  (2-word).
+# Set/clear selected FPU status flags per an 11-bit mask/value pair. The exact per-flag
+# scatter into STF isn't modeled; touch STF so the op emits non-empty p-code and flow
+# continues (7 sites — the dominant remaining FPU gap, e.g. word 0xe630).
+:SETFLG "#"setflg_m6  is op_hi8=0xE6 & lo_b76=0 & setflg_m6 ; imm16  { STF = STF; }
 
 # RPTB label, loc16 / #RC   LSW: 1011 0101 Rbbb bbbb ; MSW: (0000 0000 loc16) or (imm16).
 # Block-repeat (hardware loop over the following RSIZE words). The loop itself can't be
@@ -252,3 +259,7 @@ attach variables [ p_rf ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 :SUBF32 p_rd, "||MOV32"  is op_hi8=0xE3 & loc_hi4=0b0010 ; p_rd { p_rd = p_rd; }
 #   MACF32 R3H,R2H,RdH,ReH,RfH || MOV32 RaH,mem32  LSW: 1110 0011 0011 fffe
 :MACF32 p_rd, "||MOV32"  is op_hi8=0xE3 & loc_hi4=0b0011 ; p_rd { p_rd = p_rd; }
+#   MPYF32 RdH,RaH,RbH || ADDF32 R3H,R3H,R2H  LSW: 1110 0111 0100 00ff ; MSW reg fields.
+#   Parallel multiply-add alias (confirmed via dis2000, word 0xe741). Flow-preserving
+#   (the MPYF32 dest p_rd is in the MSW; touch it so dataflow + flow continue).
+:MPYF32 p_rd, "||ADDF32"  is op_hi8=0xE7 & loc_hi4=0b0100 ; p_rd { p_rd = p_rd; }

@@ -85,6 +85,7 @@ define register offset=0xC8 size=4 [ VT0 VT1 VSTATUS VCRC ];
 @define DBGM   "ST1[1,1]"   # debug enable mask
 @define PAGE0  "ST1[2,1]"   # PAGE0 addressing mode
 @define VMAP   "ST1[3,1]"   # vector map
+@define SPA    "ST1[4,1]"   # stack-pointer alignment bit (ASP/NASP)
 @define EALLOWF "ST1[6,1]"  # emulation/write-protect access enable (EALLOW/EDIS)
 
 # =============================================================================

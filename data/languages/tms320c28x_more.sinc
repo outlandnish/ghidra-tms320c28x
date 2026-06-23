@@ -318,6 +318,23 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 # TEST ACC   1111 1111 0101 1000  (set Z/N from ACC; decode-only flags)
 :TEST "ACC"  is op16=0xFF58 { $(Z) = (ACC == 0); $(N) = (ACC s< 0); }
 
+# SAT ACC   1111 1111 0101 0111  (saturate ACC per OVC; modeled flow-preserving —
+# the OVC-driven clamp isn't tracked, so write ACC so dataflow continues).
+:SAT "ACC"  is op16=0xFF57 { ACC = ACC; }
+
+# ROL ACC   1111 1111 0101 0011  (rotate ACC left through carry: C<-b31, b0<-C).
+:ROL "ACC"  is op16=0xFF53 {
+    local oldc:4 = zext($(C));
+    $(C) = ((ACC >> 31) & 1) != 0;
+    ACC = (ACC << 1) | oldc;
+    setNZ32(ACC);
+}
+# NORM ACC,XARn++/--   1111 1111 0111 Xnnn  (normalize ACC, post-inc/dec XARn; X=bit3
+# selects ++/--, nnn=ARn via loc_areg). The normalize-shift isn't tracked; model the AR
+# post-modify and write ACC so dataflow + flow continue. Was the truncation behind 0xff77.
+:NORM "ACC,"loc_areg^"++"  is op_hi8=0xFF & op_lo765=0b011 & norm_pm=1 & loc_areg { ACC = ACC; loc_areg = loc_areg + 1; }
+:NORM "ACC,"loc_areg^"--"  is op_hi8=0xFF & op_lo765=0b011 & norm_pm=0 & loc_areg { ACC = ACC; loc_areg = loc_areg + (-1); }
+
 # =============================================================================
 # Batch 9: final rts-validation gaps — MOV ACC,#16bit<<#shift, CMPB AX,#8bit.
 # =============================================================================
@@ -459,6 +476,15 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
     ACC = ACC + b;
     setNZ32(ACC);
 }
+# SUB ACC, loc16 <<#0   1010 1110 LLLL LLLL  (single word; SUB counterpart of the
+# 0x81 ADD base form). Was the truncation behind word 0xae3e.
+:SUB ACCreg, loc16  is op_hi8=0xAE & ACCreg & loc16 {
+    local b:4 = sext(loc16);
+    $(C) = !(ACC < b);
+    $(V) = sborrow(ACC, b);
+    ACC = ACC - b;
+    setNZ32(ACC);
+}
 # ADD ACC, loc16 <<#16   0000 0101 LLLL LLLL  (single word; add loc<<16 to ACC).
 :ADD ACCreg, loc16^"<<#16"  is op_hi8=0x05 & ACCreg & loc16 {
     local v:4 = zext(loc16) << 16; ACC = ACC + v;
@@ -474,6 +500,15 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 }
 # SUB loc16, AX   0111 010A LLLL LLLL  (reverse-subtract: loc16 = AX - loc16).
 :SUB loc16, AX  is op_hi7=0x3A & loc16 & AX  { loc16 = AX - loc16; }
+# SUBR loc16, AX  1110 101A LLLL LLLL  (reverse-subtract store: [loc16] = AX - [loc16]).
+# Confirmed via dis2000 (word 0xeaa8) — the binary-pattern grep missed it. C/V/N/Z.
+:SUBR loc16, AX  is op_hi7=0x75 & loc16 & AX  {
+    local m:2 = loc16;
+    $(C) = !(AX < m);
+    $(V) = sborrow(AX, m);
+    loc16 = AX - m;
+    setNZ16(loc16);
+}
 # ADD loc16, AX   0111 001A LLLL LLLL  (store-side add: [loc16] = [loc16] + AX). Was
 # MISSING — truncation in FUN_000900f8 (word 0x72a6 = ADD *+XAR2[AR0],AL). C/V/N/Z.
 :ADD loc16, AX  is op_hi7=0x39 & loc16 & AX  {
