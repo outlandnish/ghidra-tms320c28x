@@ -33,3 +33,4 @@ docs/PICKUP-PLAN.md
 # (firmware functions, ECU names) — keep private, same as PICKUP-PLAN.md above.
 docs/PCODE-GAPS.md
 docs/PCODE-GAPS-PICKUP.md
+docs/FPU-PCODE-SPEC.md
