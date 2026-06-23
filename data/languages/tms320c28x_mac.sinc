@@ -16,6 +16,38 @@
     P = a * b;
 }
 
+# MPY ACC,T,loc16   0001 0010 LLLL LLLL   -- ACC = T * loc16  (signed 16x16->32)
+:MPY ACCreg, Treg, loc16  is op_hi8=0x12 & ACCreg & Treg & loc16  {
+    local a:4 = sext(T);
+    local b:4 = sext(loc16);
+    ACC = a * b;
+}
+
+# MPYS P,T,loc16    0001 0011 LLLL LLLL   -- ACC -= P<<PM (PM=0 modeled); then P = T*loc16
+:MPYS Preg, Treg, loc16  is op_hi8=0x13 & Preg & Treg & loc16  {
+    ACC = ACC - P;
+    local a:4 = sext(T);
+    local b:4 = sext(loc16);
+    P = a * b;
+}
+
+# MPY ACC,loc16,#16bit  0011 0100 LLLL LLLL : iiii iiii iiii iiii  (2-word)
+# T = [loc16]; ACC = signed T * signed #16bit.
+:MPY ACCreg, loc16, "#"imm16  is op_hi8=0x34 & ACCreg & loc16 ; imm16  {
+    T = loc16;
+    local tv:2 = T;
+    local iv:2 = imm16;
+    local a:4 = sext(tv);
+    local b:4 = sext(iv);
+    ACC = a * b;
+}
+
+# MOVS T,loc16      0001 0001 LLLL LLLL   -- T = [loc16]; ACC -= P<<PM (PM=0 modeled)
+:MOVS Treg, loc16  is op_hi8=0x11 & Treg & loc16  {
+    ACC = ACC - P;
+    T = loc16;
+}
+
 # MPYU P,T,loc16    0011 0111 LLLL LLLL   -- P = T * loc16  (unsigned)
 :MPYU Preg, Treg, loc16  is op_hi8=0x37 & Preg & Treg & loc16  {
     local a:4 = zext(T);

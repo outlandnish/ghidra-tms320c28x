@@ -349,8 +349,25 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 # RPT/PREAD block-copy idiom). [loc16] = (P << PM) >> 16; PM (product-shift) not tracked
 # in decode, so model the common PM=0 case: store the high word PH.
 :MOVH loc16, "P"  is op_hi8=0x57 & loc16  { loc16 = PH; }
+# MOV loc16, P      0011 1111 LLLL LLLL  -- store low 16 bits of P (PM=0 modeled) to loc16.
+:MOV loc16, "P"   is op_hi8=0x3F & loc16  { loc16 = PL; }
 # MOVU ACC, loc16   0000 1110 LLLL LLLL  -- load ACC with zero-extended 16-bit word.
 :MOVU ACCreg, loc16  is op_hi8=0x0E & ACCreg & loc16  { ACC = zext(loc16); setNZ32(ACC); }
+# ADDCU ACC, loc16  0000 1100 LLLL LLLL  -- ACC = ACC + 0:[loc16] + C  (add unsigned w/ carry)
+:ADDCU ACCreg, loc16  is op_hi8=0x0C & ACCreg & loc16  {
+    local b:4 = zext(loc16);
+    local cin:4 = zext($(C));
+    $(C) = carry(ACC, b);          # approx: carry from the loc16 add (ignores the +C ripple)
+    ACC = ACC + b + cin;
+    setNZ32(ACC);
+}
+# SBBU ACC, loc16   0001 1101 LLLL LLLL  -- ACC = ACC - 0:[loc16] - ~C  (subtract unsigned w/ borrow)
+:SBBU ACCreg, loc16  is op_hi8=0x1D & ACCreg & loc16  {
+    local b:4 = zext(loc16);
+    local nborrow:4 = zext($(C) == 0);   # ~C as 0/1
+    ACC = ACC - b - nborrow;
+    setNZ32(ACC);
+}
 
 # CLRC mode   0010 1001 CCCC CCCC  -- clear status bits per 8-bit mask (counterpart
 # to SETC mode / 0x3B). Named single-bit forms + general mask. EINT = CLRC INTM.
@@ -433,3 +450,12 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 }
 # SUB loc16, AX   0111 010A LLLL LLLL  (reverse-subtract: loc16 = AX - loc16).
 :SUB loc16, AX  is op_hi7=0x3A & loc16 & AX  { loc16 = AX - loc16; }
+# ADD loc16, AX   0111 001A LLLL LLLL  (store-side add: [loc16] = [loc16] + AX). Was
+# MISSING — truncation in FUN_000900f8 (word 0x72a6 = ADD *+XAR2[AR0],AL). C/V/N/Z.
+:ADD loc16, AX  is op_hi7=0x39 & loc16 & AX  {
+    local m:2 = loc16;
+    $(C) = carry(m, AX);
+    $(V) = scarry(m, AX);
+    loc16 = m + AX;
+    setNZ16(loc16);
+}
