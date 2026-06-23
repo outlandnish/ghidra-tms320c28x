@@ -87,9 +87,11 @@ define token imm16w (16)
 :IDLE           is op16=0x7621  { }                 # Put processor in idle mode
 :ESTOP0         is op16=0x7625  { }                 # Emulation stop 0
 
-# NOP with optional indirect modify: 0111 0111 LLLL LLLL.
-# Skeleton form shows only the plain (no-modify) case where the loc field is 0.
-:NOP            is op_hi8=0x77 & op_lo8=0x00  { }   # No operation
+# NOP {*ind}: 0111 0111 LLLL LLLL. The loc field optionally performs an indirect
+# address modify (e.g. NOP *XAR0++). Plain NOP is the loc=0 case. One constructor
+# covers both: loc=0 renders "@0" (still mnemonic NOP); modify forms show the loc.
+:NOP            is op_hi8=0x77 & op_lo8=0x00  { }              # plain No-operation
+:NOP loc16      is op_hi8=0x77 & op_lo8!=0x00 & loc16  { }     # NOP with indirect modify
 
 # =============================================================================
 # Register-display operands.  A bare register name cannot sit in an instruction's

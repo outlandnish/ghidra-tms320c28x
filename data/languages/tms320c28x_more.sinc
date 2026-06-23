@@ -397,3 +397,22 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 }
 # NOT AX   1111 1111 0101 111A  (complement AL/AH; A=bit0).
 :NOT AXb0  is op_hi8=0xFF & op_lo71=0b0101111 & AXb0  { AXb0 = ~AXb0; setNZ16(AXb0); }
+
+# =============================================================================
+# Batch 13: remaining firmware tail (each 33-72 sites; verified vs SPRU430F).
+# =============================================================================
+# ADD ACC, loc16 <<#16   0000 0101 LLLL LLLL  (single word; add loc<<16 to ACC).
+:ADD ACCreg, loc16^"<<#16"  is op_hi8=0x05 & ACCreg & loc16 {
+    local v:4 = zext(loc16) << 16; ACC = ACC + v;
+}
+# CMP loc16, #16bitSigned   0001 1011 LLLL LLLL : iiii  (2-word; flags only).
+:CMP loc16, "#"simm16  is op_hi8=0x1B & loc16 ; simm16 {
+    local x:2 = loc16; local y:2 = simm16:2; local r:2 = x - y;
+    $(N) = (r s< 0); $(Z) = (r == 0);
+}
+# MPYU ACC,T,loc16   0011 0110 LLLL LLLL  (unsigned 16x16 -> ACC).
+:MPYU ACCreg, Treg, loc16  is op_hi8=0x36 & ACCreg & Treg & loc16 {
+    local a:4 = zext(T); local b:4 = zext(loc16); ACC = a * b;
+}
+# SUB loc16, AX   0111 010A LLLL LLLL  (reverse-subtract: loc16 = AX - loc16).
+:SUB loc16, AX  is op_hi7=0x3A & loc16 & AX  { loc16 = AX - loc16; }
