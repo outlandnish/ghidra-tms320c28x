@@ -24,3 +24,7 @@ docs/c28x/vcrc_instructions.txt
 tests/code_region.bin
 tests/immo_region.bin
 tests/all_decode.bin
+
+# Fresh-context handoff plan is kept privately in tm3diag (it references
+# target-specific RE material); do not commit it to this public repo.
+docs/PICKUP-PLAN.md

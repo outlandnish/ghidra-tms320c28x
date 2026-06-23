@@ -87,5 +87,5 @@ addressing sub-tables are implemented (AMODE=0), and the decompiler produces C o
 [ghidra_scripts/DumpParity.java](ghidra_scripts/DumpParity.java) — reuse it for any
 TI object. Note: mnemonic parity does **not** prove operand/semantics correctness
 (it only checks the first token); several such bugs were caught by cross-checking the
-manual, so keep auditing. See [docs/PICKUP-PLAN.md](docs/PICKUP-PLAN.md) for the audit
-status and known-bug classes.
+manual, so keep auditing. See [docs/TESTING.md](docs/TESTING.md) for the parity harness
+and the operand/semantics bug classes that parity can't catch.

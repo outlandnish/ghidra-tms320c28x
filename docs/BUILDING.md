@@ -55,6 +55,19 @@ gradle -PGHIDRA_INSTALL_DIR=<GHIDRA_INSTALL_DIR>
 3. Register Manager: `ACC` shows `AH`/`AL` sub-pieces; `XAR0–7`/`AR` overlaps right.
 4. Disassemble bytes `01 00` → `ABORTI`; `21 76` → `IDLE` (little-endian words).
 
+## Fast iteration: drive a running Ghidra, not headless
+
+`analyzeHeadless` cold-starts the JVM on every run (minutes). When iterating on the
+spec it's far faster to keep one Ghidra instance running and drive it programmatically
+(e.g. via a Ghidra MCP bridge or the Python/Jython console): `import_file` with
+language `TMS320C28x:LE:32:default`, then `disassemble`, `decompile`, or a small
+`getInstructions()` dump script. Reload after a recompile = restart Ghidra +
+**re-import** the target (per the caching note above).
+
+> Address note for tooling: in this `wordsize=2` space, `Address.getOffset()` returns
+> a **byte** offset, while TI's `dis2000` prints **word** addresses — divide by 2 when
+> comparing the two.
+
 ## Re-extracting reference chapters from the PDFs
 
 The large per-instruction reference files are gitignored; regenerate with poppler's
