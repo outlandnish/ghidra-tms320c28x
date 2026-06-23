@@ -335,6 +335,20 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 # Batch 10: top missing opcodes from the byte-swapped Tesla DIR firmware sweep
 # (these dominate the undecoded histogram on real F28377D code).
 # =============================================================================
+# ADDU ACC, loc16   0000 1101 LLLL LLLL  -- add zero-extended 16-bit word to ACC.
+# Was MISSING — the truncation point in CAN_postRxEvent (word 0x0da0 = ADDU ACC,@AR0);
+# its empty slot orphaned the following word and broke the CFG. ACC = ACC + 0:[loc16].
+:ADDU ACCreg, loc16  is op_hi8=0x0D & ACCreg & loc16  {
+    local b:4 = zext(loc16);
+    $(C) = carry(ACC, b);
+    ACC = ACC + b;
+    setNZ32(ACC);
+}
+# MOVH loc16, P     0101 0111 LLLL LLLL  -- store high 16 bits of P to loc16.
+# Also MISSING — the next truncation in CAN_postRxEvent (word 0x5703 = MOVH @3,P, in an
+# RPT/PREAD block-copy idiom). [loc16] = (P << PM) >> 16; PM (product-shift) not tracked
+# in decode, so model the common PM=0 case: store the high word PH.
+:MOVH loc16, "P"  is op_hi8=0x57 & loc16  { loc16 = PH; }
 # MOVU ACC, loc16   0000 1110 LLLL LLLL  -- load ACC with zero-extended 16-bit word.
 :MOVU ACCreg, loc16  is op_hi8=0x0E & ACCreg & loc16  { ACC = zext(loc16); setNZ32(ACC); }
 
