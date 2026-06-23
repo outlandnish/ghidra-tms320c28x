@@ -84,6 +84,22 @@ macro setFloatFlags(a, b) {
 :RESTORE     is op16=0xE562 { }   # restores saved FP regs from stack frame — no-op stub
 :ZEROA       is op16=0xE563 { R0H=0; R1H=0; R2H=0; R3H=0; R4H=0; R5H=0; R6H=0; R7H=0; }
 
+# RPTB label, loc16 / #RC   LSW: 1011 0101 Rbbb bbbb ; MSW: (0000 0000 loc16) or (imm16).
+# Block-repeat (hardware loop over the following RSIZE words). The loop itself can't be
+# modeled in plain SLEIGH, but the op MUST emit non-empty p-code and fall through so the
+# block body disassembles as ordinary sequential code (otherwise the body is lost and the
+# function truncates). RSIZE (block size) is the LSW low 7 bits; the count source is the
+# opaque MSW. We record the block size into RB so dataflow has a def, then fall through.
+# This was the residual truncation in FUN_0008fb82 (LSW 0xb51f, MSW 0x00a6).
+:RPTB "#"rptb_rsz^", *loc16"  is op_hi8=0xB5 & rptb_sel=0 & rptb_rsz ; imm16  {
+    local n:1 = rptb_rsz;
+    RB = zext(n);
+}
+:RPTB "#"rptb_rsz^", #"imm16  is op_hi8=0xB5 & rptb_sel=1 & rptb_rsz ; imm16  {
+    local n:1 = rptb_rsz;
+    RB = zext(n);
+}
+
 # =============================================================================
 # Register immediate loads: MOVIZ (high 16) / MOVXI (low 16) of an FP reg.
 # LSW=1110 1000 0000 zIII ; imm in the 2nd word.  Already correct — leave.

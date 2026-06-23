@@ -64,6 +64,8 @@ define token instr16 (16)
     shft_hi4  = (8,11)      # SHFT in word2 of MOV ACC,loc16<<#1..15 (0000 SHFT LLLLLLLL)
     imm8_hi   = (8,15)      # high byte of word2 (MOVB loc16,#8bit,COND: CCCC CCCC LLLLLLLL)
     p_re_hi   = (0,0)       # e    high bit of ReH for that parallel form
+    rptb_sel  = (7,7)       # RPTB form select (LSW 1011 0101 Rbbb bbbb): 0=loc16, 1=#RC
+    rptb_rsz  = (0,6)       # RPTB block size RSIZE (low 7 bits of the LSW)
 ;
 
 # --- trailing 16-bit immediate / extension word -------------------------------
@@ -83,8 +85,8 @@ define token imm16w (16)
 
 :ABORTI         is op16=0x0001  { }                 # Abort interrupt (skeleton: no semantics yet)
 
-:EALLOW         is op16=0x7622  { }                 # Enable write access to protected space
-:EDIS           is op16=0x761A  { }                 # Disable write access to protected space
+:EALLOW         is op16=0x7622  { $(EALLOWF) = 1; } # Enable write access to protected space
+:EDIS           is op16=0x761A  { $(EALLOWF) = 0; } # Disable write access to protected space
 :IDLE           is op16=0x7621  { }                 # Put processor in idle mode
 :ESTOP0         is op16=0x7625  { }                 # Emulation stop 0
 :ESTOP1         is op16=0x7624  { }                 # Emulation stop 1 (halts only when emulator connected)

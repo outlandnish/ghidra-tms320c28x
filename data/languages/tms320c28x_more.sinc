@@ -293,11 +293,13 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 :SETC "OVM"   is op16=0x3B02 { $(OVM) = 1; }
 :SETC "TC"    is op16=0x3B04 { $(TC)  = 1; }
 :SETC "C"     is op16=0x3B08 { $(C)   = 1; }
-:SETC "INTM"  is op16=0x3B10 { }
-:SETC "DBGM"  is op16=0x3B20 { }
-:SETC "PAGE0" is op16=0x3B40 { }
-:SETC "VMAP"  is op16=0x3B80 { }
-:SETC "#"imm8  is op_hi8=0x3B & imm8 { }   # general mask (other combinations)
+:SETC "INTM"  is op16=0x3B10 { $(INTM)  = 1; }
+:SETC "DBGM"  is op16=0x3B20 { $(DBGM)  = 1; }
+:SETC "PAGE0" is op16=0x3B40 { $(PAGE0) = 1; }
+:SETC "VMAP"  is op16=0x3B80 { $(VMAP)  = 1; }
+# General mask (multi-bit combos, e.g. SETC #0x30 = INTM|DBGM). The mask's high
+# nibble maps to ST1 mode bits (0x10=INTM..0x80=VMAP); OR it in so the op is non-empty.
+:SETC "#"imm8  is op_hi8=0x3B & imm8 { ST1 = ST1 | (zext(imm8:1) >> 4); }
 
 # =============================================================================
 # Batch 8: MOVB XARn,#8bit  +  TEST ACC  (close remaining rts-validation gaps).
@@ -375,17 +377,20 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 :CLRC "OVM"   is op16=0x2902 { $(OVM) = 0; }
 :CLRC "TC"    is op16=0x2904 { $(TC)  = 0; }
 :CLRC "C"     is op16=0x2908 { $(C)   = 0; }
-:EINT         is op16=0x2910 { }            # CLRC INTM (enable interrupts)
-:CLRC "DBGM"  is op16=0x2920 { }
-:CLRC "PAGE0" is op16=0x2940 { }
-:CLRC "VMAP"  is op16=0x2980 { }
-:CLRC "#"imm8  is op_hi8=0x29 & imm8 { }    # general mask
+:EINT         is op16=0x2910 { $(INTM)  = 0; }   # CLRC INTM (enable interrupts)
+:CLRC "DBGM"  is op16=0x2920 { $(DBGM)  = 0; }
+:CLRC "PAGE0" is op16=0x2940 { $(PAGE0) = 0; }
+:CLRC "VMAP"  is op16=0x2980 { $(VMAP)  = 0; }
+# General mask: clear the ST1 mode bits selected by the mask's high nibble.
+:CLRC "#"imm8  is op_hi8=0x29 & imm8 { ST1 = ST1 & ~(zext(imm8:1) >> 4); }
 
 # RPT #8bit   1111 0110 CCCC CCCC  -- repeat next instruction (count+1 times).
-# Decode-only (the repeat is a hardware loop; we don't model RPTC).
-:RPT "#"imm8  is op_hi8=0xF6 & imm8 { }
-# RPT loc16   1111 0111 LLLL LLLL
-:RPT loc16    is op_hi8=0xF7 & loc16 { }
+# The hardware repeat-counter (RPTC) isn't modeled, but the body must be non-empty
+# or the decompiler treats it as a bad instruction and truncates. Read the count
+# into a scratch so dataflow continues; the actual repeat is left to disassembly.
+:RPT "#"imm8  is op_hi8=0xF6 & imm8  { local c:2 = zext(imm8:1) + 1; }
+# RPT loc16   1111 0111 LLLL LLLL  -- repeat count from [loc16] (+1).
+:RPT loc16    is op_hi8=0xF7 & loc16 { local c:2 = loc16 + 1; }
 
 # XOR loc16, AX   1111 001A LLLL LLLL  -- store-side XOR (loc ^= AX). A bit -> AL/AH.
 :XOR loc16, AX  is op_hi7=0x79 & loc16 & AX  { loc16 = loc16 ^ AX; }
@@ -406,15 +411,16 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 }
 # MOVL P,ACC       1111 1111 0101 1010
 :MOVL "P", ACCreg  is op16=0xFF5A & ACCreg { P = ACC; }
-# SPM PM           1111 1111 0110 1xxx  (set product shift mode; decode-only)
-:SPM "+1"  is op16=0xFF68 { }
-:SPM "0"   is op16=0xFF69 { }
-:SPM "-1"  is op16=0xFF6A { }
-:SPM "-2"  is op16=0xFF6B { }
-:SPM "-3"  is op16=0xFF6C { }
-:SPM "-4"  is op16=0xFF6D { }
-:SPM "-5"  is op16=0xFF6E { }
-:SPM "-6"  is op16=0xFF6F { }
+# SPM PM           1111 1111 0110 1xxx  (set product shift mode). Body sets the PM
+# field in ST0 to the encoded value (low 3 bits) so the op emits non-empty p-code.
+:SPM "+1"  is op16=0xFF68 { $(PM) = 0; }
+:SPM "0"   is op16=0xFF69 { $(PM) = 1; }
+:SPM "-1"  is op16=0xFF6A { $(PM) = 2; }
+:SPM "-2"  is op16=0xFF6B { $(PM) = 3; }
+:SPM "-3"  is op16=0xFF6C { $(PM) = 4; }
+:SPM "-4"  is op16=0xFF6D { $(PM) = 5; }
+:SPM "-5"  is op16=0xFF6E { $(PM) = 6; }
+:SPM "-6"  is op16=0xFF6F { $(PM) = 7; }
 # ADD ACC,#16bit<<#0..15   1111 1111 0001 SHFT : iiii iiii iiii iiii  (2-word)
 :ADD ACCreg, "#"imm16^"<<#"^shft4  is op_hi8=0xFF & loc_hi4=0b0001 & shft4 & ACCreg ; imm16 {
     local v:4 = zext(imm16:2); local s:4 = zext(shft4:1); ACC = ACC + (v << s);
@@ -443,6 +449,16 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 # =============================================================================
 # Batch 13: remaining firmware tail (each 33-72 sites; verified vs SPRU430F).
 # =============================================================================
+# ADD ACC, loc16 <<#0   1000 0001 LLLL LLLL  (single word; base form of the
+# ADD ACC,loc16<<#shift family). Sign-extended per SXM=1 (common case). Was the
+# truncation in the first fragment of FUN_0009099d (word 0x81a3).
+:ADD ACCreg, loc16  is op_hi8=0x81 & ACCreg & loc16 {
+    local b:4 = sext(loc16);
+    $(C) = carry(ACC, b);
+    $(V) = scarry(ACC, b);
+    ACC = ACC + b;
+    setNZ32(ACC);
+}
 # ADD ACC, loc16 <<#16   0000 0101 LLLL LLLL  (single word; add loc<<16 to ACC).
 :ADD ACCreg, loc16^"<<#16"  is op_hi8=0x05 & ACCreg & loc16 {
     local v:4 = zext(loc16) << 16; ACC = ACC + v;
@@ -466,4 +482,24 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
     $(V) = scarry(m, AX);
     loc16 = m + AX;
     setNZ16(loc16);
+}
+
+# =============================================================================
+# Batch 14: gap revealed once the empty-body status/mode ops emit p-code (flow
+# now continues into this store). Verified vs SPRU430F.
+# =============================================================================
+# MOV loc16, *(0:16bit)   1111 0101 LLLL LLLL : CCCC CCCC CCCC CCCC  (2-word).
+# Move the 16-bit value at absolute data address 0:imm16 into loc16. Was the
+# truncation after FUN_00093327 / FUN_00093407 (load form).
+:MOV loc16, "*(0:"imm16")"  is op_hi8=0xF5 & loc16 ; imm16  {
+    local a:4 = zext(imm16:2);
+    loc16 = *[ram]:2 a;
+    setNZ16(loc16);
+}
+# MOV *(0:16bit), loc16   1111 0100 LLLL LLLL : CCCC CCCC CCCC CCCC  (2-word).
+# Store counterpart of the above: [0:imm16] = [loc16]. The next gap behind the
+# 0xF5 load once flow continued past it (word 0xf4a9 after FUN_00093327/407).
+:MOV "*(0:"imm16"),"^loc16  is op_hi8=0xF4 & loc16 ; imm16  {
+    local a:4 = zext(imm16:2);
+    *[ram]:2 a = loc16;
 }

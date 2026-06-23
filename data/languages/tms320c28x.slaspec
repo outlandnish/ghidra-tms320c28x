@@ -78,7 +78,14 @@ define register offset=0xC8 size=4 [ VT0 VT1 VSTATUS VCRC ];
 @define Z     "ST0[4,1]"   # zero
 @define N     "ST0[5,1]"   # negative
 @define V     "ST0[6,1]"   # overflow
+@define PM    "ST0[7,3]"   # product shift mode (3-bit field)
 @define AMODE "ST1[8,1]"   # addressing-mode select bit
+# ST1 mode bits (SPRU430F 2.4): INTM=0 DBGM=1 PAGE0=2 VMAP=3 ... EALLOW=6
+@define INTM   "ST1[0,1]"   # interrupt global mask
+@define DBGM   "ST1[1,1]"   # debug enable mask
+@define PAGE0  "ST1[2,1]"   # PAGE0 addressing mode
+@define VMAP   "ST1[3,1]"   # vector map
+@define EALLOWF "ST1[6,1]"  # emulation/write-protect access enable (EALLOW/EDIS)
 
 # =============================================================================
 # Decode context. AMODE selects the loc16/loc32 field interpretation (Table 5-1).
