@@ -79,13 +79,24 @@ Compiles clean against Ghidra 12.1.2's SLEIGH compiler and decompiles C28x code.
 The full instruction set across all families decodes, the shared `loc16`/`loc32`
 addressing sub-tables are implemented (AMODE=0), and the decompiler produces C output.
 
-**Validation:** disassembled three objects from TI's own `rts2800_fpu32.lib` runtime
-(real TI-compiled C28x code) and diffed mnemonics against TI's `dis2000`:
-**100% agreement, 0 wrong decodes** across 3,445 instructions (`k_expf` 135,
-`catrigf` 1926, `c99_complex` 1384). The harness is
+**Validation (TI ground truth):** disassembled five objects from TI's own
+`rts2800_fpu32.lib` runtime (real TI-compiled C28x code) and diffed mnemonics against
+TI's `dis2000`: **100% agreement, 0 wrong decodes** across all objects (`k_expf`,
+`catrigf`, `c99_complex`, `memcpy_s`, `strcpy_s`). The harness is
 [tests/run_ti_parity.ps1](tests/run_ti_parity.ps1) +
 [ghidra_scripts/DumpParity.java](ghidra_scripts/DumpParity.java) — reuse it for any
-TI object. Note: mnemonic parity does **not** prove operand/semantics correctness
+TI object.
+
+**Validation (real firmware):** beyond the TI runtime, the opcode set was hardened
+against a large (~250K-word) real-world F28377D production image: a linear sweep
+decodes **~95% by word** (≈98% of actual code; the residual is inline data a linear
+sweep can't skip) with **0 wrong decodes**. The undecoded-opcode histogram on real
+code drove the remaining additions beyond what the TI runtime exercises (more
+0x56-prefix forms incl. 64-bit `ACC:P` shifts, `MOV/ADD/SUB ACC,…<<#`,
+`CLRC/SETC mode`, `RPT`, `MOVU`, `XOR loc16,AX`, the `0xE2` FPU mem-move family,
+`ABS/NOT/SFR`, `ADDB/SUBB XARn`, …).
+
+Note: mnemonic parity does **not** prove operand/semantics correctness
 (it only checks the first token); several such bugs were caught by cross-checking the
 manual, so keep auditing. See [docs/TESTING.md](docs/TESTING.md) for the parity harness
 and the operand/semantics bug classes that parity can't catch.

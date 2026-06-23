@@ -327,3 +327,73 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
     $(C) = !(AX < b); $(V) = sborrow(AX, b);
     $(N) = (r s< 0); $(Z) = (r == 0);
 }
+
+# =============================================================================
+# Batch 10: top missing opcodes from the byte-swapped Tesla DIR firmware sweep
+# (these dominate the undecoded histogram on real F28377D code).
+# =============================================================================
+# MOVU ACC, loc16   0000 1110 LLLL LLLL  -- load ACC with zero-extended 16-bit word.
+:MOVU ACCreg, loc16  is op_hi8=0x0E & ACCreg & loc16  { ACC = zext(loc16); setNZ32(ACC); }
+
+# CLRC mode   0010 1001 CCCC CCCC  -- clear status bits per 8-bit mask (counterpart
+# to SETC mode / 0x3B). Named single-bit forms + general mask. EINT = CLRC INTM.
+:CLRC "SXM"   is op16=0x2901 { $(SXM) = 0; }
+:CLRC "OVM"   is op16=0x2902 { $(OVM) = 0; }
+:CLRC "TC"    is op16=0x2904 { $(TC)  = 0; }
+:CLRC "C"     is op16=0x2908 { $(C)   = 0; }
+:EINT         is op16=0x2910 { }            # CLRC INTM (enable interrupts)
+:CLRC "DBGM"  is op16=0x2920 { }
+:CLRC "PAGE0" is op16=0x2940 { }
+:CLRC "VMAP"  is op16=0x2980 { }
+:CLRC "#"imm8  is op_hi8=0x29 & imm8 { }    # general mask
+
+# RPT #8bit   1111 0110 CCCC CCCC  -- repeat next instruction (count+1 times).
+# Decode-only (the repeat is a hardware loop; we don't model RPTC).
+:RPT "#"imm8  is op_hi8=0xF6 & imm8 { }
+# RPT loc16   1111 0111 LLLL LLLL
+:RPT loc16    is op_hi8=0xF7 & loc16 { }
+
+# XOR loc16, AX   1111 001A LLLL LLLL  -- store-side XOR (loc ^= AX). A bit -> AL/AH.
+:XOR loc16, AX  is op_hi7=0x79 & loc16 & AX  { loc16 = loc16 ^ AX; }
+
+# =============================================================================
+# Batch 11: more top misses from the byte-swapped Tesla DIR sweep.
+# =============================================================================
+# ADDB XARn,#7bit   1101 1nnn 0CCC CCCC  (bit7=0; SUBB XARn is the bit7=1 form).
+:ADDB xarn_hi3, "#"sp7  is op_hi5=0b11011 & xarn_hi3 & loc_b7=0 & sp7 {
+    xarn_hi3 = xarn_hi3 + zext(sp7:1);
+}
+
+# --- 0xFF-prefix fixed/shift forms ------------------------------------------
+# ABS ACC          1111 1111 0101 0110   (ACC = |ACC|; decode-only on the V/sat edge)
+:ABS "ACC"   is op16=0xFF56 {
+    if (ACC s>= 0) goto inst_next;
+    ACC = -ACC;
+}
+# MOVL P,ACC       1111 1111 0101 1010
+:MOVL "P", ACCreg  is op16=0xFF5A & ACCreg { P = ACC; }
+# SPM PM           1111 1111 0110 1xxx  (set product shift mode; decode-only)
+:SPM "+1"  is op16=0xFF68 { }
+:SPM "0"   is op16=0xFF69 { }
+:SPM "-1"  is op16=0xFF6A { }
+:SPM "-2"  is op16=0xFF6B { }
+:SPM "-3"  is op16=0xFF6C { }
+:SPM "-4"  is op16=0xFF6D { }
+:SPM "-5"  is op16=0xFF6E { }
+:SPM "-6"  is op16=0xFF6F { }
+# ADD ACC,#16bit<<#0..15   1111 1111 0001 SHFT : iiii iiii iiii iiii  (2-word)
+:ADD ACCreg, "#"imm16^"<<#"^shft4  is op_hi8=0xFF & loc_hi4=0b0001 & shft4 & ACCreg ; imm16 {
+    local v:4 = zext(imm16:2); local s:4 = zext(shft4:1); ACC = ACC + (v << s);
+}
+# SFR ACC,#1..16   1111 1111 0100 SHFT  (shift ACC right; SHFT=0 -> 16). Single word.
+# Reuse the shcount subtable (= shft4+1) used by the AX immediate shifts.
+:SFR ACCreg, "#"shcount  is op_hi8=0xFF & loc_hi4=0b0100 & ACCreg & shcount {
+    ACC = ACC >> shcount;
+}
+# SUB ACC,#16bit<<#0..15   1111 1111 0000 SHFT : iiii  (2-word; counterpart to the
+# ADD ACC,#16bit<<# at 0xFF1x). 0xff00/0xff0f etc.
+:SUB ACCreg, "#"imm16^"<<#"^shft4  is op_hi8=0xFF & loc_hi4=0b0000 & shft4 & ACCreg ; imm16 {
+    local v:4 = zext(imm16:2); local s:4 = zext(shft4:1); ACC = ACC - (v << s);
+}
+# NOT AX   1111 1111 0101 111A  (complement AL/AH; A=bit0).
+:NOT AXb0  is op_hi8=0xFF & op_lo71=0b0101111 & AXb0  { AXb0 = ~AXb0; setNZ16(AXb0); }

@@ -87,9 +87,24 @@ attach variables [ p_rd p_ra ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 :MOV32 loc32, "RaH"  is op_hi8=0xBF & loc32 ; imm16 { }   # store FP reg -> P/ACC/mem
 #   MOV32 RaH,P / MOV32 RaH,ACC      LSW: 1011 1101 loc32 ; MSW: IIII IIII IIII IIII
 :MOV32 "RaH", loc32  is op_hi8=0xBD & loc32 ; imm16 { }   # load  FP reg <- P/ACC/mem
-#   MOV32 mem32,RaH  /  MOV32 RaH,mem32   LSW: 1110 0010 .... ; MSW: addressing + RaH
-:MOV32 "mem32, RaH"  is op_hi8=0xE2 & op_lo8=0x03 ; imm16 { }
-:MOV32 "RaH, mem32"  is op_hi8=0xE2 & op_lo8=0xAF ; imm16 { }
+# 0xE2 family = FPU register<->memory moves + int<->float conversions. The 2nd nibble
+# (loc_hi4, bits 4-7 of the LSW) selects the operation; bits 0-3 carry sub-variant/loc;
+# the MSW holds addressing + the FP register. All 2-word, decode-only (the FP reg/mem
+# operands aren't fully rendered — enough to keep the linear sweep coherent). Map from
+# spruhs1c (LSW: 1110 0010 <nib> ....):
+#   0000 MOV32 mem32,STF/RaH   0001 MOV16 mem16,RaH   0010 MOVD32 RaH,mem32
+#   0101 MACF32-pair           1000 MOV32 STF,mem / I32TOF32 / UI32TOF32
+#   1010 MOV32 RaH,mem32{,CNDF}  1100 I16TOF32 / UI16TOF32
+:MOV32 "mem32, RaH"    is op_hi8=0xE2 & loc_hi4=0b0000 ; imm16 { }
+:MOV16 "mem16, RaH"    is op_hi8=0xE2 & loc_hi4=0b0001 ; imm16 { }
+:MOVD32 "RaH, mem32"   is op_hi8=0xE2 & loc_hi4=0b0010 ; imm16 { }
+:MACF32 "RaH, mem32"   is op_hi8=0xE2 & loc_hi4=0b0101 ; imm16 { }
+:MOV32 "RaH, mem32"    is op_hi8=0xE2 & loc_hi4=0b1000 ; imm16 { }
+:MOV32 "RaH, mem32, CNDF"  is op_hi8=0xE2 & loc_hi4=0b1010 ; imm16 { }
+:I16TOF32 "RaH, mem16" is op_hi8=0xE2 & loc_hi4=0b1100 ; imm16 { }
+# 0111 nibble (0xe27x) seen in firmware but not in the cleanly-documented set above;
+# cover it decode-only so the sweep doesn't dead-end.
+:MOV32 "RaH, mem32 (e27x)"  is op_hi8=0xE2 & loc_hi4=0b0111 ; imm16 { }
 
 # CNDF condition codes (FPU), low nibble of the LSW. spruhs1c Table; reserved
 # encodings (6..9) are unused -> name them rsvd so the table is total.
