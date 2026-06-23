@@ -419,6 +419,14 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 :ADD ACCreg, "#"imm16^"<<#"^shft4  is op_hi8=0xFF & loc_hi4=0b0001 & shft4 & ACCreg ; imm16 {
     local v:4 = zext(imm16:2); local s:4 = zext(shft4:1); ACC = ACC + (v << s);
 }
+# LSL ACC,#1..16   1111 1111 0011 SHFT  (logical shift left ACC; SHFT=0 -> 16). Single
+# word. C = last bit shifted out (= ACC bit 32-sh, pre-shift); N/Z from the result.
+:LSL ACCreg, "#"shcount  is op_hi8=0xFF & loc_hi4=0b0011 & ACCreg & shcount {
+    local sh:4 = zext(shcount);
+    $(C) = ((ACC >> (32 - sh)) & 1) != 0;
+    ACC = ACC << sh;
+    setNZ32(ACC);
+}
 # SFR ACC,#1..16   1111 1111 0100 SHFT  (shift ACC right; SHFT=0 -> 16). Single word.
 # Reuse the shcount subtable (= shft4+1) used by the AX immediate shifts.
 :SFR ACCreg, "#"shcount  is op_hi8=0xFF & loc_hi4=0b0100 & ACCreg & shcount {
