@@ -28,3 +28,8 @@ tests/all_decode.bin
 # Fresh-context handoff plan is kept privately in tm3diag (it references
 # target-specific RE material); do not commit it to this public repo.
 docs/PICKUP-PLAN.md
+
+# P-code-gap analysis + pickup notes reference target-specific RE material
+# (firmware functions, ECU names) — keep private, same as PICKUP-PLAN.md above.
+docs/PCODE-GAPS.md
+docs/PCODE-GAPS-PICKUP.md

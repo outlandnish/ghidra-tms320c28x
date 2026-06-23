@@ -44,12 +44,24 @@ macro setNZ32(r) {
 # =============================================================================
 # 16-bit logical ops on AX
 # =============================================================================
-# AND AX, loc16     1100 110A LLLL LLLL
-:AND AX, loc16   is op_hi7=0x66 & AX & loc16  { AX = AX & loc16; setNZ16(AX); }
+# AND AX, loc16          1100 111A LLLL LLLL                       (1-word)  AX = AX & [loc16]
+:AND AX, loc16   is op_hi7=0x67 & AX & loc16  { AX = AX & loc16; setNZ16(AX); }
+# AND AX, loc16, #16bit  1100 110A LLLL LLLL : iiii iiii iiii iiii (2-word)  AX = [loc16] & imm16
+# (the 0x66 slot was previously mis-modeled as the 1-word AND AX,loc16, which both decoded
+#  the wrong instruction and consumed one word too few — fixed: 1-word is 0x67, this is 0x66.)
+:AND AX, loc16, "#"imm16  is op_hi7=0x66 & AX & loc16 ; imm16 { AX = loc16 & imm16:2; setNZ16(AX); }
 # OR AX, loc16      1100 101A LLLL LLLL
 :OR  AX, loc16   is op_hi7=0x65 & AX & loc16  { AX = AX | loc16; setNZ16(AX); }
 # XOR AX, loc16     0111 000A LLLL LLLL
 :XOR AX, loc16   is op_hi7=0x38 & AX & loc16  { AX = AX ^ loc16; setNZ16(AX); }
+
+# 8-bit-immediate logical forms (single-word; zero-extended #8bit). N/Z set per
+# SPRU430F. ORB found in real firmware as the flow-truncating gap (bit-flag set
+# loops). ANDB AX,#imm8 already lives in more.sinc (op_hi7=0x48).
+# ORB AX, #8bit     0101 000A CCCC CCCC
+:ORB  AX, "#"imm8  is op_hi7=0x28 & AX & imm8  { AX = AX | zext(imm8:1); setNZ16(AX); }
+# XORB AX, #8bit    1111 000A CCCC CCCC
+:XORB AX, "#"imm8  is op_hi7=0x78 & AX & imm8  { AX = AX ^ zext(imm8:1); setNZ16(AX); }
 
 # =============================================================================
 # 16-bit logical ops on ACC (single-word forms)

@@ -1,12 +1,12 @@
-# C28x FPU (F2837x) instructions -- DECODE-ONLY.
+# C28x FPU (F2837x) instructions.
 # Included by tms320c28x.sinc. Encodings verified against docs/c28x/fpu_instructions.txt
 # (spruhs1c ch.1). Confirmed used in DIR (~281 ext-ISA words).
 #
-# SCOPE: decode-only. These disassemble (so the linear sweep doesn't dead-end in
-# FP-heavy code) but carry NO floating-point semantics -- modeling IEEE-754 math in
-# p-code adds nothing for CAN RE and risks wrong decompilation. Register-register
-# forms get a trivial assignment so Ghidra tracks the dest as written; memory forms
-# are pure decode.
+# SCOPE: flow-preserving stubs, not full IEEE-754 semantics. Every constructor writes
+# its destination register (or reads/writes a flag register for compare ops) so the
+# decompiler never hits a dead def and stops generating p-code. Memory-side operands
+# for the 0xE2 store family remain stubbed (address is split across MSW bits we don't
+# decode further). Real arithmetic values will be wrong; register dataflow will be right.
 #
 # FPU instructions are 32-bit: LSW (low word, lower address) + MSW. The LSW is the
 # opcode; for reg-reg forms the MSW holds the register fields aaa/bbb/ccc.
@@ -38,9 +38,9 @@ attach variables [ p_rd p_ra ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 # Register-register 2-operand ops:  MSW = 0000 0000 00bb baaa
 # =============================================================================
 :ABSF32 f_ra, f_rb     is op16=0xE695; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb; }
-:CMPF32 f_ra, f_rb     is op16=0xE694; f_rb & f_ra & f_msw_hi=0 { }
-:MAXF32 f_ra, f_rb     is op16=0xE696; f_rb & f_ra & f_msw_hi=0 { }
-:MINF32 f_ra, f_rb     is op16=0xE697; f_rb & f_ra & f_msw_hi=0 { }
+:CMPF32 f_ra, f_rb     is op16=0xE694; f_rb & f_ra & f_msw_hi=0 { STF = STF; }  # sets ZF/NF in STF (stub)
+:MAXF32 f_ra, f_rb     is op16=0xE696; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb; }
+:MINF32 f_ra, f_rb     is op16=0xE697; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb; }
 :EINVF32 f_ra, f_rb    is op16=0xE693; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb; }
 :EISQRTF32 f_ra, f_rb  is op16=0xE692; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb; }
 :FRACF32 f_ra, f_rb    is op16=0xE6F1; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb; }
@@ -61,9 +61,10 @@ attach variables [ p_rd p_ra ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 # =============================================================================
 # Stack / control
 # =============================================================================
-:PUSH "RB"   is op16=0xFFF0 { }
-:POP "RB"    is op16=0xFFF1 { }
-:RESTORE     is op16=0xE562 { }
+# RB is 32-bit; occupies 2 words on the 16-bit word-addressed stack.
+:PUSH "RB"   is op16=0xFFF0 { local a:4 = zext(SP); *[ram]:4 a = RB; SP = SP + 2; }
+:POP "RB"    is op16=0xFFF1 { SP = SP - 2; local a:4 = zext(SP); RB = *[ram]:4 a; }
+:RESTORE     is op16=0xE562 { }   # restores saved FP regs from stack frame — no-op stub
 :ZEROA       is op16=0xE563 { R0H=0; R1H=0; R2H=0; R3H=0; R4H=0; R5H=0; R6H=0; R7H=0; }
 
 # =============================================================================
@@ -73,38 +74,57 @@ attach variables [ p_rd p_ra ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 # MOVIZ RaH,#imm  LSW=1110 1000 0000 0III ; MOVXI RaH,#imm  LSW=1110 1000 0000 1III
 # (load upper / lower 16 of an FP reg; immediate in the 2nd word). fimm_reg = III,
 # fimm_z = the z-bit distinguishing IZ(0) from XI(1). Both defined on instr16.
-:MOVIZ fimm_reg, "#"imm16  is op_hi8=0xE8 & fimm_hi=0 & fimm_z=0 & fimm_reg ; imm16 { }
-:MOVXI fimm_reg, "#"imm16  is op_hi8=0xE8 & fimm_hi=0 & fimm_z=1 & fimm_reg ; imm16 { }
+# MOVIZ loads the upper 16 bits (high half) of a 32-bit FP register; MOVXI loads the
+# lower 16 bits.  The FP regs are 32-bit varnodes so we shift into/mask the half.
+:MOVIZ fimm_reg, "#"imm16  is op_hi8=0xE8 & fimm_hi=0 & fimm_z=0 & fimm_reg ; imm16 {
+    fimm_reg = (fimm_reg & 0x0000FFFF) | (zext(imm16:2) << 16);
+}
+:MOVXI fimm_reg, "#"imm16  is op_hi8=0xE8 & fimm_hi=0 & fimm_z=1 & fimm_reg ; imm16 {
+    fimm_reg = (fimm_reg & 0xFFFF0000) | zext(imm16:2);
+}
 
-# MOV32 reg<->P/ACC/mem.  These are TWO-WORD instructions: LSW = opcode + loc32,
-# MSW = a 16-bit word selecting the FP register (RaH) plus sub-encoding bits.
-# They MUST consume both words or the linear sweep desyncs and mis-decodes the MSW
-# as a separate instruction (this was the dominant alignment break vs TI dis2000).
-# Decode-only: the exact MSW->RaH bit layout isn't cleanly documented, so we render
-# the FP operand generically as "RaH" rather than guess a wrong register; loc32 still
-# shows the C28x side (P / ACC / mem) for readable disassembly.
-#   MOV32 P,RaH / MOV32 ACC,RaH      LSW: 1011 1111 loc32 ; MSW: IIII IIII IIII IIII
-:MOV32 loc32, "RaH"  is op_hi8=0xBF & loc32 ; imm16 { }   # store FP reg -> P/ACC/mem
-#   MOV32 RaH,P / MOV32 RaH,ACC      LSW: 1011 1101 loc32 ; MSW: IIII IIII IIII IIII
-:MOV32 "RaH", loc32  is op_hi8=0xBD & loc32 ; imm16 { }   # load  FP reg <- P/ACC/mem
-# 0xE2 family = FPU register<->memory moves + int<->float conversions. The 2nd nibble
-# (loc_hi4, bits 4-7 of the LSW) selects the operation; bits 0-3 carry sub-variant/loc;
-# the MSW holds addressing + the FP register. All 2-word, decode-only (the FP reg/mem
-# operands aren't fully rendered — enough to keep the linear sweep coherent). Map from
-# spruhs1c (LSW: 1110 0010 <nib> ....):
-#   0000 MOV32 mem32,STF/RaH   0001 MOV16 mem16,RaH   0010 MOVD32 RaH,mem32
-#   0101 MACF32-pair           1000 MOV32 STF,mem / I32TOF32 / UI32TOF32
-#   1010 MOV32 RaH,mem32{,CNDF}  1100 I16TOF32 / UI16TOF32
-:MOV32 "mem32, RaH"    is op_hi8=0xE2 & loc_hi4=0b0000 ; imm16 { }
-:MOV16 "mem16, RaH"    is op_hi8=0xE2 & loc_hi4=0b0001 ; imm16 { }
-:MOVD32 "RaH, mem32"   is op_hi8=0xE2 & loc_hi4=0b0010 ; imm16 { }
-:MACF32 "RaH, mem32"   is op_hi8=0xE2 & loc_hi4=0b0101 ; imm16 { }
-:MOV32 "RaH, mem32"    is op_hi8=0xE2 & loc_hi4=0b1000 ; imm16 { }
-:MOV32 "RaH, mem32, CNDF"  is op_hi8=0xE2 & loc_hi4=0b1010 ; imm16 { }
-:I16TOF32 "RaH, mem16" is op_hi8=0xE2 & loc_hi4=0b1100 ; imm16 { }
-# 0111 nibble (0xe27x) seen in firmware but not in the cleanly-documented set above;
-# cover it decode-only so the sweep doesn't dead-end.
-:MOV32 "RaH, mem32 (e27x)"  is op_hi8=0xE2 & loc_hi4=0b0111 ; imm16 { }
+# MOV32 reg<->P/ACC/mem/XARn/XT:  LSW = opcode + loc32; MSW = IIII IIII IIII IIII
+# (the MSW is a 16-bit immediate address or opaque encoding — NOT a structured field).
+# We consume it as imm16 to stay aligned, and use loc32 (the C28x-side operand in the
+# LSW) for the dataflow. The FP register on the other side is not cleanly decodable
+# from the MSW without a full MSW loc subtable.
+#   MOV32 loc32, RaH  (FP->C28x)  LSW: 1011 1111 loc32  MSW: imm16
+#   MOV32 RaH,  loc32 (C28x->FP)  LSW: 1011 1101 loc32  MSW: imm16
+:MOV32 loc32, "RaH"  is op_hi8=0xBF & loc32 ; imm16 { }   # stub: FP reg -> loc32
+:MOV32 "RaH", loc32  is op_hi8=0xBD & loc32 ; imm16 { loc32 = loc32; }  # stub: loc32 -> FP reg
+# 0xE2 family: LSW = 1110 0010 <hi4> <lo4> ; MSW = 0000 0aaa mem32
+# p_ra (MSW bits 8-10) = RaH. mem32 in MSW bits 0-7 uses the standard loc addressing
+# table but on the MSW token — consumed as opaque imm16 since we lack a MSW loc subtable.
+# Load forms write p_ra; store forms leave the memory write as a stub.
+# Exact LSW encodings (spruhs1c):
+#   0xE200 MOV32 mem32,STF         MSW: 0000 0000 mem32
+#   0xE203 MOV32 mem32,RaH         MSW: 0000 0aaa mem32
+#   0xE213 MOV16 mem16,RaH         MSW: 0000 0aaa mem16
+#   0xE223 MOVD32 RaH,mem32        MSW: 0000 0aaa mem32
+#   0xE250 MACF32 R7H,R3H,mem32,*XAR7++  MSW: 0001 1111 mem32
+#   0xE280 MOV32 STF,mem32         MSW: 0000 0000 mem32
+#   0xE284 UI32TOF32 RaH,mem32     MSW: 0000 0aaa mem32
+#   0xE288 I32TOF32 RaH,mem32      MSW: 0000 0aaa mem32
+#   0xE2A0..AF MOV32 RaH,mem32,CNDF  MSW: 0000 0aaa mem32
+#   0xE2C4 UI16TOF32 RaH,mem16     MSW: 0000 0aaa mem16
+#   0xE2C8 I16TOF32 RaH,mem16      MSW: 0000 0aaa mem16
+# Store forms: the mem32 destination address is in the MSW field we don't decode, so
+# we can't model the real write. Emit a flow-preserving READ of the source into a
+# scratch varnode — non-empty p-code (so the decompiler/flow-tracer walks through and
+# the function tail keeps disassembling) without falsely redefining a register.
+:MOV32 "mem32", "STF"       is op16=0xE200 ; imm16  { local s:4 = STF; }   # store: STF -> mem32
+:MOV32 "mem32", p_ra        is op16=0xE203 ; p_ra   { local s:4 = p_ra; } # store: RaH -> mem32
+:MOV16 "mem16", p_ra        is op16=0xE213 ; p_ra   { local s:2 = p_ra:2; } # store: RaH[15:0] -> mem16
+:MOVD32 p_ra, "mem32"       is op16=0xE223 ; p_ra   { p_ra = p_ra; } # load+copy: RaH=[mem32],[mem32+2]=[mem32]
+:MACF32 "R7H,R3H", "mem32,*XAR7++"  is op16=0xE250 ; imm16  { R7H = R3H; }  # RPT-capable MAC stub (dest R7H)
+:MOV32 "STF", "mem32"       is op16=0xE280 ; imm16  { STF = STF; }    # load: STF=[mem32] (stub: touch STF)
+:UI32TOF32 p_ra, "mem32"    is op16=0xE284 ; p_ra   { p_ra = p_ra; }
+:I32TOF32 p_ra, "mem32"     is op16=0xE288 ; p_ra   { p_ra = p_ra; }
+:MOV32 p_ra, "mem32", fcndf is op_hi8=0xE2 & loc_hi4=0b1010 & fcndf ; p_ra { p_ra = p_ra; }
+:UI16TOF32 p_ra, "mem16"    is op16=0xE2C4 ; p_ra   { p_ra = p_ra; }
+:I16TOF32 p_ra, "mem16"     is op16=0xE2C8 ; p_ra   { p_ra = p_ra; }
+# 0xe27x seen in firmware — undocumented, consume both words
+:MOV32 p_ra, "mem32 (e27x)" is op_hi8=0xE2 & loc_hi4=0b0111 ; p_ra  { p_ra = p_ra; }
 
 # CNDF condition codes (FPU), low nibble of the LSW. spruhs1c Table; reserved
 # encodings (6..9) are unused -> name them rsvd so the table is total.
@@ -134,33 +154,44 @@ attach variables [ p_rf ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 # selects the op: 01=MPYF32, 10=ADDF32, 11=SUBF32.  Decode-only: render mnemonic +
 # RaH (MSW aaa); the f16 immediate is not reconstructed (split across both words).
 # (00 with III in low bits is the MOVIZ/MOVXI form, already handled above.)
-:MPYF32 f_ra, "#16FHi"  is op_hi8=0xE8 & op_lo_76=0b01 ; f_ra { }
-:ADDF32 f_ra, "#16FHi"  is op_hi8=0xE8 & op_lo_76=0b10 ; f_ra { }
-:SUBF32 f_ra, "#16FHi"  is op_hi8=0xE8 & op_lo_76=0b11 ; f_ra { }
+:MPYF32 f_ra, "#16FHi"  is op_hi8=0xE8 & op_lo_76=0b01 ; f_ra { f_ra = f_ra; }
+:ADDF32 f_ra, "#16FHi"  is op_hi8=0xE8 & op_lo_76=0b10 ; f_ra { f_ra = f_ra; }
+:SUBF32 f_ra, "#16FHi"  is op_hi8=0xE8 & op_lo_76=0b11 ; f_ra { f_ra = f_ra; }
 
 # CMPF32 RaH, #16FHi   LSW: 1110 1000 0001 0III ; MSW: IIII IIII IIII Iaaa  (2-word)
-:CMPF32 f_ra, "#16FHi"  is op_hi8=0xE8 & loc_mode5=0b00010 ; f_ra { }
+:CMPF32 f_ra, "#16FHi"  is op_hi8=0xE8 & loc_mode5=0b00010 ; f_ra { STF = STF; }
 # CMPF32 RaH, #0.0     LSW: 1110 0101 1010 0aaa  (single word). fimm_reg = aaa.
-:CMPF32 fimm_reg, "#0.0"  is op_hi8=0xE5 & loc_mode5=0b10100 & fimm_reg { }
+:CMPF32 fimm_reg, "#0.0"  is op_hi8=0xE5 & loc_mode5=0b10100 & fimm_reg { STF = STF; }
 # ZERO RaH             LSW: 1110 0101 1001 0aaa  (single word)
 :ZERO fimm_reg            is op_hi8=0xE5 & loc_mode5=0b10010 & fimm_reg { fimm_reg = 0; }
 # NEGF32 RaH,RbH{,CNDF} LSW: 1110 0110 1010 CNDF ; MSW: 0000 0000 00bb baaa
 :NEGF32 f_ra, f_rb, fcndf  is op_hi8=0xE6 & loc_hi4=0b1010 & fcndf
                            ; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb; }
 # MOVST0 FLAG          LSW: 1010 1101 FFFF FFFF  (load selected STF flags into ST0)
-:MOVST0 "#"imm8        is op_hi8=0xAD & imm8 { }
+# imm8 selects which STF flags copy into ST0; exact bit mapping not modeled. Flow-
+# preserving stub: ST0 depends on STF (read STF, write ST0) so the decompiler keeps
+# walking and CMPF32->MOVST0->conditional-branch chains don't truncate.
+:MOVST0 "#"imm8        is op_hi8=0xAD & imm8 { ST0 = STF:2; }
 
 # MAXF32 RaH, #16FHi   LSW: 1110 1000 0010 0III ; MSW: IIII IIII IIII Iaaa  (2-word)
-:MAXF32 f_ra, "#16FHi"  is op_hi8=0xE8 & loc_mode5=0b00100 ; f_ra { }
+:MAXF32 f_ra, "#16FHi"  is op_hi8=0xE8 & loc_mode5=0b00100 ; f_ra { f_ra = f_ra; }
+# MINF32 RaH, #16FHi   LSW: 1110 1000 0011 0III ; MSW: IIII IIII IIII Iaaa  (2-word)
+:MINF32 f_ra, "#16FHi"  is op_hi8=0xE8 & loc_mode5=0b00110 ; f_ra { f_ra = f_ra; }
+# MAXF32 RaH,RbH||MOV32 RcH,RdH  LSW: 1110 0110 1001 1100 ; MSW: 0000 dddc ccbb baaa
+# f_ra=RaH(0-2), f_rb=RbH(3-5), f_rc=RcH(6-8).  RaH = max(RaH,RbH); if taken: RcH=RdH
+:MAXF32 f_ra, f_rb, "||MOV32", f_rc  is op16=0xE69C ; f_rc & f_rb & f_ra { f_ra = f_rb; f_rc = f_ra; }
+# MINF32 RaH,RbH||MOV32 RcH,RdH  LSW: 1110 0110 1001 1101 ; MSW: 0000 dddc ccbb baaa
+:MINF32 f_ra, f_rb, "||MOV32", f_rc  is op16=0xE69D ; f_rc & f_rb & f_ra { f_ra = f_rb; f_rc = f_ra; }
 # SWAPF RaH,RbH{,CNDF}  LSW: 1110 0110 1110 CNDF ; MSW: 0000 0000 00bb baaa
 :SWAPF f_ra, f_rb, fcndf  is op_hi8=0xE6 & loc_hi4=0b1110 & fcndf
-                          ; f_rb & f_ra & f_msw_hi=0 { }
-# Parallel ADDF32/SUBF32 ||MOV32 forms (LSW 0xE0/0xE3 sub-ops) — 2-word, the register
-# fields are bit-packed across both words like MPYF32||MOV32. Decode-only: emit the
-# mnemonic + the cleanly decodable dest (p_rd in MSW); consume the MSW.
+                          ; f_rb & f_ra & f_msw_hi=0 { local t:4 = f_ra; f_ra = f_rb; f_rb = t; }
+# Parallel ADDF32/SUBF32 ||MOV32 forms (LSW 0xE0/0xE3 sub-ops) — 2-word. The register
+# fields are bit-packed across both words; p_rd (ADDF32/SUBF32 dest) is in MSW bits 11-13.
+# Mark the ADDF32/SUBF32 dest as written; the MOV32 dest (p_ra) is also in the MSW but
+# overlaps with mem32 encoding so left as a stub touch.
 #   ADDF32 RdH,ReH,RfH || MOV32 mem32,RaH   LSW: 1110 0000 0001 fffe
-:ADDF32 p_rd, "||MOV32"  is op_hi8=0xE0 & loc_hi4=0b0001 ; p_rd { }
+:ADDF32 p_rd, "||MOV32"  is op_hi8=0xE0 & loc_hi4=0b0001 ; p_rd { p_rd = p_rd; }
 #   ADDF32 ... || MOV32 RaH,mem32  LSW: 1110 0011 0001 fffe
-:ADDF32 p_rd, "||MOV32"  is op_hi8=0xE3 & loc_hi4=0b0001 ; p_rd { }
+:ADDF32 p_rd, "||MOV32"  is op_hi8=0xE3 & loc_hi4=0b0001 ; p_rd { p_rd = p_rd; }
 #   SUBF32 ... || MOV32 RaH,mem32  LSW: 1110 0011 0010 fffe
-:SUBF32 p_rd, "||MOV32"  is op_hi8=0xE3 & loc_hi4=0b0010 ; p_rd { }
+:SUBF32 p_rd, "||MOV32"  is op_hi8=0xE3 & loc_hi4=0b0010 ; p_rd { p_rd = p_rd; }
