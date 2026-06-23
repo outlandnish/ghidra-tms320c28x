@@ -1,0 +1,815 @@
+C28x+Fast Integer Division – Fast Integer Division Instruction Set                                                                        www.ti.com
+
+6.6.2 Instructions
+         The instructions are listed alphabetically, preceded by a summary.
+
+                                                   Table 6-2. Summary of Instructions
+Title   ......................................................................................................................................   Page
+
+ ABSI32DIV32 R2H, R1H, R3H — ...................................................................................................                 755
+ ABSI32DIV32U R2H, R1H — ........................................................................................................                756
+ ABSI64DIV32 R2H, R1H:R0H, R3H — .............................................................................................                   757
+ ABSI64DIV32U R2H, R1H:R0H — ..................................................................................................                  758
+ ABSI64DIV64 R2H:R4H, R1H:R0H, R3H:R5H — ................................................................................                        759
+ ABSI64DIV64U R2H:R4H, R1H:R0H — ...........................................................................................                     760
+ SUBC4UI32 R2H, R1H, R3H — .....................................................................................................                 761
+ SUBC2UI64 R2H:R4H, R1H:R0H, R3H:R5H — ..................................................................................                        762
+ NEGI32DIV32 R1H , R2H — ..........................................................................................................              763
+ ENEGI32DIV32 R1H , R2H, R3H — ................................................................................................                  764
+ MNEGI32DIV32 R1H , R2H, R3H — ................................................................................................                  765
+ NEGI64DIV32 R1H:R0H, R2H — ....................................................................................................                 766
+ ENEGI64DIV32 R1H:R0H , R2H, R3H — ..........................................................................................                    767
+ MNEGI64DIV32 R1H:R0H , R2H, R3H — ..........................................................................................                    768
+ NEGI64DIV64 R1H:R0H, R2H:R4H — .............................................................................................                    769
+ ENEGI64DIV64 R1H:R0H , R2H:R4H, R3H:R5H — ..............................................................................                        770
+ MNEGI64DIV64 R1H:R0H , R2H:R4H, R3H:R5H — ..............................................................................                        771
+
+
+
+
+754      Fast Integer Division Unit (FINTDIV)                                                SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                              Submit Documentation Feedback
+                                                 Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                                                         ABSI32DIV32 R2H, R1H, R3H —
+
+ABSI32DIV32 R2H, R1H, R3H
+
+Operands
+
+        R3H                    Denominator
+        R1H                    Numerator
+        R2H                    Remainder
+
+
+Opcode
+                          LSW: 1110 0101 0110 1000
+
+Description               NI = R1H(31)
+                          TF = (R1H(31)) ^(R3H(31))
+                          if ((R1H = 0x8000_0000) | (R3H = 0x8000_0000)) { LVF = 1}
+                          R2H = 0
+                          if (R1H(31) = 1) {R1H = -R1H}
+                          if (R3H(31) = 1) {R3H = -R3H}
+                          For more details on usage of the instruction refer to the intrinsics definitions in the
+                          TMS320C28x Optimizing C/C++ Compiler User’s Guide (www.ti.com/lit/spru514).
+
+Flags                     This instruction modifies the following flags in the STF register:
+
+        Flag       TF           ZI                NI              ZF                 NF                 LUF              LVF
+        Modified   Yes          No                Yes             No                 No                 No               Yes
+
+
+Pipeline                  This is a single-cycle instruction.
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                Fast Integer Division Unit (FINTDIV)   755
+Submit Documentation Feedback
+                                       Copyright © 2014–2019, Texas Instruments Incorporated
+ABSI32DIV32U R2H, R1H —                                                                                                         www.ti.com
+
+
+ABSI32DIV32U R2H, R1H
+
+Operands
+
+        R1H                        Numerator
+        R2H                        Remainder
+
+
+Opcode
+                             LSW: 1110 0101 0110 1001
+
+Description                  NI = R1H(31)
+                             TF = R1H(31)
+                             if (R1H = 0x8000_0000) { LVF = 1}
+                             R2H = 0
+                             if (R1H(31) = 1) {R1H = -R1H}
+
+                             For more details on usage of the instruction refer to the intrinsics definitions
+                             in the TMS320C28x Optimizing C/C++ Compiler User’s Guide
+                             (www.ti.com/lit/spru514).
+
+
+Flags                        This instruction modifies the following flags in the STF register:
+
+        Flag          TF            ZI                  NI                ZF                 NF            LUF            LVF
+        Modified      Yes           No                  Yes               No                 No            No             Yes
+
+
+
+Pipeline                     This is a single-cycle instruction.
+
+
+
+
+756     Fast Integer Division Unit (FINTDIV)                                               SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                            Submit Documentation Feedback
+                                               Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                                                 ABSI64DIV32 R2H, R1H:R0H, R3H —
+
+ABSI64DIV32 R2H, R1H:R0H, R3H
+
+Operands
+
+        R3H                    Denominator
+        R1H:R0H                Numerator
+        R2H                    Remainder
+
+
+Opcode
+                          LSW: 1110 0101 1010 1000
+
+Description               NI = R1H(31)
+                          TF = R1H(31) ^ R3H(31)
+                          if   ((R1H:R0H = 0x8000_0000_0000_0000) | (R3H = 0x8000_0000)) { LVF = 1}
+                          R2H = 0
+                          if (R1H(31) = 1) {R1H:R0H = -(R1H:R0H)}
+                          if (R3H(31) = 1) {R3H = -(R3H)}
+
+                          For more details on usage of the instruction refer to the intrinsics definitions
+                          in the TMS320C28x Optimizing C/C++ Compiler User’s Guide
+                          (www.ti.com/lit/spru514).
+
+
+Flags                     This instruction modifies the following flags in the STF register:
+
+        Flag       TF           ZI                NI              ZF                 NF                 LUF              LVF
+        Modified   Yes          No                Yes             No                 No                 No               Yes
+
+
+
+Pipeline                  This is a single-cycle instruction.
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                Fast Integer Division Unit (FINTDIV)   757
+Submit Documentation Feedback
+                                       Copyright © 2014–2019, Texas Instruments Incorporated
+ABSI64DIV32U R2H, R1H:R0H —                                                                                                     www.ti.com
+
+
+ABSI64DIV32U R2H, R1H:R0H
+
+Operands
+
+        R1H:R0H                    Numerator
+        R2H                        Remainder
+
+
+Opcode
+                             LSW: 1110 0101 1010 1001
+
+Description
+                             NI = R1H(31)
+                             TF = R1H(31)
+                             if   (R1H:R0H = 0x8000_0000_0000_0000) { LVF = 1}
+                             R2H = 0
+                             if (R1H(31) = 1) {R1H:R0H = -(R1H:R0H)}
+
+                             For more details on usage of the instruction refer to the intrinsics definitions
+                             in the TMS320C28x Optimizing C/C++ Compiler User’s Guide
+                             (www.ti.com/lit/spru514).
+
+
+Flags                        This instruction modifies the following flags in the STF register:
+
+        Flag          TF            ZI                  NI                ZF                 NF            LUF            LVF
+        Modified      Yes           No                  Yes               No                 No            No             Yes
+
+
+
+Pipeline                     This is a single-cycle instruction.
+
+
+
+
+758     Fast Integer Division Unit (FINTDIV)                                               SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                            Submit Documentation Feedback
+                                               Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                                     ABSI64DIV64 R2H:R4H, R1H:R0H, R3H:R5H —
+
+ABSI64DIV64 R2H:R4H, R1H:R0H, R3H:R5H
+
+Operands
+
+        R3H:R5H                Denominator
+        R1H:R0H                Numerator
+        R2H:R4H                Remainder
+
+
+Opcode
+                          LSW: 1110 0101 1011 1000
+
+Description               NI = R1H(31)
+                          TF = R1H(31) ^ R3H(31)
+                          if ((R1H:R0H = 0x8000_0000_0000_0000)| (R3H:R5H = 0x8000_0000_0000_0000)) { LVF =
+                          1}
+                          R2H:R4H = 0
+                          if (R1H(31) = 1) {R1H:R0H = -(R1H:R0H)}
+                          if (R3H(31) = 1) {R3H:R5H = -(R3H:R5H)}
+
+                          For more details on usage of the instruction refer to the intrinsics definitions
+                          in the TMS320C28x Optimizing C/C++ Compiler User’s Guide
+                          (www.ti.com/lit/spru514).
+
+
+Flags                     This instruction modifies the following flags in the STF register:
+
+        Flag       TF           ZI                NI              ZF                 NF                 LUF              LVF
+        Modified   Yes          No                Yes             No                 No                 No               Yes
+
+
+
+Pipeline                  This is a single-cycle instruction.
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                Fast Integer Division Unit (FINTDIV)   759
+Submit Documentation Feedback
+                                       Copyright © 2014–2019, Texas Instruments Incorporated
+ABSI64DIV64U R2H:R4H, R1H:R0H —                                                                                                 www.ti.com
+
+
+ABSI64DIV64U R2H:R4H, R1H:R0H
+
+Operands
+
+        R1H:R0H                    Numerator
+        R2H:R4H                    Denominator
+
+
+Opcode
+                             LSW: 1110 0101 1011 1001
+
+Description
+                             NI = R1H(31)
+                             TF = R1H(31)
+                             if (R1H:R0H = 0x8000_0000_0000_0000) { LVF = 1}
+                             R2H:R4H = 0
+                             if (R1H(31) = 1) {R1H:R0H = -(R1H:R0H)}
+
+                             For more details on usage of the instruction refer to the intrinsics definitions
+                             in the TMS320C28x Optimizing C/C++ Compiler User’s Guide
+                             (www.ti.com/lit/spru514).
+
+
+Flags                        This instruction modifies the following flags in the STF register:
+
+        Flag          TF            ZI                  NI                ZF                 NF            LUF            LVF
+        Modified      Yes           No                  Yes               No                 No            No             Yes
+
+
+
+Pipeline                     This is a single-cycle instruction.
+
+
+
+
+760     Fast Integer Division Unit (FINTDIV)                                               SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                            Submit Documentation Feedback
+                                               Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                                                            SUBC4UI32 R2H, R1H, R3H —
+
+SUBC4UI32 R2H, R1H, R3H
+
+Operands
+
+        R3H                    Denominator
+        R1H                    Numerator/Quotient
+        R2H                    Remainder
+
+
+Opcode
+                          LSW: 1110 0101 0110 0100
+
+Description
+                          ZI =0
+                          If (R3H = 0x0) {LVF = 1}
+                          for(i=1;i<=4;i++) {
+                              temp(32:0) = (R2H << 1) + R1H(31) - R3H
+                              if(temp(32:0) >= 0)
+                                     R2H = temp(31:0);
+                                     R1H = (R1H << 1) + 1
+                              else
+                                     R2H:R1H = (R2H:R1H) << 1
+                          }
+                          If (R2H = 0x0) {ZI = 1}
+
+                          For more details on usage of the instruction refer to the intrinsics definitions
+                          in the TMS320C28x Optimizing C/C++ Compiler User’s Guide
+                          (www.ti.com/lit/spru514).
+
+
+Flags                     This instruction modifies the following flags in the STF register:
+
+        Flag       TF           ZI                NI               ZF                 NF                 LUF              LVF
+        Modified   No           Yes               No               No                 No                 No               Yes
+
+
+
+Pipeline                  This is a single-cycle instruction.
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                 Fast Integer Division Unit (FINTDIV)   761
+Submit Documentation Feedback
+                                        Copyright © 2014–2019, Texas Instruments Incorporated
+SUBC2UI64 R2H:R4H, R1H:R0H, R3H:R5H —                                                                                           www.ti.com
+
+
+SUBC2UI64 R2H:R4H, R1H:R0H, R3H:R5H
+
+Operands
+
+        R3H:R5H                    Denominator
+        R1H:R0H                    Numerator/Quotient
+        R2H:R4H                    Remainder
+
+
+Opcode
+                             LSW: 1110 0101 0110 0101
+
+Description
+                             ZI =0
+                             If ((R3H:R5H) = 0x0) {LVF = 1}
+                             for(i=1;i<=2;i++) {
+                                 temp(64:0) = ((R2H:R4H) << 1) + R1H(31) - (R3H:R5H)
+                                 if(temp(64:0) >= 0)
+                                      (R2H:R4H) = temp(63:0);
+                                      (R1H:R0H) = ((R1H:R0H) << 1) + 1
+                                 else
+                                    (R2H:R4H:R1H:R0H)=(R2H:R4H:R1H:R0H)<<1
+                             }
+                             If (R2H:R4H = 0x0) {ZI = 1}
+
+                             For more details on usage of the instruction refer to the intrinsics definitions
+                             in the TMS320C28x Optimizing C/C++ Compiler User’s Guide
+                             (www.ti.com/lit/spru514).
+
+
+Flags                        This instruction modifies the following flags in the STF register:
+
+        Flag          TF            ZI                  NI                ZF                 NF            LUF            LVF
+        Modified      No            Yes                 No                No                 No            No             Yes
+
+
+
+Pipeline                     This is a single-cycle instruction.
+
+
+
+
+762     Fast Integer Division Unit (FINTDIV)                                               SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                            Submit Documentation Feedback
+                                               Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                                                                  NEGI32DIV32 R1H , R2H —
+
+NEGI32DIV32 R1H , R2H
+
+Operands
+
+        R2H                    Remainder
+        R1H                    Quotient
+
+
+Opcode
+                          LSW: 1110 0101 0110 1010
+
+Description
+                          if(TF = TRUE)
+                                 R1H = -R1H
+                          if(NI = TRUE)
+                                 (R2H) = -(R2H)
+
+                          For more details on usage of the instruction refer to the intrinsics definitions
+                          in the TMS320C28x Optimizing C/C++ Compiler User’s Guide
+                          (www.ti.com/lit/spru514).
+
+
+Flags                     This instruction does not modify any flags in the STF register:
+
+        Flag       TF           ZI                 NI                ZF                 NF                 LUF              LVF
+        Modified   No           No                 No                No                 No                 No               No
+
+
+
+Pipeline                  This is a single-cycle instruction.
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                   Fast Integer Division Unit (FINTDIV)   763
+Submit Documentation Feedback
+                                          Copyright © 2014–2019, Texas Instruments Incorporated
+ENEGI32DIV32 R1H , R2H, R3H —                                                                                                   www.ti.com
+
+
+ENEGI32DIV32 R1H , R2H, R3H
+
+Operands
+
+        R3H                        Denominator
+        R2H                        Remainder
+        R1H                        Quotient
+
+
+Opcode
+                             LSW: 1110 0101 0110 1011
+
+Description                  IF (NI = 1 && ZI = 0) {
+                                   R1H = R1H + 1
+                                   R2H = R3H-R2H
+                             }
+                             if(TF = TRUE)
+                                    R1H = -R1H
+
+                             For more details on usage of the instruction refer to the intrinsics definitions
+                             in the TMS320C28x Optimizing C/C++ Compiler User’s Guide
+                             (www.ti.com/lit/spru514).
+
+
+Flags                        This instruction does not modify any flags in the STF register:
+
+        Flag          TF            ZI                  NI                ZF                 NF            LUF            LVF
+        Modified      No            No                  No                No                 No            No             No
+
+
+
+Pipeline                     This is a single-cycle instruction.
+
+
+
+
+764     Fast Integer Division Unit (FINTDIV)                                               SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                            Submit Documentation Feedback
+                                               Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                                                         MNEGI32DIV32 R1H , R2H, R3H —
+
+MNEGI32DIV32 R1H , R2H, R3H
+
+Operands
+
+        R3H                    Denominator
+        R2H                    Remainder
+        R1H                    Quotient
+
+
+Opcode
+                          LSW: 1110 0101 0110 1100
+
+Description
+                          if (TF = 1 & ZI = 0) {
+                                 R1H = R1H + 1
+                                 R2H = R3H - R2H
+                          }
+                          if(TF = TRUE)
+                                 R1H = -R1H
+                          if(NI XOR TF = TRUE)
+                                 (R2H) = -(R2H)
+
+                          For more details on usage of the instruction refer to the intrinsics definitions
+                          in the TMS320C28x Optimizing C/C++ Compiler User’s Guide
+                          (www.ti.com/lit/spru514).
+
+
+Flags                     This instruction does not modify any flags in the STF register:
+
+        Flag       TF           ZI                 NI                ZF                 NF                 LUF              LVF
+        Modified   No           No                 No                No                 No                 No               No
+
+
+
+Pipeline                  This is a single-cycle instruction.
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                   Fast Integer Division Unit (FINTDIV)   765
+Submit Documentation Feedback
+                                          Copyright © 2014–2019, Texas Instruments Incorporated
+NEGI64DIV32 R1H:R0H, R2H —                                                                                                      www.ti.com
+
+
+NEGI64DIV32 R1H:R0H, R2H
+
+Operands
+
+        R2H                        Remainder
+        R1H:R0H                    Quotient
+
+
+Opcode
+                             LSW: 1110 0101 1010 1010
+
+Description                  if(TF = TRUE)
+                                    (R1H:R0H) = -(R1H:R0H)
+                             if(NI = TRUE)
+                                    (R2H) = -(R2H)
+
+                             For more details on usage of the instruction refer to the intrinsics definitions
+                             in the TMS320C28x Optimizing C/C++ Compiler User’s Guide
+                             (www.ti.com/lit/spru514).
+
+
+Flags                        This instruction does not modify any flags in the STF register:
+
+        Flag          TF            ZI                  NI                ZF                 NF            LUF            LVF
+        Modified      No            No                  No                No                 No            No             No
+
+
+
+Pipeline                     This is a single-cycle instruction.
+
+
+
+
+766     Fast Integer Division Unit (FINTDIV)                                               SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                            Submit Documentation Feedback
+                                               Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                                                   ENEGI64DIV32 R1H:R0H , R2H, R3H —
+
+ENEGI64DIV32 R1H:R0H , R2H, R3H
+
+Operands
+
+        R3H                    Denominator
+        R2H                    Remainder
+        R1H:R0H                Quotient
+
+
+Opcode
+                          LSW: 1110 0101 1010 1011
+
+Description               if (NI = 1 && ZI = 0) {
+                                R1H:R0H = R1H:R0H + 1
+                                R2H = R3H-R2H
+                          }
+                          if(TF = TRUE)
+                                 R1H:R0H = -R1H:R0H
+
+                          For more details on usage of the instruction refer to the intrinsics definitions
+                          in the TMS320C28x Optimizing C/C++ Compiler User’s Guide
+                          (www.ti.com/lit/spru514).
+
+
+Flags                     This instruction does not modify any flags in the STF register:
+
+        Flag       TF           ZI                 NI                ZF                 NF                 LUF              LVF
+        Modified   No           No                 No                No                 No                 No               No
+
+
+
+Pipeline                  This is a single-cycle instruction.
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                   Fast Integer Division Unit (FINTDIV)   767
+Submit Documentation Feedback
+                                          Copyright © 2014–2019, Texas Instruments Incorporated
+MNEGI64DIV32 R1H:R0H , R2H, R3H —                                                                                               www.ti.com
+
+
+MNEGI64DIV32 R1H:R0H , R2H, R3H
+
+Operands
+
+        R3H                        Denominator
+        R2H                        Remainder
+        R1H:R0H                    Quotient
+
+
+Opcode
+                             LSW: 1110 0101 1010 1100
+
+Description                  if (TF = 1 & ZI = 0) {
+                                    R1H:R0H = R1H:R0H + 1
+                                    R2H = R3H - R2H
+                             }
+                             if(TF = TRUE)
+                                    R1H:R0H = -R1H:R0H
+                             if(NI XOR TF = TRUE)
+                                    (R2H) = -(R2H)
+
+                             For more details on usage of the instruction refer to the intrinsics definitions
+                             in the TMS320C28x Optimizing C/C++ Compiler User’s Guide
+                             (www.ti.com/lit/spru514).
+
+
+Flags                        This instruction does not modify any flags in the STF register:
+
+        Flag          TF            ZI                  NI                ZF                 NF            LUF            LVF
+        Modified      No            No                  No                No                 No            No             No
+
+
+
+Pipeline                     This is a single-cycle instruction.
+
+
+
+
+768     Fast Integer Division Unit (FINTDIV)                                               SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                            Submit Documentation Feedback
+                                               Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                                                        NEGI64DIV64 R1H:R0H, R2H:R4H —
+
+NEGI64DIV64 R1H:R0H, R2H:R4H
+
+Operands
+
+        R2H:R4H                Remainder
+        R1H:R0H                Quotient
+
+
+Opcode
+                          LSW: 1110 0101 1011 1010
+
+Description               if(TF = TRUE)
+                                 (R1H:R0H) = -(R1H:R0H)
+                          if(NI = TRUE)
+                                 (R2H:R4H) = -(R2H:R4H)
+
+                          For more details on usage of the instruction refer to the intrinsics definitions
+                          in the TMS320C28x Optimizing C/C++ Compiler User’s Guide
+                          (www.ti.com/lit/spru514).
+
+
+Flags                     This instruction does not modify any flags in the STF register:
+
+        Flag       TF           ZI                 NI                ZF                 NF                 LUF              LVF
+        Modified   No           No                 No                No                 No                 No               No
+
+
+
+Pipeline                  This is a single-cycle instruction.
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                   Fast Integer Division Unit (FINTDIV)   769
+Submit Documentation Feedback
+                                          Copyright © 2014–2019, Texas Instruments Incorporated
+ENEGI64DIV64 R1H:R0H , R2H:R4H, R3H:R5H —                                                                                       www.ti.com
+
+
+ENEGI64DIV64 R1H:R0H , R2H:R4H, R3H:R5H
+
+Operands
+
+        R3H:R5H                    Denominator
+        R2H:R4H                    Remainder
+        R1H:R0H                    Quotient
+
+
+Opcode
+                             LSW: 1110 0101 1011 1011
+
+Description                  if (NI = 1 && ZI = 0) {
+                                   R1H:R0H = R1H:R0H + 1
+                                   R2H:R4H = R3H:R5H-R2H:R4H
+                             }
+                             if(TF = TRUE)
+                                    R1H:R0H = -R1H:R0H
+
+                             For more details on usage of the instruction refer to the intrinsics definitions
+                             in the TMS320C28x Optimizing C/C++ Compiler User’s Guide
+                             (www.ti.com/lit/spru514).
+
+
+Flags                        This instruction does not modify any flags in the STF register:
+
+        Flag          TF            ZI                  NI                ZF                 NF            LUF            LVF
+        Modified      No            No                  No                No                 No            No             No
+
+
+
+Pipeline                     This is a single-cycle instruction.
+
+
+
+
+770     Fast Integer Division Unit (FINTDIV)                                               SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                            Submit Documentation Feedback
+                                               Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                                      MNEGI64DIV64 R1H:R0H , R2H:R4H, R3H:R5H —
+
+MNEGI64DIV64 R1H:R0H , R2H:R4H, R3H:R5H
+
+Operands
+
+        R3H:R5H                Denominator
+        R2H:R4H                Remainder
+        R1H:R0H                Quotient
+
+
+Opcode
+                          LSW: 1110 0101 1011 1100
+
+Description               if (TF = 1 & ZI = 0) {
+                                 R1H:R0H = R1H:R0H + 1
+                                 R2H:R4H = R3H:R5H - R2H:R4H
+                          }
+                          if(TF = TRUE)
+                                 R1H:R0H = -R1H:R0H
+                          if(NI XOR TF = TRUE)
+                                 (R2H:R4H) = -(R2H:R4H)
+
+                          For more details on usage of the instruction refer to the intrinsics definitions
+                          in the TMS320C28x Optimizing C/C++ Compiler User’s Guide
+                          (www.ti.com/lit/spru514).
+
+
+Flags                     This instruction does not modify any flags in the STF register:
+
+        Flag       TF           ZI                 NI                ZF                 NF                 LUF              LVF
+        Modified   No           No                 No                No                 No                 No               No
+
+
+
+Pipeline                  This is a single-cycle instruction.
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                   Fast Integer Division Unit (FINTDIV)   771
+Submit Documentation Feedback
+                                          Copyright © 2014–2019, Texas Instruments Incorporated
+                                                                                                                                 Chapter 7
+                                                                                  SPRUHS1C – October 2014 – Revised November 2019
+
+
+
+                                                                    Trigonometric Math Unit (TMU)
+
+      The Trigonometric Math Unit (TMU) is a fully programmable block that enhances the instruction set of the
+      C28-FPU to more efficiently execute common trigonometric and arithmetic operations.
+      This document describes the architecture and instruction set of the C28x+FPU+TMU. For a list of all
+      devices with the TMU, see the TMS320x28xx, 28xxx DSP Peripheral Reference Guide (SPRU566).
+
+      Topic    ...........................................................................................................................   Page
+
+
+         7.1      Overview ......................................................................................................... 773
+         7.2      Components of the C28x+FPU Plus TMU ............................................................. 773
+         7.3      Data Format ..................................................................................................... 774
+         7.4      Pipeline ........................................................................................................... 775
+         7.5      TMU Instruction Set .......................................................................................... 780
+
+
+
+
+772   Trigonometric Math Unit (TMU)                                                      SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                          Submit Documentation Feedback
+                                             Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                                                                                Overview
+
+7.1    Overview
+       The TMU extends the capabilities of a C28x+FPU enabled processor by adding instructions to speed up
+       the execution of common trigonometric and arithmetic operations listed in Table 7-1.
+
+                                             Table 7-1. TMU Type 0 Instructions
+        Instructions                                                  C Equivalent Operation
+        MPY2PIF32 RaH,RbH                                             a = b * 2pi
+        DIV2PIF32 RaH,RbH                                             a = b / 2pi
+        DIVF32 RaH,RbH,RcH                                            a = b/c
+        SQRTF32 RaH,RbH                                               a = sqrt(b)
+        SINPUF32 RaH,RbH                                              a = sin(b*2pi)
+        COSPUF32 RaH,RbH                                              a = cos(b*2pi)
+        ATANPUF32 RaH,RbH                                             a = atan(b)/2pi
+        QUADF32 RaH,RbH,RcH,RdH                                       Operation to assist in calculating ATANPU2
+
+
+                                      Table 7-2. TMU Type 1 Additional Instructions
+        Instructions                                                  C Equivalent Operation
+        IEXP2F32 RaH,RbH                                              RaH = 2-|RbH|
+        LOG2F32 RaH,RbH                                               RaH = LOG2(RbH)
+
+
+
+7.2    Components of the C28x+FPU Plus TMU
+       The TMU extends the capabilities of the C28x+FPU processors by adding new instructions and, in some
+       cases, leveraging existing FPU instructions to carry out common arithmetic operations used in control
+       applications. No changes have been made to existing instructions, pipeline or memory bus architecture.
+       All TMU instructions use the existing FPU register set (R0H to R7H) to carry out their operations.
+
+7.2.1 Interrupt Context Save and Restore
+       Since the TMU uses the same register set and flags as the FPU, there are no special considerations with
+       regards to interrupt context save and restore.
+       If a TMU operation is executing when an interrupt occurs, the C28 can initiate an interrupt context switch
+       without affecting the TMU operation. The TMU will continue to process the operation to completion. Even
+       though most TMU operations are multi-cycle, the TMU operation will have completed by the time register
+       context save operations for the FPU are commenced. When restoring FPU registers, you must make sure
+       that all TMU operations are completed before restoring any register used by another TMU operation.
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                Trigonometric Math Unit (TMU)   773
+Submit Documentation Feedback
+                                       Copyright © 2014–2019, Texas Instruments Incorporated
+

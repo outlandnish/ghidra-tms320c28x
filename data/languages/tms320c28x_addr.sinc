@@ -1,0 +1,162 @@
+# C28x loc16 / loc32 addressing-mode sub-tables.
+# Included by tms320c28x.sinc.
+#
+# THE central abstraction: one 8-bit field (Table 5-1, SPRU430F ch.5) decodes to
+# every memory/register addressing mode and is reused by nearly every instruction.
+# Implemented once here; instructions reference `loc16` / `loc32`.
+#
+# Scope: AMODE=0 modes (compiler default / what the target firmware emits). AMODE=1
+# rows are gated by ctx_AMODE and added later.
+#
+# Word-addressable: a loc16 access is 1 word (size 2), loc32 is 2 words (size 4).
+# The "+1 for loc16 / +2 for loc32" pointer deltas in the manual are word-size deltas.
+#
+# The loc-field sub-fields (loc_b7, loc_b76, loc_mode5, loc_areg, loc_off6,
+# loc_imm3, loc_full8) are defined on the instr16 token in tms320c28x.sinc.
+
+# --- attach the 3-bit loc_areg field to the register files ----------------------
+# So a constructor can name the selected register directly.
+attach variables [ loc_areg ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
+
+# A separate copy of the same 3 bits, attached to the 16-bit AR view, for the
+# loc16 @ARn register-direct mode.
+attach variables [ loc_areg16 ] [ AR0 AR1 AR2 AR3 AR4 AR5 AR6 AR7 ];
+
+# The high-byte 3-bit AR selector (arsel3, bits 8..10) used by MOV loc16,ARn etc.,
+# attached to the 16-bit AR view.
+attach variables [ arsel3 ] [ AR0 AR1 AR2 AR3 AR4 AR5 AR6 AR7 ];
+
+# BANZ ARn selector (banz_n, bits 0..2) -> 16-bit AR view.
+attach variables [ banz_n ] [ AR0 AR1 AR2 AR3 AR4 AR5 AR6 AR7 ];
+
+# =============================================================================
+# loc16 : 16-bit (1-word) memory/register operand.  AMODE = 0.
+# Each constructor exports a size-2 operand (memory value or 16-bit register).
+# =============================================================================
+
+# --- Direct:  @6bit  ->  addr = (DP << 6) | 6bit  (DP occupies addr bits 21:6)
+loc16: "@"loc_off6  is ctx_AMODE=0 & loc_b76=0b00 & loc_off6 {
+    local a:4 = (zext(DP) << 6) | zext(loc_off6:4);
+    export *[ram]:2 a;
+}
+
+# --- Stack:  *-SP[6bit]  ->  addr = SP - 6bit
+loc16: "*-SP["loc_off6"]"  is ctx_AMODE=0 & loc_b76=0b01 & loc_off6 {
+    local a:4 = zext(SP) - zext(loc_off6:2);
+    export *[ram]:2 a;
+}
+
+# --- Stack:  *SP++   (addr = SP, then SP += 1 word)
+loc16: "*SP++"  is ctx_AMODE=0 & loc_full8=0b10111101 {
+    local a:4 = zext(SP);
+    SP = SP + 1;
+    export *[ram]:2 a;
+}
+
+# --- Stack:  *--SP   (SP -= 1 word, then addr = SP)
+loc16: "*--SP"  is ctx_AMODE=0 & loc_full8=0b10111110 {
+    SP = SP - 1;
+    local a:4 = zext(SP);
+    export *[ram]:2 a;
+}
+
+# --- Indirect:  *XARn++   (addr = XARn, post-increment by 1 word)
+loc16: "*"loc_areg"++"  is ctx_AMODE=0 & loc_mode5=0b10000 & loc_areg {
+    local a:4 = loc_areg;
+    loc_areg = loc_areg + 1;
+    export *[ram]:2 a;
+}
+
+# --- Indirect:  *--XARn   (pre-decrement by 1 word, then addr = XARn)
+loc16: "*--"loc_areg  is ctx_AMODE=0 & loc_mode5=0b10001 & loc_areg {
+    loc_areg = loc_areg - 1;
+    local a:4 = loc_areg;
+    export *[ram]:2 a;
+}
+
+# --- Indirect indexed:  *+XARn[AR0]   (addr = XARn + AR0, AR0 unsigned 16-bit)
+loc16: "*+"loc_areg"[AR0]"  is ctx_AMODE=0 & loc_mode5=0b10010 & loc_areg {
+    local a:4 = loc_areg + zext(AR0);
+    export *[ram]:2 a;
+}
+
+# --- Indirect indexed:  *+XARn[AR1]   (addr = XARn + AR1)
+loc16: "*+"loc_areg"[AR1]"  is ctx_AMODE=0 & loc_mode5=0b10011 & loc_areg {
+    local a:4 = loc_areg + zext(AR1);
+    export *[ram]:2 a;
+}
+
+# --- Indirect immediate index:  *+XARn[3bit]   (addr = XARn + imm3, unsigned)
+loc16: "*+"loc_areg"["loc_imm3"]"  is ctx_AMODE=0 & loc_b76=0b11 & loc_areg & loc_imm3 {
+    local a:4 = loc_areg + zext(loc_imm3:4);
+    export *[ram]:2 a;
+}
+
+# --- 16-bit register-direct modes (@ARn / @AH / @AL / @PH / @PL / @TH / @SP) ----
+loc16: "@"loc_areg16  is ctx_AMODE=0 & loc_mode5=0b10100 & loc_areg16 { export loc_areg16; }
+loc16: "@AH"  is ctx_AMODE=0 & loc_full8=0b10101000 { export AH; }
+loc16: "@AL"  is ctx_AMODE=0 & loc_full8=0b10101001 { export AL; }
+loc16: "@PH"  is ctx_AMODE=0 & loc_full8=0b10101010 { export PH; }
+loc16: "@PL"  is ctx_AMODE=0 & loc_full8=0b10101011 { export PL; }
+loc16: "@TH"  is ctx_AMODE=0 & loc_full8=0b10101100 { export T;  }   # @TH == high half of XT == T
+loc16: "@SP"  is ctx_AMODE=0 & loc_full8=0b10101101 { export SP; }
+
+# =============================================================================
+# loc32 : 32-bit (2-word) memory/register operand.  AMODE = 0.
+# Each constructor exports a size-4 operand; pointer deltas are 2 words.
+# =============================================================================
+
+loc32: "@"loc_off6  is ctx_AMODE=0 & loc_b76=0b00 & loc_off6 {
+    local a:4 = (zext(DP) << 6) | zext(loc_off6:4);
+    export *[ram]:4 a;
+}
+
+loc32: "*-SP["loc_off6"]"  is ctx_AMODE=0 & loc_b76=0b01 & loc_off6 {
+    local a:4 = zext(SP) - zext(loc_off6:2);
+    export *[ram]:4 a;
+}
+
+loc32: "*SP++"  is ctx_AMODE=0 & loc_full8=0b10111101 {
+    local a:4 = zext(SP);
+    SP = SP + 2;
+    export *[ram]:4 a;
+}
+
+loc32: "*--SP"  is ctx_AMODE=0 & loc_full8=0b10111110 {
+    SP = SP - 2;
+    local a:4 = zext(SP);
+    export *[ram]:4 a;
+}
+
+loc32: "*"loc_areg"++"  is ctx_AMODE=0 & loc_mode5=0b10000 & loc_areg {
+    local a:4 = loc_areg;
+    loc_areg = loc_areg + 2;
+    export *[ram]:4 a;
+}
+
+loc32: "*--"loc_areg  is ctx_AMODE=0 & loc_mode5=0b10001 & loc_areg {
+    loc_areg = loc_areg - 2;
+    local a:4 = loc_areg;
+    export *[ram]:4 a;
+}
+
+loc32: "*+"loc_areg"[AR0]"  is ctx_AMODE=0 & loc_mode5=0b10010 & loc_areg {
+    local a:4 = loc_areg + zext(AR0);
+    export *[ram]:4 a;
+}
+
+loc32: "*+"loc_areg"[AR1]"  is ctx_AMODE=0 & loc_mode5=0b10011 & loc_areg {
+    local a:4 = loc_areg + zext(AR1);
+    export *[ram]:4 a;
+}
+
+loc32: "*+"loc_areg"["loc_imm3"]"  is ctx_AMODE=0 & loc_b76=0b11 & loc_areg & loc_imm3 {
+    local a:4 = loc_areg + zext(loc_imm3:4);
+    export *[ram]:4 a;
+}
+
+# --- 32-bit register-direct modes (@XARn / @ACC / @P / @XT) ---------------------
+loc32: "@"loc_areg  is ctx_AMODE=0 & loc_mode5=0b10100 & loc_areg { export loc_areg; }
+loc32: "@ACC"  is ctx_AMODE=0 & loc_full8=0b10101001 { export ACC; }
+loc32: "@P"    is ctx_AMODE=0 & loc_full8=0b10101011 { export P;   }
+loc32: "@XT"   is ctx_AMODE=0 & loc_full8=0b10101100 { export XT;  }

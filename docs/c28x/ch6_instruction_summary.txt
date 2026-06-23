@@ -1,0 +1,459 @@
+www.ti.com                                                                                                          Summary of Instructions
+
+                                       Table 6-1. Summary of Instructions (continued)
+ LC 22bit — Long Call ...................................................................................................................   219
+ LCR #22bit — Long Call Using RPC .................................................................................................         220
+ LCR *XARn — Long Indirect Call Using RPC .......................................................................................           221
+ LOOPNZ loc16,#16bit — Loop While Not Zero ....................................................................................             222
+ LOOPZ loc16,#16bit — Loop While Zero ...........................................................................................           224
+ LPADDR — Set the AMODE Bit......................................................................................................           226
+ LRET — Long Return ................................................................................................................        227
+ LRETE — Long Return and Enable Interrupts .....................................................................................            228
+ LRETR — Long Return Using RPC .................................................................................................            229
+ LSL ACC,#1..16 — Logical Shift Left .................................................................................................      230
+ LSL ACC,T — Logical Shift Left by T(3:0) ...........................................................................................       231
+ LSL AX,#1...16 — Logical Shift Left ..................................................................................................     232
+ LSL AX,T — Logical Shift Left by T(3:0) .............................................................................................      233
+ LSL64 ACC:P,#1..16 — Logical Shift Left ...........................................................................................        234
+ LSL64 ACC:P,T — 64-Bit Logical Shift Left by T(5:0) .............................................................................          235
+ LSLL ACC,T — Logical Shift Left by T (4:0).........................................................................................        236
+ LSR AX,#1...16 — Logical Shift Right ................................................................................................      237
+ LSR AX,T — Logical Shift Right by T(3:0) ...........................................................................................       238
+ LSR64 ACC:P,#1..16 — 64-Bit Logical Shift Right .................................................................................          239
+ LSR64 ACC:P,T — 64-Bit Logical Shift Right by T(5:0) ...........................................................................           240
+ LSRL ACC,T — Logical Shift Right by T (4:0) ......................................................................................         241
+ MAC P,loc16,0:pma — Multiply and Accumulate ..................................................................................             242
+ MAC P ,loc16,*XAR7/++ — Multiply and Accumulate .............................................................................              244
+ MAX AX, loc16 — Find the Maximum................................................................................................           246
+ MAXCUL P,loc32 — Conditionally Find the Unsigned Maximum ................................................................                  247
+ MAXL ACC,loc32 — Find the 32-bit Maximum .....................................................................................             248
+ MIN AX, loc16 — Find the Minimum .................................................................................................         249
+ MINCUL P,loc32 — Conditionally Find the Unsigned Minimum ..................................................................                250
+ MINL ACC,loc32 — Find the 32-bit Minimum .......................................................................................           251
+ MOV *(0:16bit), loc16 — Move Value ................................................................................................        252
+ MOV ACC,#16bit<<#0..15 — Load Accumulator With Shift .......................................................................               253
+ MOV ACC,loc16<<T — Load Accumulator With Shift .............................................................................               254
+ MOV ACC, loc16<<#0..16 — Load Accumulator With Shift .......................................................................               255
+ MOV AR6/7, loc16 — Load Auxiliary Register ......................................................................................          256
+ MOV AX, loc16 — Load AX ...........................................................................................................        257
+ MOV DP, #10bit — Load Data-Page Pointer ........................................................................................           258
+ MOV IER,loc16 — Load the Interrupt-Enable Register ............................................................................            259
+ MOV loc16, #16bit — Save 16-bit Constant ........................................................................................          260
+ MOV loc16, *(0:16bit) — Move Value ................................................................................................        261
+ MOV loc16, #0 — Clear 16-bit Location .............................................................................................        262
+ MOV loc16,ACC << 1..8 — Save Low Word of Shifted Accumulator ...........................................................                   263
+ MOV loc16, ARn — Store 16-bit Auxiliary Register ................................................................................          264
+ MOV loc16, AX — Store AX ...........................................................................................................       265
+ MOV loc16, AX, COND — Store AX Register Conditionally ......................................................................               266
+ MOV loc16,IER — Store Interrupt-Enable Register ................................................................................           268
+ MOV loc16,OVC — Store the Overflow Counter....................................................................................             269
+ MOV loc16,P — Store Lower Half of Shifted P Register...........................................................................            270
+ MOV loc16, T — Store the T Register................................................................................................        271
+ MOV OVC, loc16 — Load the Overflow Counter ...................................................................................             272
+
+
+SPRU430F – August 2001 – Revised April 2015                                                      C28x Assembly Language Instructions         109
+Submit Documentation Feedback
+                                              Copyright © 2001–2015, Texas Instruments Incorporated
+Summary of Instructions                                                                                                         www.ti.com
+
+
+                                      Table 6-1. Summary of Instructions (continued)
+ MOV PH, loc16 — Load the High Half of the P Register ..........................................................................        273
+ MOV PL, loc16 — Load the Low Half of the P Register ...........................................................................        274
+ MOV PM, AX — Load Product Shift Mode ...........................................................................................       275
+ MOV T, loc16 — Load the Upper Half of the XT Register .........................................................................        276
+ MOV TL, #0 — Clear the Lower Half of the XT Register...........................................................................        277
+ MOV XARn, PC — Save the Current Program Counter ...........................................................................            278
+ MOVA T,loc16 — Load T Register and Add Previous Product ...................................................................            279
+ MOVAD T, loc16 — Load T Register .................................................................................................     280
+ MOVB ACC,#8bit — Load Accumulator With 8-bit Value .........................................................................           281
+ MOVB AR6/7, #8bit — Load Auxiliary Register With an 8-bit Constant .........................................................           282
+ MOVB AX, #8bit — Load AX With 8-bit Constant ..................................................................................        283
+ MOVB AX.LSB, loc16 — Load Byte Value ..........................................................................................        284
+ MOVB AX.MSB, loc16 — Load Byte Value .........................................................................................         286
+ MOVB loc16,#8bit,COND — Conditionally Save 8-bit Constant .................................................................            288
+ MOVB loc16, AX.LSB — Store LSB of AX Register ...............................................................................          290
+ MOVB loc16, AX.MSB — Store MSB of AX Register ..............................................................................           292
+ MOVB XARn, #8bit — Load Auxiliary Register With 8-bit Value .................................................................          294
+ MOVDL XT,loc32 — Store XT and Load New XT ..................................................................................           295
+ MOVH loc16,ACC << 1..8 — Description ............................................................................................      296
+ MOVH loc16, P — Save High Word of the P Register .............................................................................         297
+ MOVL ACC,loc32 — Load Accumulator With 32 Bits ..............................................................................          298
+ MOVL ACC,P << PM — Load the Accumulator With Shifted P ...................................................................             299
+ MOVL loc32, ACC — Store 32-bit Accumulator ....................................................................................        300
+ MOVL loc32,ACC,COND — Conditionally Store the Accumulator ...............................................................              301
+ MOVL loc32,P — Store the P Register ..............................................................................................     303
+ MOVL loc32, XARn — Store 32-bit Auxiliary Register .............................................................................       304
+ MOVL loc32,XT — Store the XT Register ...........................................................................................      305
+ MOVL P,ACC — Load P From the Accumulator ....................................................................................          306
+ MOVL P,loc32 — Load the P Register ...............................................................................................     307
+ MOVL XARn, loc32 — Load 32-bit Auxiliary Register .............................................................................        308
+ MOVL XARn, #22bit — Load 32-bit Auxiliary Register With Constant Value ...................................................             309
+ MOVL XT,loc32 — Load the XT Register............................................................................................       310
+ MOVP T,loc16 — Load the T Register and Store P in the Accumulator.........................................................             311
+ MOVS T,loc16 — Load T and Subtract P From the Accumulator ................................................................             312
+ MOVU ACC,loc16 — Load Accumulator With Unsigned Word ...................................................................               313
+ MOVU loc16,OVC — Store the Unsigned Overflow Counter .....................................................................             314
+ MOVU OVC,loc16 — Load Overflow Counter With Unsigned Value.............................................................                315
+ MOVW DP, #16bit — Load the Entire Data Page ..................................................................................         316
+ MOVX TL,loc16 — Load Lower Half of XT With Sign Extension .................................................................            317
+ MOVZ ARn, loc16 — Load Lower Half of XARn and Clear Upper Half .........................................................               318
+ MOVZ DP, #10bit — Load Data Page and Clear High Bits .......................................................................           319
+ MPY ACC,loc16, #16bit — 16 X 16-bit Multiply ....................................................................................      320
+ MPY ACC, T, loc16 — 16 X 16-bit Multiply ..........................................................................................    321
+ MPY P,loc16,#16bit — 16 X 16-Bit Multiply .........................................................................................    322
+ MPY P,T,loc16 — 16 X 16 Multiply ...................................................................................................   323
+ MPYA P,loc16,#16bit — 16 X 16-Bit Multiply and Add Previous Product.......................................................             324
+ MPYA P,T,loc16 — 16 X 16-bit Multiply and Add Previous Product .............................................................           325
+ MPYB ACC,T,#8bit — Multiply by 8-bit Constant...................................................................................       326
+ MPYB P,T,#8bit — Multiply Signed Value by Unsigned 8-bit Constant .........................................................            327
+
+110    C28x Assembly Language Instructions                                                       SPRU430F – August 2001 – Revised April 2015
+                                                                                                            Submit Documentation Feedback
+                                             Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                        Summary of Instructions
+
+                                      Table 6-1. Summary of Instructions (continued)
+ MPYS P,T,loc16 — 16 X 16-bit Multiply and Subtract .............................................................................        328
+ MPYU P,T,loc16 — Unsigned 16 X 16 Multiply .....................................................................................        329
+ MPYU ACC,T,loc16 — 16 X 16-bit Unsigned Multiply .............................................................................          330
+ MPYXU ACC, T, loc16 — Multiply Signed Value by Unsigned Value ...........................................................               331
+ MPYXU P,T,loc16 — Multiply Signed Value by Unsigned Value .................................................................             332
+ NASP — Unalign Stack Pointer ....................................................................................................       333
+ NEG ACC — Negate Accumulator ....................................................................................................       334
+ NEG AX — Negate AX Register.......................................................................................................      335
+ NEG64 ACC:P — Negate Accumulator Register and Product Register .........................................................                336
+ NEGTC ACC — If TC is Equivalent to 1, Negate ACC .............................................................................          337
+ NOP {*ind}{ARPn} — No Operation With Optional Indirect Address Modification .............................................               339
+ NORM ACC, *ind — Normalize ACC and Modify Selected Auxiliary Register .................................................                 340
+ NORM ACC,XARn++/− − — Normalize ACC and Modify Selected Auxiliary Register ........................................                     341
+ NOT ACC — Complement Accumulator .............................................................................................          342
+ NOT AX — Complement AX Register ................................................................................................        343
+ OR ACC, loc16 — Bitwise OR ........................................................................................................     344
+ OR ACC,#16bit << #0..16 — Bitwise OR ............................................................................................       345
+ OR AX, loc16 — Bitwise OR ..........................................................................................................    346
+ OR IER,#16bit — Bitwise OR ..........................................................................................................   347
+ OR IFR,#16bit — Bitwise OR ..........................................................................................................   348
+ OR loc16,#16bit — Bitwise OR .......................................................................................................    349
+ OR loc16, AX — Bitwise OR ..........................................................................................................    350
+ ORB AX,#8bit — Bitwise OR 8-bit Value ............................................................................................      351
+ OUT *(PA),loc16 — Output Data to Port .............................................................................................     352
+ POP ACC — Pop Top of Stack to Accumulator .....................................................................................         353
+ POP ARn:ARm — Pop Top of Stack to 16-bit Auxiliary Registers ...............................................................            354
+ POP AR1H:AR0H — Pop Top of Stack to Upper Half of Auxiliary Registers ...................................................               355
+ POP DBGIER — Pop Top of Stack to DBGIER .....................................................................................           356
+ POP DP — Pop Top of Stack to the Data Page ....................................................................................         357
+ POP DP:ST1 — Pop Top of Stack to DP and ST1 .................................................................................           358
+ POP IFR — Pop Top of Stack to IFR .................................................................................................     359
+ POP loc16 — Pop Top of Stack .......................................................................................................    360
+ POP P — Pop top of Stack to P .....................................................................................................     361
+ POP RPC — Pop RPC Register From Stack ........................................................................................          362
+ POP ST0 — Pop Top of Stack to ST0 ................................................................................................      363
+ POP ST1 — Pop Top of Stack to ST1 ................................................................................................      364
+ POP T:ST0 — Pop Top of Stack to T and ST0 .....................................................................................         365
+ POP XARn — Pop Top of Stack to 32-bit Auxiliary Register ......................................................................         366
+ POP XT — Pop Top of Stack to XT ..................................................................................................      367
+ PREAD loc16,*XAR7 — Read From Program Memory ...........................................................................                368
+ PUSH ACC — Push Accumulator Onto Stack.......................................................................................           369
+ PUSH ARn:ARm — Push 16-bit Auxiliary REgisters Onto Stack ................................................................              370
+ PUSH AR1H:AR0H — Push AR1H and Ar0H Registers on Stack ...............................................................                  371
+ PUSH DBGIER — Push DBGIER Register Onto Stack ............................................................................              372
+ PUSH DP — Push DP Register Onto Stack .........................................................................................         373
+ PUSH DP:ST1 — Push DP and ST1 Onto Stack ...................................................................................            374
+ PUSH IFR — Push IFR Onto Stack ...................................................................................................      375
+ PUSH loc16 — Push 16-bit Value on Stack .........................................................................................       376
+ PUSH P — Push P Onto Stack........................................................................................................      377
+
+
+SPRU430F – August 2001 – Revised April 2015                                                     C28x Assembly Language Instructions       111
+Submit Documentation Feedback
+                                             Copyright © 2001–2015, Texas Instruments Incorporated
+Summary of Instructions                                                                                                        www.ti.com
+
+
+                                      Table 6-1. Summary of Instructions (continued)
+ PUSH RPC — Push RPC Onto Stack ................................................................................................       378
+ PUSH ST0 — Push ST0 Onto Stack..................................................................................................      379
+ PUSH ST1 — Push ST1 Onto Stack..................................................................................................      380
+ PUSH T:ST0 — Push T and ST0 Onto Stack .......................................................................................        381
+ PUSH XARn — Push 32-bit Auxiliary Register Onto Stack .......................................................................         382
+ PUSH XT — Push XT Onto Stack.....................................................................................................     383
+ PWRITE *XAR7,loc16 — Write to Program Memory ...............................................................................          384
+ QMACL P,loc32,*XAR7/++ — Signed 32 X 32-bit Multiply and Accumulate (Upper Half) ....................................                 385
+ QMPYAL P,XT,loc32 — Signed 32-bit Multiply (Upper Half) and Add Previous P .............................................              387
+ QMPYL P,XT,loc32 — Signed 32 X 32-bit Multiply (Upper Half) .................................................................         388
+ QMPYL ACC,XT,loc32 — Signed 32 X 32-bit Multiply (Upper Half) .............................................................           389
+ QMPYSL P,XT,loc32 — Signed 32-bit Multiply (Upper Half) and Subtract Previous P........................................               390
+ QMPYUL P,XT,loc32 — Unsigned 32 X 32-bit Multiply (Upper Half) ............................................................           391
+ QMPYXUL P,XT,loc32 — Signed X Unsigned 32-bit Multiply (Upper Half) .....................................................             392
+ ROL ACC — Rotate Accumulator Left ...............................................................................................     393
+ ROR ACC — Rotate Accumulator Right .............................................................................................      394
+ RPT #8bit/loc16 — Repeat Next Instruction ........................................................................................    395
+ SAT ACC — Saturate Accumulator ...................................................................................................    396
+ SAT64 ACC:P — Saturate 64-bit Value ACC:P .....................................................................................       397
+ SB 8bitOffset,COND — Need description here.....................................................................................       399
+ SBBU ACC,loc16 — Subtract Unsigned Value Plus Inverse Borrow ............................................................             400
+ SBF 8bitOffset,EQ/NEQ/TC/NTC — Short Branch Fast ..........................................................................           401
+ SBRK #8bit — Subtract From Current Auxiliary Register .........................................................................       402
+ SETC Mode — Set Multiple Status Bits ..............................................................................................   403
+ SETC M0M1MAP — Set the M0M1MAP Status Bit ................................................................................            405
+ SETC Objmode — Set the Objmode Status Bit ....................................................................................        406
+ SETC XF — Set XF Bit and Output Signal ...........................................................................................    407
+ SFR ACC,#1..16 — Shift Accumulator Right ........................................................................................     408
+ SFR ACC,T — Shift Accumulator Right ..............................................................................................    409
+ SPM shift — Set Product Mode Shift Bits ...........................................................................................   410
+ SQRA loc16 — Square Value and Add P to ACC ..................................................................................         412
+ SQRS loc16 — Square Value and Subtract P From ACC .........................................................................           413
+ SUB ACC,loc16 << #0..16 — Subtract Shifted Value From Accumulator .......................................................             414
+ SUB ACC,loc16 << T — Subtract Shifted Value From Accumulator .............................................................            416
+ SUB ACC,#16bit << #0..15 — Subtract Shifted Value From Accumulator ......................................................             417
+ SUB AX, loc16 — Subtract Specified Location From AX ..........................................................................        418
+ SUB loc16, AX — Reverse-Subtract Specified Location From AX ...............................................................           419
+ SUBB ACC,#8bit — Subtract 8-bit Value ............................................................................................    420
+ SUBB SP,#7bit — Subtract 7-bit Value ..............................................................................................   421
+ SUBB XARn,#7bit — Subtract 7-Bit From Auxiliary Register .....................................................................        422
+ SUBBL ACC, loc32 — Subtract 32-bit Value Plus Inverse Borrow ..............................................................           423
+ SUBCU ACC,loc16 — Subtract Conditional 16 Bits................................................................................        424
+ SUBCUL ACC,loc32 — Subtract Conditional 32 Bits ..............................................................................        426
+ SUBL ACC, loc32 — Subtract 32-bit Value .........................................................................................     428
+ SUBL ACC,P << PM — Subtract 32-bit Value ......................................................................................       429
+ SUBL loc32, ACC — Subtract 32-bit Value .........................................................................................     430
+ SUBR loc16,AX — Reverse-Subtract Specified Location From AX ..............................................................            431
+ SUBRL loc32, ACC — Reverse-Subtract Specified Location From ACC .......................................................               432
+ SUBU ACC, loc16 — Subtract Unsigned 16-bit Value .............................................................................        433
+
+112    C28x Assembly Language Instructions                                                      SPRU430F – August 2001 – Revised April 2015
+                                                                                                           Submit Documentation Feedback
+                                            Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                      Summary of Instructions
+
+                                      Table 6-1. Summary of Instructions (continued)
+ SUBUL ACC, loc32 — Subtract Unsigned 32-bit Value ........................................................................... 434
+ SUBUL P,loc32 — Subtract Unsigned 32-bit Value ................................................................................ 435
+ TBIT loc16,#bit — Test Specified Bit................................................................................................. 436
+ TBIT loc16,T — Test Bit Specified by Register ..................................................................................... 437
+ TCLR loc16,#bit — Test and Clear Specified Bit ................................................................................... 438
+ TEST ACC — Test for Accumulator Equal to Zero ................................................................................. 439
+ TRAP #VectorNumber — Software Trap ............................................................................................ 440
+ TSET loc16,#16bit — Test and Set Specified Bit .................................................................................. 442
+ UOUT *(PA),loc16 — Unprotected Output Data to I/O Port ....................................................................... 443
+ XB *AL — C2 xLP Source-Compatible Indirect Branch ........................................................................... 444
+ XB pma,*,ARPn — C2xLP Source-Compatible Branch with ARP Modification ................................................ 445
+ XB pma,COND — C2 xLP Source-Compatible Branch ............................................................................ 446
+ XBANZ pma,*ind{,ARPn} — C2 x LP Source-Compatible Branch If ARn Is Not Zero ........................................ 448
+ XCALL *AL — C2 x LP Source-Compatible Function Call ........................................................................ 450
+ XCALL pma,*,ARPn — C2 x LP Source-Compatible Function Call ............................................................. 451
+ XCALL pma,COND — C2xLP Source-Compatible Function Call ................................................................ 452
+ XMAC P,loc16,*(pma) — C2xLP Source-compatible Multiply and Accumulate ................................................ 454
+ XMACD P,loc16,*(pma) — C2xLP Source-Compatible Multiply and Accumulate With Data Move ......................... 456
+ XOR ACC,loc16 — Bitwise Exclusive OR ........................................................................................... 458
+ XOR ACC,#16bit << #0..16 — Bitwise Exclusive OR .............................................................................. 459
+ XOR AX,loc16 — Bitwise Exclusive OR ............................................................................................. 460
+ XOR loc16, AX — Bitwise Exclusive OR ............................................................................................ 461
+ XOR loc16,#16bit — Bitwise Exclusive OR ......................................................................................... 462
+ XORB AX, #8bit — Bitwise Exclusive OR 8-bit Value ............................................................................. 463
+ XPREAD loc16, *(pma) — C2xLP Source-Compatible Program Read.......................................................... 464
+ XPREAD loc16, *AL — C2xLP Source-Compatible Program Read ............................................................. 465
+ XPWRITE *A,loc16 — C2xLP Source-Compatible Program Write ............................................................... 466
+ XRET — C2xLP Source-Compatible Return ...................................................................................... 467
+ XRETC COND — C2xLP Source-Compatible Conditional Return ................................................................ 468
+ ZALR ACC,loc16 — Zero AL and Load AH With Rounding....................................................................... 470
+ ZAP OVC — Clear Overflow Counter................................................................................................. 471
+ ZAPA — Zero Accumulator and P Register ...................................................................................... 472
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                    C28x Assembly Language Instructions      113
+Submit Documentation Feedback
+                                            Copyright © 2001–2015, Texas Instruments Incorporated
+C28x Assembly Language Instructions by Function                                                                              www.ti.com
+
+6.2   C28x Assembly Language Instructions by Function
+
+          NOTE:        The examples in this chapter assume that the device is already operating in C28x Mode
+                      (Objmode = = 1, AMODE = = 0). To put the device into C28x mode following a reset, you
+                      must first set the Objmode bit in ST1 by executing the "C28OBJ"M (or "SETC Objmode"M )
+                      instruction.
+
+
+          NOTE:        Cycle Counts assume the instruction is executed from zero-wait (single-cycle) memory and
+                      there are no pipeline stalls.
+
+
+                            Table 6-2. Instruction Set Summary (Organized by Function)
+              Symbol                             Description
+              XARn                               XAR0 to XAR7 registers
+              ARn, ARm                           Lower 16-bits of XAR0 to XAR7 registers
+              ARnH                               Upper 16-bits of XAR0 to XAR7 registers
+              ARPn                               3-bit auxiliary register pointer, ARP0 to ARP7
+                                                 ARP0 points to XAR0 and ARP7 points to XAR7
+              AR(ARP)                            Lower 16-bits of auxiliary register pointed to by ARP
+              XAR(ARP)                           Auxiliary registers pointed to by ARP
+              AX                                 Accumulator high (AH) and low (AL) registers
+              #                                  Immediate operand
+              PM                                 Product shift mode (+4,1,0,-1,-2,-3,-4,-5,-6) PC Program counter
+              ~                                  Bitwise compliment
+              [loc16]                            Contents of 16-bit location
+              0:[loc16]                          Contents of 16-bit location, zero extended
+              S:[loc16]                          Contents of 16-bit location, sign extended
+              [loc32]                            Contents of 32-bit location
+              0:[loc32]                          Contents of 32-bit location, zero extended
+              S:[loc32]                          Contents of 32-bit location, sign extended
+              7bit                               7-bit immediate value
+              0:7bit                             7-bit immediate value, zero extended
+              S:7bit                             7-bit immediate value, sign extended
+              8bit                               8-bit immediate value
+              0:8bit                             8-bit immediate value, zero extended
+              S:8bit                             8-bit immediate value, sign extended
+              10bit                              10-bit immediate value
+              0:10bit                            10-bit immediate value, zero extended
+              16bit                              16-bit immediate value
+              0:16bit                            16-bit immediate value, zero extended
+              S:16bit                            16-bit immediate value, sign extended
+              22bit                              22-bit immediate value
+              0:22bit                            22-bit immediate value, zero extended
+              LSb                                Least Significant bit
+              LSB                                Least Significant Byte
+              LSW                                Least Significant Word
+              MSB                                Most Significant Byte
+              MSb                                Most Significant bit
+              MSW                                Most Significant Word
+              OBJ                                Objmode bit state for which instruction is valid
+
+
+
+114   C28x Assembly Language Instructions                                                     SPRU430F – August 2001 – Revised April 2015
+                                                                                                         Submit Documentation Feedback
+                                          Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                        C28x Assembly Language Instructions by Function
+
+                     Table 6-2. Instruction Set Summary (Organized by Function) (continued)
+                Symbol                           Description
+                N                                Repeat count (N = 0,1,2,3,4,5,6,7,....)
+                {}                               Optional field
+                =                                Assignment
+                ==                               Equivalent to
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                  C28x Assembly Language Instructions   115
+Submit Documentation Feedback
+                                          Copyright © 2001–2015, Texas Instruments Incorporated
+Register Operations                                                                                                          www.ti.com
+
+6.3    Register Operations
+
+           NOTE: The examples in this chapter assume that the device is already operating in C28x Mode
+                 (Objmode == 1, AMODE == 0). To put the device into C28x mode following a reset, you
+                 must first set the Objmode bit in ST1 by executing the "C28OBJ"M (or "SETC Objmode"M )
+                 instruction.
+
+
+           NOTE: Cycle Counts assume the instruction is executed from zero-wait (single-cycle) memory and
+                 there are no pipeline stalls.
+
+
+                                                   Table 6-3. Register Operations
+        Mnemonic                                        Description
+        XARn Register Operations (XAR0-XAR7)
+        ADDB           XARn,#7bit                       Add 7-bit constant to auxiliary register
+        ADRK           #8bit                            Add 8-bit constant to current auxiliary register
+        CMPR           0/1/2/3                          Compare auxiliary registers
+        MOV            AR6/7,loc16                      Load auxiliary register
+        MOV            loc16,ARn                        Store 16-bit auxiliary register
+        MOV            XARn,PC                          Save the current program counter
+        MOVB           AR6/7,#8bit                      Load auxiliary register with an 8-bit constant
+        MOVB           XARn,#8bit                       Load auxiliary register with 8-bit value
+        MOVL           loc32,XARn                       Store 32-bit auxiliary register
+        MOVL           XARn,loc32                       Load 32-bit auxiliary register
+        MOVL           XARn,#22bit                      Load 32-bit auxiliary register with constant value
+        MOVZ           ARn,loc16                        Load lower half of XARn and clear upper half
+        SBRK           #8bit                            Subtract 8-bit constant from current auxiliary register
+        SUBB           XARn,#7bit                       Subtract 7-bit constant from auxiliary register
+        DP Register Operations
+        MOV            DP,#10bit                        Load data-page pointer
+        MOVW           DP,#16bit                        Load the entire data page
+        MOVZ           DP,#10bit                        Load data page and clear high bits
+        SP Register Operations
+        ADDB           SP,#7bit                         Add 7-bit constant to stack pointer
+        POP            ACC                              Pop ACC register from stack
+        POP            AR1:AR0                          Pop AR1 & AR0 registers from stack
+        POP            AR1H:AR0H                        Pop AR1H & AR0H registers from stack
+        POP            AR3:AR2                          Pop AR3 & AR2 registers from stack
+        POP            AR5:AR4                          Pop AR5 & AR4 registers from stack
+        POP            DBGIER                           Pop DBGIER register from stack
+        POP            DP:ST1                           Pop DP & ST1 registers on stack
+        POP            DP                               Pop DP register from stack
+        POP            IFR                              Pop IFR register from stack
+        POP            loc16                            Pop â€M loc16â€M data from stack
+        POP            P                                Pop P register from stack
+        POP            RPC                              Pop RPC register from stack
+        POP            ST0                              Pop ST0 register from stack
+        POP            ST1                              Pop ST1 register from stack
+        POP            T:ST0                            Pop T & ST0 registers from stack
+        POP            XT                               Pop XT register from stack
+
+
+116 C28x Assembly Language Instructions                                                       SPRU430F – August 2001 – Revised April 2015
+                                                                                                         Submit Documentation Feedback
+                                          Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                            Register Operations
+
+                                              Table 6-3. Register Operations (continued)
+        Mnemonic                                        Description
+        POP             XARn                            Pop auxiliary register from stack
+        PUSH            ACC                             Push ACC register on stack
+        PUSH            ARn:ARn                         Push ARn & ARn registers on stack
+        PUSH            AR1H:AR0H                       Push AR1H & AR0H registers on stack
+        PUSH            DBGIER                          Push DBGIER register on stack
+        PUSH            DP:ST1                          Push DP & ST1 registers on stack
+        PUSH            DP                              Push DP register on stack
+        PUSH            IFR                             Push IFR register on stack
+        PUSH            loc16                           Push â€M loc16â€M data on stack
+        PUSH            P                               Push P register on stack
+        PUSH            RPC                             Push RPC register on stack
+        PUSH            ST0                             Push ST0 register on stack
+        PUSH            ST1                             Push ST1 register on stack
+        PUSH            T:ST0                           Push T & ST0 registers on stack
+        PUSH            XT                              Push XT register on stack
+        PUSH            XARn                            Push auxiliary register on stack
+        SUBB            SP,#7bit                        Subtract 7-bit constant from the stack pointer
+        AX Register Operations (AH, AL)
+        ADD             AX,loc16                        Add value to AX
+        ADD             loc16,AX                        Add AX to specified location
+        ADDB            AX,#8bit                        Add 8-bit constant to AX
+        AND             AX,loc16,#16bit                 Bitwise AND
+        AND             AX,loc16                        Bitwise AND
+        AND             loc16,AX                        Bitwise AND
+        ANDB            AX,#8bit                        Bitwise AND 8-bit value
+        ASR             AX,1..16                        Arithmetic shift right
+        ASR             AX,T                            Arithmetic shift right by T(3:0) = 0...15
+        CMP             AX,loc16                        Compare
+        CMPB            AX,#8bit                        Compare 8-bit value
+        FLIP            AX                              Flip order of bits in AX register
+        LSL             AX,1..16                        Logical shift left
+        LSL             AX,T                            Logical shift left by T(3:0) = 0...15
+        LSR             AX,1..16                        Logical shift right
+        LSR             AX,T                            Logical shift right by T(3:0) = 0..15
+        MAX             AX,loc16                        Find the maximum
+        MIN             AX,loc16                        Find the minimum
+        MOV             AX,loc16                        Load AX
+        MOV             loc16,AX                        Store AX
+        MOV             loc16,AX,COND                   Store AX register conditionally
+        MOVB            AX,#8bit                        Load AX with 8-bit constant
+        MOVB            AX.LSB,loc16                    Load LSB of AX reg, MSB = 0x00
+        MOVB            AX.MSB,loc16                    Load MSB of AX reg, LSB = unchanged
+        MOVB            loc16,AX.LSB                    Store LSB of AX reg
+        MOVB            loc16,AX.MSB                    Store MSB of AX reg
+        NEG             AX                              Negate AX register
+        NOT             AX                              Complement AX register
+        OR              AX,loc16                        Bitwise OR
+
+
+SPRU430F – August 2001 – Revised April 2015                                                         C28x Assembly Language Instructions 117
+Submit Documentation Feedback
+                                          Copyright © 2001–2015, Texas Instruments Incorporated
+

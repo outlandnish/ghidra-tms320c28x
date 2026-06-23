@@ -1,0 +1,120 @@
+# C28x 0x56-prefix 2-word "extended" instruction family.
+# Included by tms320c28x.sinc. Encodings from docs/c28x/ch6_instruction_detail.txt.
+#
+# THIS IS THE BIG MISSING FAMILY (74 instructions). Word1 = 0x5600 | sub-opcode,
+# word2 = operand word (0000 | loc for loc-based forms). Their absence was the main
+# cause of decode gaps / halt_baddata() in real code (the image is CODE, not data).
+#
+# Structure: a shared sub-opcode field on word1, then loc16/loc32 in word2.
+# Common ALU forms get real semantics; exotic 64-bit/saturate/C2xLP forms are
+# decode-only (correct mnemonic, minimal p-code) so disassembly doesn't dead-end.
+
+# word1 low byte = the sub-opcode selector (bits 0..7 of the first word).
+# (op_lo8 / loc_full8 already defined on instr16 cover this.)
+# word2 carries the loc field in its low byte -> reuse loc16/loc32 AFTER the ';'.
+
+# =============================================================================
+# Common ALU forms (real semantics).  word1 = 0x56<sub>, word2 = loc.
+# =============================================================================
+# ADDL loc32,ACC    0x5601 : 0000 0000 LLLL LLLL
+:ADDL loc32, ACCreg  is op16=0x5601 ; loc32 & ACCreg  { loc32 = loc32 + ACC; }
+# SUBL loc32,ACC    0x5641
+:SUBL loc32, ACCreg  is op16=0x5641 ; loc32 & ACCreg  { loc32 = loc32 - ACC; }
+# SUBRL loc32,ACC    0x5649  (reverse subtract: loc = ACC - loc)
+:SUBRL loc32, ACCreg is op16=0x5649 ; loc32 & ACCreg  { loc32 = ACC - loc32; }
+# ADD ACC,loc16<<T   0x5623  (shift by T(3:0))
+:ADD ACCreg, loc16^"<<T"  is op16=0x5623 ; loc16 & ACCreg  {
+    local sh:4 = zext(T:2) & 0xf;
+    ACC = ACC + (sext(loc16) << sh);
+}
+# SUB ACC,loc16<<T   0x5627
+:SUB ACCreg, loc16^"<<T"  is op16=0x5627 ; loc16 & ACCreg  {
+    local sh:4 = zext(T:2) & 0xf;
+    ACC = ACC - (sext(loc16) << sh);
+}
+# MOV ACC,loc16<<T   0x5606
+:MOV ACCreg, loc16^"<<T"  is op16=0x5606 ; loc16 & ACCreg  {
+    local sh:4 = zext(T:2) & 0xf;
+    ACC = sext(loc16) << sh;
+}
+# ADDUL ACC,loc32    0x5653  (add unsigned 32)
+:ADDUL ACCreg, loc32 is op16=0x5653 ; loc32 & ACCreg  { ACC = ACC + loc32; }
+# SUBUL ACC,loc32    0x5655
+:SUBUL ACCreg, loc32 is op16=0x5655 ; loc32 & ACCreg  { ACC = ACC - loc32; }
+# ADDUL P,loc32      0x5657
+:ADDUL Preg, loc32   is op16=0x5657 ; loc32 & Preg  { P = P + loc32; }
+# SUBUL P,loc32      0x565d
+:SUBUL Preg, loc32   is op16=0x565d ; loc32 & Preg  { P = P - loc32; }
+# MAXL ACC,loc32     0x5661  (ACC = max(ACC, loc32), signed)
+:MAXL ACCreg, loc32  is op16=0x5661 ; loc32 & ACCreg  {
+    local v:4 = loc32;
+    if (ACC s>= v) goto inst_next;
+    ACC = v;
+}
+# MINL ACC,loc32     0x5650
+:MINL ACCreg, loc32  is op16=0x5650 ; loc32 & ACCreg  {
+    local v:4 = loc32;
+    if (ACC s<= v) goto inst_next;
+    ACC = v;
+}
+
+# =============================================================================
+# 32x32 multiplies (IMPYL/QMPYL family) -- real semantics into ACC or P.
+# word1=0x56<sub>, word2=loc32 (the 32-bit source); XT is the other operand.
+# =============================================================================
+:IMPYL ACCreg, XTreg, loc32  is op16=0x5644 ; loc32 & ACCreg & XTreg {
+    local a:8 = sext(XT); local b:8 = sext(loc32); local r:8 = a * b; ACC = r:4;  # low 32
+}
+:IMPYL Preg, XTreg, loc32    is op16=0x5605 ; loc32 & Preg & XTreg {
+    local a:8 = sext(XT); local b:8 = sext(loc32); local r:8 = a * b; P = r:4;
+}
+:QMPYL ACCreg, XTreg, loc32  is op16=0x5663 ; loc32 & ACCreg & XTreg {
+    local a:8 = sext(XT); local b:8 = sext(loc32); local r:8 = (a * b) >> 32; ACC = r:4;  # high 32
+}
+
+# =============================================================================
+# Bit-test / square-accumulate (real-ish).
+# =============================================================================
+# TBIT loc16,T      0x5625
+:TBIT loc16, "T"  is op16=0x5625 ; loc16  {
+    local t16:2 = T;
+    local sh:2 = t16 & 0xf;
+    local v:2 = loc16;
+    $(TC) = ((v >> sh) & 1) != 0;
+}
+# TSET loc16,#16bit 0x560d : loc word ; imm word -- 3-word; decode-only-ish
+:TSET loc16, "#16bit"  is op16=0x560d ; loc16  { }   # decode-only
+# TCLR loc16,#bit   0x5609
+:TCLR loc16, "#bit"  is op16=0x5609 ; loc16  { }     # decode-only
+
+# =============================================================================
+# Flag / mode set/clear (single-purpose; one constructor per distinct opcode).
+# Note: several mnemonics share an opcode (C28ADDR==CLRC AMODE==0x5616, etc.);
+# we pick the canonical name per opcode to avoid duplicate-pattern conflicts.
+# =============================================================================
+:CLRC "AMODE"   is op16=0x5616 { $(AMODE) = 0; }   # = C28ADDR
+:SETC "AMODE"   is op16=0x561e { $(AMODE) = 1; }   # = LPADDR
+:SETC "Objmode" is op16=0x561f { }                 # = C28OBJ
+:CLRC "Objmode" is op16=0x5636 { }                 # = C27OBJ
+:SETC "XF"      is op16=0x5626 { }
+:CLRC "XF"      is op16=0x561b { }
+:CLRC "OVC"     is op16=0x565c { }                 # = ZAP OVC
+:ZAPA           is op16=0x5633 { ACC = 0; P = 0; }
+
+# =============================================================================
+# Conditional store (MOVL loc32,ACC,COND) -- 0x5648, COND in word2.
+# =============================================================================
+:MOVL loc32, ACCreg, CC  is op16=0x5648 ; cond4 & CC & loc32 & ACCreg {
+    local take:1 = CC;
+    if (take == 0) goto inst_next;
+    loc32 = ACC;
+}
+
+# =============================================================================
+# C2xLP program read/write + branches (decode-only -- rare, exotic).
+# =============================================================================
+:XPREAD loc16, "*AL"   is op16=0x563c ; loc16  { }   # program-memory read
+:XPWRITE "*A", loc16   is op16=0x563d ; loc16  { }   # program-memory write
+:XB "*AL"              is op16=0x5614 { }
+:XCALL "*AL"           is op16=0x5634 { }
+:XRET                  is op16=0x56ff { return [RPC]; }

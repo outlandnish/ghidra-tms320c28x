@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- See Relax specification: Ghidra/Framework/SoftwareModeling/data/languages/processor_spec.rxg -->
+
+<processor_spec>
+  <programcounter register="PC"/>
+
+  <!-- AMODE context bit: 0 = C28x addressing modes (compiler default). Decode in
+       this mode by default; flow analysis can override when SETC/CLRC AMODE seen. -->
+  <context_data>
+    <context_set space="ram">
+      <set name="ctx_AMODE" val="0"/>
+    </context_set>
+  </context_data>
+
+  <default_symbols>
+    <!-- C28x CPU interrupt vector table (SPRU430F Table 3-1). Word addresses. -->
+    <symbol name="RESET"  address="ram:0x3FFFC0" entry="true"/>
+    <symbol name="INT1"   address="ram:0x3FFFC2"/>
+    <symbol name="INT2"   address="ram:0x3FFFC4"/>
+    <symbol name="INT3"   address="ram:0x3FFFC6"/>
+    <symbol name="INT4"   address="ram:0x3FFFC8"/>
+    <symbol name="INT5"   address="ram:0x3FFFCA"/>
+    <symbol name="INT6"   address="ram:0x3FFFCC"/>
+    <symbol name="INT7"   address="ram:0x3FFFCE"/>
+    <symbol name="INT8"   address="ram:0x3FFFD0"/>
+    <symbol name="INT9"   address="ram:0x3FFFD2"/>
+    <symbol name="INT10"  address="ram:0x3FFFD4"/>
+    <symbol name="INT11"  address="ram:0x3FFFD6"/>
+    <symbol name="INT12"  address="ram:0x3FFFD8"/>
+    <symbol name="INT13"  address="ram:0x3FFFDA"/>
+    <symbol name="INT14"  address="ram:0x3FFFDC"/>
+    <symbol name="DLOGINT" address="ram:0x3FFFDE"/>
+    <symbol name="RTOSINT" address="ram:0x3FFFE0"/>
+    <symbol name="NMI"    address="ram:0x3FFFE4"/>
+    <symbol name="ILLEGAL" address="ram:0x3FFFE6"/>
+  </default_symbols>
+</processor_spec>

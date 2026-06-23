@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- See Relax specification: Ghidra/Framework/SoftwareModeling/data/languages/language_definitions.rxg -->
+
+<language_definitions>
+  <language processor="TMS320C28x"
+            endian="little"
+            size="32"
+            variant="default"
+            version="0.1"
+            slafile="tms320c28x.sla"
+            processorspec="tms320c28x.pspec"
+            id="TMS320C28x:LE:32:default">
+    <description>TI TMS320C28x 32-bit fixed-point DSP (word-addressable, 16-bit byte). Target: TMS320F28377D.</description>
+    <compiler name="default" spec="tms320c28x.cspec" id="default"/>
+    <external_name tool="IDA-PRO" name="tms320c28"/>
+  </language>
+</language_definitions>

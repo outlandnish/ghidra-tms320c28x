@@ -1,0 +1,63 @@
+# C28x multiply / multiply-accumulate family (MPY / MAC / MOVA / MOVP).
+# Included by tms320c28x.sinc. Encodings verified against ch6_instruction_detail.txt.
+#
+# These compute 16x16 -> 32 products into P (and accumulate into ACC). The product
+# is subject to the PM (product shift mode) bits in ST0; for now we model the raw
+# 16x16->32 product WITHOUT the PM shift (PM defaults to >>0 on most code paths).
+# PM-accurate shifting is a deferred refinement -- noted so the approximation is
+# explicit and not mistaken for full fidelity.
+#
+# T is the high half of XT (the multiplicand register), 16-bit signed by default.
+
+# MPY P,T,loc16     0011 0011 LLLL LLLL   -- P = T * loc16  (signed 16x16->32)
+:MPY Preg, Treg, loc16  is op_hi8=0x33 & Preg & Treg & loc16  {
+    local a:4 = sext(T);
+    local b:4 = sext(loc16);
+    P = a * b;
+}
+
+# MPYU P,T,loc16    0011 0111 LLLL LLLL   -- P = T * loc16  (unsigned)
+:MPYU Preg, Treg, loc16  is op_hi8=0x37 & Preg & Treg & loc16  {
+    local a:4 = zext(T);
+    local b:4 = zext(loc16);
+    P = a * b;
+}
+
+# MPYB P,T,#8bit    0011 0001 CCCC CCCC   -- P = T * #8bit (unsigned 8-bit const)
+:MPYB Preg, Treg, "#"imm8  is op_hi8=0x31 & Preg & Treg & imm8  {
+    local a:4 = sext(T);
+    local b:4 = zext(imm8:2);
+    P = a * b;
+}
+
+# MPYB ACC,T,#8bit  0011 0101 CCCC CCCC   -- ACC = T * #8bit
+:MPYB ACCreg, Treg, "#"imm8  is op_hi8=0x35 & ACCreg & Treg & imm8  {
+    local a:4 = sext(T);
+    local b:4 = zext(imm8:2);
+    ACC = a * b;
+}
+
+# MAC P,loc16,0:pma 0001 0100 LLLL LLLL : pma word
+# Multiply-accumulate: ACC += P (shifted by PM, approximated >>0); P = loc16 * (*pma).
+# The second word is the low 16 bits of a program-memory address (0:pma). We model
+# the accumulate of the previous product and the new product load.
+:MAC Preg, loc16, "*"imm16  is op_hi8=0x14 & Preg & loc16 ; imm16  {
+    ACC = ACC + P;
+    local pma:4 = zext(imm16:2);
+    local pv:2 = *[ram]:2 pma;
+    local a:4 = sext(loc16);
+    local b:4 = sext(pv);
+    P = a * b;
+}
+
+# MOVA T,loc16      0001 0000 LLLL LLLL   -- T = loc16; ACC += P (load T, add prev product)
+:MOVA Treg, loc16  is op_hi8=0x10 & Treg & loc16  {
+    ACC = ACC + P;
+    T = loc16;
+}
+
+# MOVP T,loc16      0001 0110 LLLL LLLL   -- T = loc16; ACC = P (load T, move product)
+:MOVP Treg, loc16  is op_hi8=0x16 & Treg & loc16  {
+    ACC = P;
+    T = loc16;
+}

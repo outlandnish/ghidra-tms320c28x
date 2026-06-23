@@ -1,0 +1,758 @@
+www.ti.com                                                                                                           CPU Register Set
+
+                                Table 1-1. 28x Plus Floating-Point CPU Register Summary
+ Register        C28x CPU      C28x+FPU           Size         Description                                     Value After Reset
+ ACC                 Yes          Yes            32 bits       Accumulator                                     0x00000000
+ AH                  Yes          Yes            16 bits       High half of ACC                                0x0000
+ AL                  Yes          Yes            16 bits       Low half of ACC                                 0x0000
+ XAR0                Yes          Yes            32 bits       Auxiliary register 0                            0x00000000
+ XAR1                Yes          Yes            32 bits       Auxiliary register 1                            0x00000000
+ XAR2                Yes          Yes            32 bits       Auxiliary register 2                            0x00000000
+ XAR3                Yes          Yes            32 bits       Auxiliary register 3                            0x00000000
+ XAR4                Yes          Yes            32 bits       Auxiliary register 4                            0x00000000
+ XAR5                Yes          Yes            32 bits       Auxiliary register 5                            0x00000000
+ XAR6                Yes          Yes            32 bits       Auxiliary register 6                            0x00000000
+ XAR7                Yes          Yes            32 bits       Auxiliary register 7                            0x00000000
+ AR0                 Yes          Yes            16 bits       Low half of XAR0                                0x0000
+ AR1                 Yes          Yes            16 bits       Low half of XAR1                                0x0000
+ AR2                 Yes          Yes            16 bits       Low half of XAR2                                0x0000
+ AR3                 Yes          Yes            16 bits       Low half of XAR3                                0x0000
+ AR4                 Yes          Yes            16 bits       Low half of XAR4                                0x0000
+ AR5                 Yes          Yes            16 bits       Low half of XAR5                                0x0000
+ AR6                 Yes          Yes            16 bits       Low half of XAR6                                0x0000
+ AR7                 Yes          Yes            16 bits       Low half of XAR7                                0x0000
+ DP                  Yes          Yes            16 bits       Data-page pointer                               0x0000
+ IFR                 Yes          Yes            16 bits       Interrupt flag register                         0x0000
+ IER                 Yes          Yes            16 bits       Interrupt enable register                       0x0000
+ DBGIER              Yes          Yes            16 bits       Debug interrupt enable register                 0x0000
+ P                   Yes          Yes            32 bits       Product register                                0x00000000
+ PH                  Yes          Yes            16 bits       High half of P                                  0x0000
+ PL                  Yes          Yes            16 bits       Low half of P                                   0x0000
+ PC                  Yes          Yes            22 bits       Program counter                                 0x3FFFC0
+ RPC                 Yes          Yes            22 bits       Return program counter                          0x00000000
+ SP                  Yes          Yes            16 bits       Stack pointer                                   0x0400
+ ST0                 Yes          Yes            16 bits       Status register 0                               0x0000
+ ST1                 Yes          Yes            16 bits       Status register 1                               0x080B (1)
+ XT                  Yes          Yes            32 bits       Multiplicand register                           0x00000000
+ T                   Yes          Yes            16 bits       High half of XT                                 0x0000
+ TL                  Yes          Yes            16 bits       Low half of XT                                  0x0000
+ ROH                 No           Yes            32 bits       Floating-point result register 0                0.0
+ R1H                 No           Yes            32 bits       Floating-point result register 1                0.0
+ R2H                 No           Yes            32 bits       Floating-point result register 2                0.0
+ R3H                 No           Yes            32 bits       Floating-point result register 3                0.0
+ R4H                 No           Yes            32 bits       Floating-point result register 4                0.0
+ R5H                 No           Yes            32 bits       Floating-point result register 5                0.0
+ R6H                 No           Yes            32 bits       Floating-point result register 6                0.0
+ R7H                 No           Yes            32 bits       Floating-point result register 7                0.0
+ STF                 No           Yes            32 bits       Floating-point status register                  0x00000000
+ RB                  No           Yes            32 bits       Repeat block register                           0x00000000
+(1)
+      Reset value shown is for devices without the VMAP signal and MOM1MAP signal pinned out. On these devices both of these signals are
+      tied high internal to the device.
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                         Floating Point Unit (FPU)     17
+Submit Documentation Feedback
+                                             Copyright © 2014–2019, Texas Instruments Incorporated
+CPU Register Set                                                                                                                         www.ti.com
+
+1.3.1.1        Floating-Point Status Register (STF)
+            The floating-point status register (STF) reflects the results of floating-point operations. There are three
+            basic rules for floating point operation flags:
+            1. Zero and negative flags are set based on moves to registers.
+            2. Zero and negative flags are set based on the result of compare, minimum, maximum, negative and
+               absolute value operations.
+            3. Overflow and underflow flags are set by math instructions such as multiply, add, subtract and 1/x.
+               These flags may also be connected to the peripheral interrupt expansion (PIE) block on your device.
+               This can be useful for debugging underflow and overflow conditions within an application.
+            As on the C28x, program flow is controlled by C28x instructions that read status flags in the status register
+            0 (ST0) . If a decision needs to be made based on a floating-point operation, the information in the STF
+            register needs to be loaded into ST0 flags (Z,N,OV,TC,C) so that the appropriate branch conditional
+            instruction can be executed. The MOVST0 FLAG instruction is used to load the current value of specified
+            STF flags into the respective bits of ST0. When this instruction executes, it will also clear the latched
+            overflow and underflow flags if those flags are specified.
+
+Example 1-1. Moving STF Flags to the ST0 Register
+
+ Loop:
+ MOV32 R0H,*XAR4++
+ MOV32 R1H,*XAR3++
+ CMPF32 R1H, R0H
+ MOVST0 ZF, NF                      ; Move ZF and NF to ST0
+ BF     Loop, GT                    ; Loop if (R1H > R0H)
+
+
+
+                                           Figure 1-3. Floating-point Unit Status Register (STF)
+     31        30                                                                                                                             16
+SHDWS                                                                       Reserved
+ R/W-0                                                                          R-0
+
+     15                                              10      9        8         7          6         5       4       3       2       1         0
+                            Reserved                      RND32        Reserved           TF         ZI     NI      ZF      NF      LUF       LVF
+                              R-0                         R/W-0           R-0            R/W-0     R/W-0   R/W-0   R/W-0   R/W-0   R/W-0    R/W-0
+LEGEND: R/W = Read/Write; R = Read only; -n = value after reset
+
+
+                                 Table 1-2. Floating-point Unit Status (STF) Register Field Descriptions
+     Bits           Field        Value                                                    Description
+     31          SHDWS                   Shadow Mode Status Bit
+                                    0    This bit is forced to 0 by the RESTORE instruction.
+                                    1    This bit is set to 1 by the SAVE instruction.
+                                         This bit is not affected by loading the status register either from memory or from the shadow values.
+ 30 - 10         Reserved           0    Reserved for future use
+      9             RND32                Round 32-bit Floating-Point Mode
+                                    0    If this bit is zero, the MPYF32, ADDF32 and SUBF32 instructions will round to zero (truncate).
+                                    1    If this bit is one, the MPYF32, ADDF32 and SUBF32 instructions will round to the nearest even value.
+     8-7         Reserved           0    Reserved for future use
+      6              TF                  Test Flag
+                                         The TESTTF instruction can modify this flag based on the condition tested. The SETFLG and SAVE
+                                         instructions can also be used to modify this flag.
+                                    0    The condition tested with the TESTTF instruction is false.
+                                    1    The condition tested with the TESTTF instruction is true.
+
+
+
+
+18          Floating Point Unit (FPU)                                                            SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                                  Submit Documentation Feedback
+                                                 Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                                                                                       CPU Register Set
+
+                 Table 1-2. Floating-point Unit Status (STF) Register Field Descriptions (continued)
+      Bits       Field        Value                                                    Description
+       5           ZI                  Zero Integer Flag
+                                       The following instructions modify this flag based on the integer value stored in the destination register:
+                                       MOV32, MOVD32, MOVDD32
+                                       The SETFLG and SAVE instructions can also be used to modify this flag.
+                                0      The integer value is not zero.
+                                1      The integer value is zero.
+       4           NI                  Negative Integer Flag
+                                       The following instructions modify this flag based on the integer value stored in the destination register:
+                                       MOV32, MOVD32, MOVDD32
+                                       The SETFLG and SAVE instructions can also be used to modify this flag.
+                                0      The integer value is not negative.
+                                1      The integer value is negative.
+       3          ZF                   Zero Floating-Point Flag (1) (2)
+                                       The following instructions modify this flag based on the floating-point value stored in the destination
+                                       register:
+                                       MOV32, MOVD32, MOVDD32, ABSF32, NEGF32
+                                       The CMPF32, MAXF32, and MINF32 instructions modify this flag based on the result of the operation.
+                                       The SETFLG and SAVE instructions can also be used to modify this flag
+                                0      The floating-point value is not zero.
+                                1      The floating-point value is zero.
+       2          NF                   Negative Floating-Point Flag (1) (2)
+                                       The following instructions modify this flag based on the floating-point value stored in the destination
+                                       register:
+                                       MOV32, MOVD32, MOVDD32, ABSF32, NEGF32
+                                       The CMPF32, MAXF32, and MINF32 instructions modify this flag based on the result of the operation.
+                                       The SETFLG and SAVE instructions can also be used to modify this flag.
+                                0      The floating-point value is not negative.
+                                1      The floating-point value is negative.
+       1          LUF                  Latched Underflow Floating-Point Flag
+                                       The following instructions will set this flag to 1 if an underflow occurs:
+                                       MPYF32, ADDF32, SUBF32, MACF32, EINVF32, EISQRTF32
+                                0      An underflow condition has not been latched. If the MOVST0 instruction is used to copy this bit to ST0,
+                                       then LUF will be cleared.
+                                1      An underflow condition has been latched.
+       0          LVF                  Latched Overflow Floating-Point Flag
+                                       The following instructions will set this flag to 1 if an overflow occurs:
+                                       MPYF32, ADDF32, SUBF32, MACF32, EINVF32, EISQRTF32
+                                0      An overflow condition has not been latched. If the MOVST0 instruction is used to copy this bit to ST0,
+                                       then LVF will be cleared.
+                                1      An overflow condition has been latched.
+(1)
+      A negative zero floating-point value is treated as a positive zero value when configuring the ZF and NF flags.
+(2)
+      A DeNorm floating-point value is treated as a positive zero value when configuring the ZF and NF flags.
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                                     Floating Point Unit (FPU)   19
+Submit Documentation Feedback
+                                                Copyright © 2014–2019, Texas Instruments Incorporated
+CPU Register Set                                                                                                                       www.ti.com
+
+1.3.1.2        Repeat Block Register (RB)
+            The repeat block instruction (RPTB) is a new instruction for C28x+FPU. This instruction allows you to
+            repeat a block of code as shown in Example 1-2.
+
+Example 1-2. The Repeat Block (RPTB) Instruction uses the RB Register
+
+
+ ; find the largest element and put its address in XAR6
+   MOV32    R0H, *XAR0++;
+   .align 2                      ; Aligns the next instruction to an even address
+
+      NOP                                        ; Makes RPTB odd aligned - required for a block size of 8
+      RPTB    VECTOR_MAX_END, AR7                ; RA is set to 1
+      MOVL    ACC,XAR0
+      MOV32   R1H,*XAR0++                        ; RSIZE reflects the size of the RPTB block
+      MAXF32 R0H,R1H                             ; in this case the block size is 8
+      MOVST0 NF,ZF
+      MOVL    XAR6,ACC,LT
+      VECTOR_MAX_END:                            ; RE indicates the end address. RA is cleared
+
+
+            The C28x_FPU hardware automatically populates the RB register based on the execution of a RPTB
+            instruction. This register is not normally read by the application and does not accept debugger writes.
+
+                                                      Figure 1-4. Repeat Block Register (RB)
+     31        30          29                                                   23       22                                                    16
+ RAS           RA                                 RSIZE                                                           RE
+     R-0       R-0                                 R-0                                                            R-0
+
+     15                                                                                                                                        0
+                                                                          RC
+                                                                          R-0
+LEGEND: R = Read only; -n = value after reset
+
+
+                                         Table 1-3. Repeat Block (RB) Register Field Descriptions
+     Bits            Field       Value                                                   Description
+      31             RAS                  Repeat Block Active Shadow Bit
+                                          When an interrupt occurs the repeat active, RA, bit is copied to the RAS bit and the RA bit is cleared.
+                                          When an interrupt return instruction occurs, the RAS bit is copied to the RA bit and RAS is cleared.
+                                   0      A repeat block was not active when the interrupt was taken.
+                                   1      A repeat block was active when the interrupt was taken.
+      30              RA                  Repeat Block Active Bit
+                                   0      This bit is cleared when the repeat counter, RC, reaches zero.
+                                          When an interrupt occurs the RA bit is copied to the repeat active shadow, RAS, bit and RA is cleared.
+                                          When an interrupt return, IRET, instruction is executed, the RAS bit is copied to the RA bit and RAS is
+                                          cleared.
+                                   1      This bit is set when the RPTB instruction is executed to indicate that a RPTB is currently active.
+     29-23           RSIZE                Repeat Block Size
+                                          This 7-bit value specifies the number of 16-bit words within the repeat block. This field is initialized
+                                          when the RPTB instruction is executed. The value is calculated by the assembler and inserted into the
+                                          RPTB instruction's RSIZE opcode field.
+                                  0-7     Illegal block size.
+                                8/9-0x7F A RPTB block that starts at an even address must include at least 9 16-bit words and a block that
+                                         starts at an odd address must include at least 8 16-bit words. The maximum block size is 127 16-bit
+                                         words. The codegen assembler will check for proper block size and alignment.
+
+
+
+
+20          Floating Point Unit (FPU)                                                         SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                               Submit Documentation Feedback
+                                                  Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                                                                                                Pipeline
+
+                        Table 1-3. Repeat Block (RB) Register Field Descriptions (continued)
+   Bits         Field     Value                                                        Description
+  22-16          RE                    Repeat Block End Address
+                                       This 7-bit value specifies the end address location of the repeat block. The RE value is calculated by
+                                       hardware based on the RSIZE field and the PC value when the RPTB instruction is executed.
+                                       RE = lower 7 bits of (PC + 1 + RSIZE)
+  15-0           RC                    Repeat Count
+                              0        The block will not be repeated; it will be executed only once. In this case the repeat active, RA, bit will
+                                       not be set.
+                           1-          This 16-bit value determines how many times the block will repeat. The counter is initialized when the
+                         0xFFFF        RPTB instruction is executed and is decremented when the PC reaches the end of the block. When
+                                       the counter reaches zero, the repeat active bit is cleared and the block will be executed one more
+                                       time. Therefore the total number of times the block is executed is RC+1.
+
+
+1.4       Pipeline
+          The pipeline flow for C28x instructions is identical to that of the C28x CPU described in TMS320C28x
+          DSP CPU and Instruction Set Reference Guide (SPRU430). Some floating-point instructions, however,
+          use additional execution phases and thus require a delay to allow the operation to complete. This pipeline
+          alignment is achieved by inserting NOPs or non-conflicting instructions when required. Software control of
+          delay slots allows you to improve performance of an application by taking advantage of the delay slots and
+          filling them with non-conflicting instructions. This section describes the key characteristics of the pipeline
+          with regards to floating-point instructions. The rules for avoiding pipeline conflicts are small in number and
+          simple to follow and the C28x+FPU assembler will help you by issuing errors for conflicts.
+
+1.4.1 Pipeline Overview
+          The C28x FPU pipeline is identical to the C28x pipeline for all standard C28x instructions. In the decode2
+          stage (D2), it is determined if an instruction is a C28x instruction or a floating-point unit instruction. The
+          pipeline flow is shown in Figure 1-5. Notice that stalls due to normal C28x pipeline stalls (D2) and memory
+          waitstates (R2 and W) will also stall any C28x FPU instruction. Most C28x FPU instructions are single
+          cycle and will complete in the FPU E1 or W stage which aligns to the C28x pipeline. Some instructions will
+          take an additional execute cycle (E2). For these instructions you must wait a cycle for the result from the
+          instruction to be available. The rest of this section will describe when delay cycles are required. Keep in
+          mind that the assembly tools for the C28x+FPU will issue an error if a delay slot has not been handled
+          correctly.
+
+                                                         Figure 1-5. FPU Pipeline
+                                        Fetch                     Decode                    Read               Exe         Write
+              C28x pipeline       F1             F2          D1            D2          R1           R2          E            W
+
+
+
+
+                                                      FPU instruction                                                       E2
+                                                                                       D            R          E1
+                                                                                                                            W
+
+                                                                                       Load
+                                                                                           Store
+                                                                            CMP/MIN/MAX/NEG/ABS
+                                                                             MPY/ADD/SUB/MACF32
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                                 Floating Point Unit (FPU)        21
+Submit Documentation Feedback
+                                                Copyright © 2014–2019, Texas Instruments Incorporated
+Pipeline                                                                                                                  www.ti.com
+
+1.4.2 General Guidelines for Floating-Point Pipeline Alignment
+       While the C28x+FPU assembler will issue errors for pipeline conflicts, you may still find it useful to
+       understand when software delays are required. This section describes three guidelines you can follow
+       when writing C28x+FPU assembly code.
+       Floating-point instructions that require delay slots have a 'p' after their cycle count. For example '2p'
+       stands for 2 pipelined cycles. This means that an instruction can be started every cycle, but the result of
+       the instruction will only be valid one instruction later.
+       There are three general guidelines to determine if an instruction needs a delay slot:
+       1. Floating-point math operations (multiply, addition, subtraction, 1/x and MAC) require 1 delay slot.
+       2. Conversion instructions between integer and floating-point formats require 1 delay slot.
+       3. Everything else does not require a delay slot. This includes minimum, maximum, compare, load, store,
+          negative and absolute value instructions.
+       There are two exceptions to these rules. First, moves between the CPU and FPU registers require special
+       pipeline alignment that is described later in this section. These operations are typically infrequent. Second,
+       the MACF32 R7H, R3H, mem32, *XAR7 instruction has special requirements that make it easier to use.
+       Refer to the MACF32 instruction description for details.
+       An example of the 32-bit ADDF32 instruction is shown in Example 1-3. ADDF32 is a 2p instruction and
+       therefore requires one delay slot. The destination register for the operation, R0H, will be updated one
+       cycle after the instruction for a total of 2 cycles. Therefore, a NOP or instruction that does not use R0H
+       must follow this instruction.
+       Any memory stall or pipeline stall will also stall the floating-point unit. This keeps the floating-point unit
+       aligned with the C28x pipeline and there is no need to change the code based on the waitstates of a
+       memory block.
+       Please note that on certain devices instructions make take additional cycles to complete under specific
+       conditions. These exceptions will be documented in the device errata.
+
+Example 1-3. 2p Instruction Pipeline Alignment
+
+
+ ADDF32 R0H, #1.5, R1H             ; 2 pipeline cycles (2p)
+ NOP                               ; 1 cycle delay or non-conflicting instruction
+                                   ; <-- ADDF32 completes, R0H updated
+ NOP                               ; Any instruction
+
+
+
+
+22     Floating Point Unit (FPU)                                                      SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                       Submit Documentation Feedback
+                                          Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                                                                             Pipeline
+
+1.4.3 Moves from FPU Registers to C28x Registers
+       When transferring from the floating-point unit registers to the C28x CPU registers, additional pipeline
+       alignment is required as shown in Example 1-4 and Example 1-5.
+
+Example 1-4. Floating-Point to C28x Register Software Pipeline Alignment
+
+
+ ; MINF32: 32-bit floating-point minimum: single-cycle operation
+ ; An alignment cycle is required before copying R0H to ACC
+ MINF32 R0H, R1H         ; Single-cycle instruction
+                         ; <-- R0H is valid
+ NOP                     ; Alignment cycle
+ MOV32   @ACC, R0H       ; Copy R0H to ACC
+
+
+       For 1-cycle FPU instructions, one delay slot is required between a write to the floating-point register and
+       the transfer instruction as shown in Example 1-4. For 2p FPU instructions, two delay slots are required
+       between a write to the floating-point register and the transfer instruction as shown in Example 1-5.
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                Floating Point Unit (FPU)    23
+Submit Documentation Feedback
+                                       Copyright © 2014–2019, Texas Instruments Incorporated
+Pipeline                                                                                                            www.ti.com
+
+
+Example 1-5. Floating-Point to C28x Register Software Pipeline Alignment
+
+
+ ; ADDF32: 32-bit floating-point addition: 2p operation
+ ; An alignment cycle is required before copying R0H to ACC
+ ADDF32 R0H, R1H, #2      ; R0H = R1H + 2, 2 pipeline cycle instruction
+ NOP                      ; 1 delay cycle or non-conflicting instruction
+                          ; <-- R0H is valid
+ NOP                      ; Alignment cycle
+ NOP                      :
+ MOV32   @ACC, R0H        ; Copy R0H to ACC
+
+
+
+1.4.4 Moves from C28x Registers to FPU Registers
+       Transfers from the standard C28x CPU registers to the floating-point registers require four alignment
+       cycles. For the 2833x, 2834x, 2806x, 28M35xx and 28M26xx, the four alignment cycles can be filled with
+       NOPs or any non-conflicting instruction except for F32TOUI32 RaH, RbH, FRACF32 RaH, RbH,
+       UI16TOF32 RaH, mem16 and UI16TOF32 RaH, RbH. These instructions cannot replace any of the four
+       alignment NOPs. On newer devices any non-conflicting instruction can go into the four alignment cycles.
+       Please refer to the device errata for specific exceptions to these rules.
+
+Example 1-6. C28x Register to Floating-Point Register Software Pipeline Alignment
+
+
+ ; Four alignment cycles are required after copying a standard 28x CPU
+ ; register to a floating-point register.
+ ;
+ MOV32   R0H,@ACC         ; Copy ACC to R0H
+ NOP
+ NOP
+ NOP
+ NOP                      ; Wait 4 cycles
+ ADDF32 R2H,R1H,R0H       ; R0H is valid
+
+
+
+
+24     Floating Point Unit (FPU)                                                SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                 Submit Documentation Feedback
+                                    Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                                                                               Pipeline
+
+1.4.5 Parallel Instructions
+       Parallel instructions are single opcodes that perform two operations in parallel. This can be a math
+       operation in parallel with a move operation, or two math operations in parallel. Math operations with a
+       parallel move are referred to as 2p/1 instructions. The math portion of the operation takes two pipelined
+       cycles while the move portion of the operation is single cycle. This means that NOPs or other non
+       conflicting instructions must be inserted to align the math portion of the operation. An example of an add
+       with parallel move instruction is shown in Example 1-7.
+
+Example 1-7. 2p/1 Parallel Instruction Software Pipeline Alignment
+
+
+ ;   ADDF32 || MOV32 instruction: 32-bit floating-point add with parallel move
+ ;   ADDF32 is a 2p operation
+ ;   MOV32 is a 1 cycle operation
+ ;
+    ADDF32 R0H, R1H, #2            ; R0H = R1H + 2, 2 pipeline cycle operation
+ || MOV32 R1H, @Val                ; R1H gets the contents of Val, single cycle operation
+                                   ; <-- MOV32 completes here (R1H is valid)
+     NOP                           ; 1 cycle delay or non-conflicting instruction
+                                   ; <-- ADDF32 completes here (R0H is valid)
+     NOP                           ; Any instruction
+
+
+       Parallel math instructions are referred to as 2p/2p instructions. Both math operations take 2 cycles to
+       complete. This means that NOPs or other non conflicting instructions must be inserted to align the both
+       math operations. An example of a multiply with parallel add instruction is shown in Example 1-8.
+
+Example 1-8. 2p/2p Parallel Instruction Software Pipeline Alignment
+
+
+ ; MPYF32 || ADDF32 instruction: 32-bit floating-point multiply with parallel add
+ ; MPYF32 is a 2p operation
+ ; ADDF32 is a 2p cycle operation
+ ;
+    MPYF32 R0H, R1H, R3H ; R0H = R1H * R3H, 2 pipeline cycle operation
+ || ADDF32 R1H, R2H, R4H ; R1H = R2H + R4H, 2 pipeline cycle operation
+    NOP                   ; 1 cycle delay or non-conflicting instruction
+                          ; <-- MPYF32 and ADDF32 complete here (R0H and R1H are valid)
+    NOP                   ; Any instruction
+
+
+
+1.4.6 Invalid Delay Instructions
+       Most instructions can be used in delay slots as long as source and destination register conflicts are
+       avoided. The C28x+FPU assembler will issue an error anytime you use an conflicting instruction within a
+       delay slot. The following guidelines can be used to avoid these conflicts.
+
+           NOTE:    Destination register conflicts in delay slots:
+                   Any operation used for pipeline alignment delay must not use the same destination register
+                   as the instruction requiring the delay. See Example 1-9.
+
+       In Example 1-9 the MPYF32 instruction uses R2H as its destination register. The next instruction should
+       not use R2H as its destination. Since the MOV32 instruction uses the R2H register a pipeline conflict will
+       be issued by the assembler. This conflict can be resolved by using a register other than R2H for the
+       MOV32 instruction as shown in Example 1-10.
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                  Floating Point Unit (FPU)    25
+Submit Documentation Feedback
+                                         Copyright © 2014–2019, Texas Instruments Incorporated
+Pipeline                                                                                                                  www.ti.com
+
+
+Example 1-9. Destination Register Conflict
+
+
+ ; Invalid delay instruction. Both instructions use the same destination register
+ MPYF32 R2H, R1H, R0H         ; 2p instruction
+ MOV32 R2H, mem32             ; Invalid delay instruction
+
+
+
+Example 1-10. Destination Register Conflict Resolved
+
+
+ ; Valid delay instruction
+ MPYF32 R2H, R1H, R0H                 ; 2p instruction MOV32 R1H, mem32
+ MOV32 R3H, mem32                     ; Valid delay
+                                      ; <-- MPYF32 completes, R2H valid
+
+
+
+           NOTE:      Instructions in delay slots cannot use the instruction's destination register as a source
+                     register.
+                     Any operation used for pipeline alignment delay must not use the destination register of the
+                     instruction requiring the delay as a source register as shown in Example 1-11. For parallel
+                     instructions, the current value of a register can be used in the parallel operation before it is
+                     overwritten as shown in Example 1-13.
+
+       In Example 1-11 the MPYF32 instruction again uses R2H as its destination register. The next instruction
+       should not use R2H as its source since the MPYF32 will take an additional cycle to complete. Since the
+       ADDF32 instruction uses the R2H register a pipeline conflict will be issued by the assembler. This conflict
+       can be resolved by using a register other than R2H or by inserting a non-conflicting instruction between
+       the MPYF32 and ADDF32 instructions. Since the SUBF32 does not use R2H this instruction can be
+       moved before the ADDF32 as shown in Example 1-12.
+
+Example 1-11. Destination/Source Register Conflict
+
+
+ ; Invalid delay instruction.              ADDF32 should not use R2H as a source operand
+          MPYF32 R2H, R1H, R0H                  ; 2p instruction
+          ADDF32 R3H, R3H, R2H                  ; Invalid delay instruction
+          SUBF32 R4H, R1H, R0H
+
+
+
+Example 1-12. Destination/Source Register Conflict Resolved
+
+
+ ; Valid delay instruction.
+       MPYF32 R2H, R1H, R0H            ; 2p instruction
+       SUBF32 R4H, R1H, R0H            ; Valid delay for MPYF32
+       ADDF32 R3H, R3H, R2H            ; <-- MPYF32 completes, R2H valid
+       NOP                             ; <-- SUBF32 completes, R4H valid
+
+
+       It should be noted that a source register for the 2nd operation within a parallel instruction can be the same
+       as the destination register of the first operation. This is because the two operations are started at the
+       same time. The 2nd operation is not in the delay slot of the first operation. Consider Example 1-13 where
+       the MPYF32 uses R2H as its destination register. The MOV32 is the 2nd operation in the instruction and
+       can freely use R2H as a source register. The contents of R2H before the multiply will be used by MOV32.
+
+
+
+
+26     Floating Point Unit (FPU)                                                      SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                       Submit Documentation Feedback
+                                          Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                                                                              Pipeline
+
+Example 1-13. Parallel Instruction Destination/Source Exception
+
+
+ ;  Valid parallel operation.
+    MPYF32 R2H, R1H, R0H            ; 2p/1 instruction
+ || MOV32 mem32, R2H                ; <-- Uses R2H before the MPYF32
+                                    ; <-- mem32 updated
+     NOP                            ; <-- Delay for MPYF32
+                                    ; <-- R2H updated
+
+
+       Likewise, the source register for the 2nd operation within a parallel instruction can be the same as one of
+       the source registers of the first operation. The MPYF32 operation in Example 1-14 uses the R1H register
+       as one of its sources. This register is also updated by the MOV32 register. The multiplication operation will
+       use the value in R1H before the MOV32 updates it.
+
+Example 1-14. Parallel Instruction Destination/Source Exception
+
+
+ ; Valid parallel instruction
+     MPYF32 R2H, R1H, R0H ; 2p/1 instruction
+ || MOV32 R1H, mem32      ; Valid
+ NOP                      ; <-- MOV32 completes, R1H valid
+                          ; <-- MPYF32, R2H valid
+
+
+
+           NOTE:    Operations within parallel instructions cannot use the same destination register.
+                   When two parallel operations have the same destination register, the result is invalid.
+                   For example, see Example 1-15.
+
+       If both operations within a parallel instruction try to update the same destination register as shown in
+       Example 1-15 the assembler will issue an error.
+
+Example 1-15. Invalid Destination Within a Parallel Instruction
+
+
+ ; Invalid parallel instruction. Both operations use the same destination register
+    MPYF32 R2H, R1H, R0H ; 2p/1 instruction
+ || MOV32 R2H, mem32     ; Invalid
+
+
+       Some instructions access or modify the STF flags. Because the instruction requiring a delay slot will also
+       be accessing the STF flags, these instructions should not be used in delay slots. These instructions are
+       SAVE, SETFLG, RESTORE and MOVST0.
+
+           NOTE:    Do not use SAVE, SETFLG, RESTORE, or the MOVST0 instruction in a delay slot.
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                 Floating Point Unit (FPU)    27
+Submit Documentation Feedback
+                                        Copyright © 2014–2019, Texas Instruments Incorporated
+Pipeline                                                                                                               www.ti.com
+
+1.4.7 Optimizing the Pipeline
+        The following example shows how delay slots can be used to improve the performance of an algorithm.
+        The example performs two Y = MX+B operations. In Example 1-16, no optimization has been done. The Y
+        = MX+B calculations are sequential and each takes 7 cycles to complete. Notice there are NOPs in the
+        delay slots that could be filled with non-conflicting instructions. The only requirement is these instructions
+        must not cause a register conflict or access the STF register flags.
+
+Example 1-16. Floating-Point Code Without Pipeline Optimization
+
+
+ ; Using NOPs for alignment cycles, calculate the following:
+ ;
+ ; Y1 = M1*X1 + B1
+ ; Y2 = M2*X2 + B2
+ ;
+ ; Calculate Y1
+ ;
+    MOV32   R0H,@M1           ; Load R0H with M1 - single cycle
+    MOV32   R1H,@X1           ; Load R1H with X1 - single cycle
+    MPYF32 R1H,R1H,R0H        ; R1H = M1 * X1    - 2p operation
+ || MOV32 R0H,@B1             ; Load R0H with B1 - single cycle
+    NOP                       ; Wait for MPYF32 to complete
+                              ; <-- MPYF32 completes, R1H is valid
+    ADDF32 R1H,R1H,R0H        ; R1H = R1H + R0H - 2p operation
+    NOP                       ; Wait for ADDF32 to complete
+                              ; <-- ADDF32 completes, R1H is valid
+    MOV32   @Y1,R1H           ; Save R1H in Y1   - single cycle
+
+ ; Calculate Y2
+
+     MOV32   R0H,@M2                ; Load R0H with M2 - single cycle
+     MOV32   R1H,@X2                ; Load R1H with X2 - single cycle
+     MPYF32 R1H,R1H,R0H             ; R1H = M2 * X2    - 2p operation
+ || MOV32 R0H,@B2                   ; Load R0H with B2 - single cycle
+ NOP                                ; Wait for MPYF32 to complete
+                                    ; <-- MPYF32 completes, R1H is valid
+       ADDF32 R1H,R1H,R0H           ; R1H = R1H + R0H
+ NOP                                ; Wait for ADDF32 to complete
+                                    ; <-- ADDF32 completes, R1H is valid
+    MOV32    @Y2,R1H                ; Save R1H in Y2
+ ; 14 cycles
+ ; 48 bytes
+
+
+        The code shown in Example 1-17 was generated by the C28x+FPU compiler with optimization enabled.
+        Notice that the NOPs in the first example have now been filled with other instructions. The code for the
+        two Y = MX+B calculations are now interleaved and both calculations complete in only nine cycles.
+
+
+
+
+28      Floating Point Unit (FPU)                                                  SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                    Submit Documentation Feedback
+                                       Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                                                     Floating Point Unit Instruction Set
+
+Example 1-17. Floating-Point Code With Pipeline Optimization
+
+
+ ; Using non-conflicting instructions for alignment cycles,
+ ; calculate the following:
+ ;
+ ; Y1 = M1*X1 + B1
+ ; Y2 = M2*X2 + B2
+ ;
+    MOV32    R2H,@X1         ; Load R2H with X1 - single cycle
+    MOV32    R1H,@M1         ; Load R1H with M1 - single cycle
+    MPYF32   R3H,R2H,R1H     ; R3H = M1 * X1    - 2p operation
+ || MOV32    R0H,@M2         ; Load R0H with M2 - single cycle
+    MOV32    R1H,@X2         ; Load R1H with X2 - single cycle
+                             ; <-- MPYF32 completes, R3H is valid
+    MPYF32   R0H,R1H,R0H     ; R0H = M2 * X2    - 2p operation
+ || MOV32    R4H,@B1         ; Load R4H with B1 - single cycle
+                             ; <-- MOV32 completes, R4H is valid
+    ADDF32   R1H,R4H,R3H     ; R1H = B1 + M1*X1 - 2p operation
+ || MOV32    R2H,@B2         ; Load R2H with B2 - single cycle
+                             ; <-- MPYF32 completes, R0H is valid
+    ADDF32   R0H,R2H,R0H     ; R0H = B2 + M2*X2 - 2p operation
+                             ; <-- ADDF32 completes, R1H is valid
+    MOV32    @Y1,R1H         ; Store Y1
+                             ; <-- ADDF32 completes, R0H is valid
+    MOV32    @Y2,R0H         ; Store Y2
+
+ ; 9 cycles
+ ; 36 bytes
+
+
+
+1.5    Floating Point Unit Instruction Set
+       This chapter describes the assembly language instructions of the TMS320C28x plus floating-point
+       processor. Also described are parallel operations, conditional operations, resource constraints, and
+       addressing modes. The instructions listed here are an extension to the standard C28x instruction set. For
+       information on standard C28x instructions, see the TMS320C28x DSP CPU and Instruction Set Reference
+       Guide (literature number SPRU430).
+
+1.5.1 Instruction Descriptions
+       This section gives detailed information on the instruction set. Each instruction may present the following
+       information:
+       • Operands
+       • Opcode
+       • Description
+       • Exceptions
+       • Pipeline
+       • Examples
+       • See also
+       The example INSTRUCTION is shown to familiarize you with the way each instruction is described. The
+       example describes the kind of information you will find in each part of the individual instruction description
+       and where to obtain more information. On the C28x+FPU instructions, follow the same format as the
+       C28x. The source operand(s) are always on the right and the destination operand(s) are on the left.
+       The explanations for the syntax of the operands used in the instruction descriptions for the TMS320C28x
+       plus floating-point processor are given in Table 1-4. For information on the operands of standard C28x
+       instructions, see the TMS320C28x DSP CPU and Instruction Set Reference Guide (SPRU430).
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                   Floating Point Unit (FPU)    29
+Submit Documentation Feedback
+                                       Copyright © 2014–2019, Texas Instruments Incorporated
+Floating Point Unit Instruction Set                                                                                               www.ti.com
+
+                                                    Table 1-4. Operand Nomenclature
+        Symbol                Description
+        #16FHi                16-bit immediate (hex or float) value that represents the upper 16-bits of an IEEE 32-bit floating-point value.
+                              Lower 16-bits of the mantissa are assumed to be zero.
+        #16FHiHex             16-bit immediate hex value that represents the upper 16-bits of an IEEE 32-bit floating-point value.
+                              Lower 16-bits of the mantissa are assumed to be zero.
+        #16FLoHex             A 16-bit immediate hex value that represents the lower 16-bits of an IEEE 32-bit floating-point value
+        #32Fhex               32-bit immediate value that represents an IEEE 32-bit floating-point value
+        #32F                  Immediate float value represented in floating-point representation
+        #0.0                  Immediate zero
+        #RC                   16-bit immediate value for the repeat count
+        *(0:16bitAddr)        16-bit immediate address, zero extended
+        CNDF                  Condition to test the flags in the STF register
+        FLAG                  Selected flags from STF register (OR) 11 bit mask indicating which floating-point status flags to change
+        label                 Label representing the end of the repeat block
+        mem16                 Pointer (using any of the direct or indirect addressing modes) to a 16-bit memory location
+        mem32                 Pointer (using any of the direct or indirect addressing modes) to a 32-bit memory location
+        RaH                   R0H to R7H registers
+        RbH                   R0H to R7H registers
+        RcH                   R0H to R7H registers
+        RdH                   R0H to R7H registers
+        ReH                   R0H to R7H registers
+        RfH                   R0H to R7H registers
+        RB                    Repeat Block Register
+        STF                   FPU Status Register
+        VALUE                 Flag value of 0 or 1 for selected flag (OR) 11 bit mask indicating the flag value; 0 or 1
+
+
+
+
+30     Floating Point Unit (FPU)                                                        SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                         Submit Documentation Feedback
+                                            Copyright © 2014–2019, Texas Instruments Incorporated
+

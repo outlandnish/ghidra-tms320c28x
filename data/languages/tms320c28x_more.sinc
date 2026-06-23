@@ -1,0 +1,195 @@
+# Additional C28x instructions seen in the real firmware (DIR/PM) but not in the
+# core families. Encodings verified against docs/c28x/ch6_instruction_detail.txt.
+# Included by tms320c28x.sinc.
+#
+# Identified from the dis2000 ground-truth mnemonic histogram of DIR: LC/LB (long
+# call/branch, absolute 22-bit), MOVZ, MOVDL, MOVAD, DMOV, SUBU/SUBB/ADDB, SUBCU,
+# MPYXU, XMACD, MOVB byte stores.
+
+# --- 22-bit absolute call/branch target -------------------------------------
+# LC/LB 22bit: word1 low 6 bits (loc_off6) = addr[21:16], word2 (imm16) = addr[15:0].
+# Compute the absolute target in a disassembly action ([reloc = ...]) on the main
+# constructor; both word fields are in scope. Build a code-space pointer var, then
+# call/goto it.
+:LC abs22  is op_hi8=0x00 & op_lo_76=0b10 & loc_off6 ; imm16
+            [ abs22 = (loc_off6 << 16) | imm16; ] {
+    local tgt:4 = abs22;
+    RPC = inst_next;
+    call [tgt];
+}
+:LB abs22  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16
+            [ abs22 = (loc_off6 << 16) | imm16; ] {
+    local tgt:4 = abs22;
+    goto [tgt];
+}
+
+# LC *XAR7   0111 0110 0000 0100   (indirect call via XAR7)
+:LC "*XAR7"  is op16=0x7604 { RPC = inst_next; call [XAR7]; }
+# LB *XAR7   0111 0110 0010 0000   (indirect branch via XAR7)
+:LB "*XAR7"  is op16=0x7620 { goto [XAR7]; }
+
+# --- MOVZ ARn, loc16 : load AR, clear ARH (zero-extend) ----------------------
+# AR0..5: 0101 1nnn LLLL LLLL  (nnn via arsel3); AR6/AR7 have distinct opcodes.
+:MOVZ arsel3, loc16  is op_hi5=0b01011 & arsel3 & loc16  {
+    arsel3 = loc16;                    # writing the 16-bit AR clears ARH (XARn high) by model
+}
+:MOVZ "AR6", loc16   is op_hi8=0x88 & loc16  { AR6 = loc16; AR6H = 0; }
+:MOVZ "AR7", loc16   is op_hi8=0x80 & loc16  { AR7 = loc16; AR7H = 0; }
+
+# MOVZ DP, #10bit   1011 10CC CCCC CCCC   -- load low 10 bits of DP, clear rest
+:MOVZ "DP", "#"dp10  is op_hi_6=0b101110 & dp10  {
+    DP = dp10;
+}
+
+# --- 16-bit / 32-bit moves ---------------------------------------------------
+# MOVDL XT,loc32    1010 0110 LLLL LLLL  -- store XT to loc32, then load XT from it
+:MOVDL "XT", loc32  is op_hi8=0xA6 & loc32  { loc32 = XT; XT = loc32; }
+# MOVAD T,loc16     1010 0111 LLLL LLLL  -- T=loc16; ACC+=P (like MOVA, addr variant)
+:MOVAD "T", loc16   is op_hi8=0xA7 & loc16  { ACC = ACC + P; T = loc16; }
+# DMOV loc16        1010 0101 LLLL LLLL  -- data move [loc16+1]=[loc16] (delay line)
+:DMOV loc16         is op_hi8=0xA5 & loc16  { }   # decode-only (memory shuffle)
+
+# --- byte moves --------------------------------------------------------------
+# MOVB AX.LSB, loc16   1100 011A LLLL LLLL
+:MOVB AX^".LSB", loc16  is op_hi7=0x63 & AX & loc16  { AX = (AX & 0xFF00) | (loc16 & 0xFF); }
+# MOVB loc16, AX.LSB   0011 110A LLLL LLLL
+:MOVB loc16, AX^".LSB"  is op_hi7=0x1E & loc16 & AX  { loc16 = AX & 0xFF; }
+
+# --- ALU additions -----------------------------------------------------------
+# SUBU ACC, loc16   0000 0001 LLLL LLLL   (subtract unsigned)
+:SUBU ACCreg, loc16  is op_hi8=0x01 & ACCreg & loc16  { ACC = ACC - zext(loc16); }
+# SUBB ACC, #8bit   0001 1001 CCCC CCCC
+:SUBB ACCreg, "#"imm8  is op_hi8=0x19 & ACCreg & imm8  { ACC = ACC - zext(imm8:1); }
+# ADDB ACC, #8bit   0000 1001 CCCC CCCC
+:ADDB ACCreg, "#"imm8  is op_hi8=0x09 & ACCreg & imm8  { ACC = ACC + zext(imm8:1); }
+# ADDB AX, #8bit    1001 110A CCCC CCCC
+:ADDB AX, "#"imm8   is op_hi7=0x4E & AX & imm8  { AX = AX + zext(imm8:1); }
+# SUBCU ACC, loc16  0001 1111 LLLL LLLL   (conditional subtract, divide step) decode-only
+:SUBCU ACCreg, loc16  is op_hi8=0x1F & ACCreg & loc16  { }   # decode-only (divide primitive)
+
+# --- multiply additions ------------------------------------------------------
+# MPYXU ACC,T,loc16   0011 0000 LLLL LLLL  (signed x unsigned -> ACC)
+:MPYXU ACCreg, Treg, loc16  is op_hi8=0x30 & ACCreg & Treg & loc16  {
+    local a:4 = sext(T); local b:4 = zext(loc16); ACC = a * b;
+}
+# MPYXU P,T,loc16     0011 0010 LLLL LLLL
+:MPYXU Preg, Treg, loc16  is op_hi8=0x32 & Preg & Treg & loc16  {
+    local a:4 = sext(T); local b:4 = zext(loc16); P = a * b;
+}
+# XMACD P,loc16,*pma  1010 0100 LLLL LLLL : pma   (mac with data move) decode-only-ish
+:XMACD Preg, loc16, "*"imm16  is op_hi8=0xA4 & Preg & loc16 ; imm16 {
+    ACC = ACC + P;
+    local pma:4 = zext(imm16:2);
+    local pv:2 = *[ram]:2 pma;
+    local a:4 = sext(loc16); local b:4 = sext(pv);
+    P = a * b;
+}
+
+# =============================================================================
+# MOVL XARn, #22bit -- load a 32-bit auxiliary register with a 22-bit constant.
+# THE pointer-load instruction: this is how code loads peripheral/CAN base
+# addresses (e.g. MOVL XAR4,#0x048000 for CANA) into a pointer register.
+# word1 low 6 bits = const[21:16], word2 = const[15:0].
+# XAR0-3: 1000 1101 nnCC CCCC ; XAR4-5: 1000 1111 0nCC ; XAR6-7: 0111 0110 1xCC
+# =============================================================================
+:MOVL "XAR0", "#"xar22  is op_hi8=0x8D & op_lo_76=0b00 & loc_off6 ; imm16
+        [ xar22 = (loc_off6 << 16) | imm16; ] { XAR0 = xar22; }
+:MOVL "XAR1", "#"xar22  is op_hi8=0x8D & op_lo_76=0b01 & loc_off6 ; imm16
+        [ xar22 = (loc_off6 << 16) | imm16; ] { XAR1 = xar22; }
+:MOVL "XAR2", "#"xar22  is op_hi8=0x8D & op_lo_76=0b10 & loc_off6 ; imm16
+        [ xar22 = (loc_off6 << 16) | imm16; ] { XAR2 = xar22; }
+:MOVL "XAR3", "#"xar22  is op_hi8=0x8D & op_lo_76=0b11 & loc_off6 ; imm16
+        [ xar22 = (loc_off6 << 16) | imm16; ] { XAR3 = xar22; }
+:MOVL "XAR4", "#"xar22  is op_hi8=0x8F & op_lo_76=0b00 & loc_off6 ; imm16
+        [ xar22 = (loc_off6 << 16) | imm16; ] { XAR4 = xar22; }
+:MOVL "XAR5", "#"xar22  is op_hi8=0x8F & op_lo_76=0b01 & loc_off6 ; imm16
+        [ xar22 = (loc_off6 << 16) | imm16; ] { XAR5 = xar22; }
+:MOVL "XAR6", "#"xar22  is op_hi8=0x76 & op_lo_76=0b10 & loc_off6 ; imm16
+        [ xar22 = (loc_off6 << 16) | imm16; ] { XAR6 = xar22; }
+:MOVL "XAR7", "#"xar22  is op_hi8=0x76 & op_lo_76=0b11 & loc_off6 ; imm16
+        [ xar22 = (loc_off6 << 16) | imm16; ] { XAR7 = xar22; }
+
+# =============================================================================
+# MOV ACC, loc16 << #0..15   1000 0101 LLLL LLLL : 0000 0000 0000 SSSS  (shift imm)
+# and XMAC P,loc16,*(pma)     1000 0100 LLLL LLLL : pma  (decode-only MAC variant)
+# =============================================================================
+:MOV ACCreg, loc16^"<<#"^imm16  is op_hi8=0x85 & ACCreg & loc16 ; imm16 {
+    local sh:4 = zext(imm16:2) & 0xf;
+    ACC = sext(loc16) << sh;
+}
+:XMAC Preg, loc16, "*pma"  is op_hi8=0x84 & Preg & loc16 ; imm16 {
+    ACC = ACC + P;
+    local pma:4 = zext(imm16:2);
+    local pv:2 = *[ram]:2 pma;
+    local a:4 = sext(loc16); local b:4 = sext(pv);
+    P = a * b;
+}
+
+# =============================================================================
+# Batch 2: common store/stack/program-memory ops found breaking real code runs.
+# =============================================================================
+# OR loc16, AX     1001 100A LLLL LLLL  (A bit -> AL/AH)
+:OR loc16, AX     is op_hi7=0x4C & loc16 & AX  { loc16 = loc16 | AX; }
+# ANDB AX, #8bit   1001 000A CCCC CCCC
+:ANDB AX, "#"imm8  is op_hi7=0x48 & AX & imm8  { AX = AX & zext(imm8:1); }
+# PUSH loc16       0010 0010 LLLL LLLL  (push 16-bit value: *SP++ = loc16)
+:PUSH loc16  is op_hi8=0x22 & loc16  {
+    local sp:4 = zext(SP); local v:2 = loc16; *[ram]:2 sp = v; SP = SP + 1;
+}
+# POP loc16        0010 1010 LLLL LLLL
+:POP loc16   is op_hi8=0x2A & loc16  {
+    SP = SP - 1; local sp:4 = zext(SP); loc16 = *[ram]:2 sp;
+}
+# MOV IER, loc16   0010 0011 LLLL LLLL
+:MOV "IER", loc16  is op_hi8=0x23 & loc16  { IER = loc16; }
+# PREAD loc16,*XAR7   0010 0100 LLLL LLLL  (read program memory @XAR7 -> loc16)
+:PREAD loc16, "*XAR7"  is op_hi8=0x24 & loc16  {
+    loc16 = *[ram]:2 XAR7;
+}
+# PWRITE *XAR7,loc16  0010 0110 LLLL LLLL  (write loc16 -> program memory @XAR7)
+:PWRITE "*XAR7", loc16  is op_hi8=0x26 & loc16  {
+    *[ram]:2 XAR7 = loc16;
+}
+# LOOPNZ loc16,#16bit  0010 1110 LLLL LLLL : iiii...  (decode-only loop)
+:LOOPNZ loc16, "#"imm16  is op_hi8=0x2E & loc16 ; imm16  { }
+# LOOPZ loc16,#16bit   (0010 1010? no -- check) -- skip, POP uses 0x2a
+
+# =============================================================================
+# Batch 3: immediate-to-memory ALU (2-word) + XPREAD single-word form.
+# These (ADD/AND/OR/XOR loc16,#16bit) are extremely common in init/config code.
+# word1 = opcode + loc ; word2 = 16-bit immediate.
+# =============================================================================
+# ADD loc16,#16bit   0000 1000 LLLL LLLL : iiii
+:ADD loc16, "#"imm16  is op_hi8=0x08 & loc16 ; imm16  { loc16 = loc16 + imm16:2; }
+# AND loc16,#16bit   0001 1000 LLLL LLLL : iiii
+:AND loc16, "#"imm16  is op_hi8=0x18 & loc16 ; imm16  { loc16 = loc16 & imm16:2; }
+# OR loc16,#16bit    0001 1010 LLLL LLLL : iiii
+:OR loc16, "#"imm16   is op_hi8=0x1A & loc16 ; imm16  { loc16 = loc16 | imm16:2; }
+# XOR loc16,#16bit   0001 1100 LLLL LLLL : iiii
+:XOR loc16, "#"imm16  is op_hi8=0x1C & loc16 ; imm16  { loc16 = loc16 ^ imm16:2; }
+# XPREAD loc16,*(pma)  1010 1100 MMMM MMMM : pma  (program-mem read, single-word form)
+:XPREAD loc16, "*(pma)"  is op_hi8=0xAC & loc16 ; imm16  {
+    local pma:4 = zext(imm16:2);
+    loc16 = *[ram]:2 pma;
+}
+
+# =============================================================================
+# Batch 4: fixed PUSH/POP of registers (function prologue/epilogue). No operands.
+# push16(v): *SP = v; SP++.   pop16(dst): SP--; dst = *SP.   (SP is word-addressed)
+# =============================================================================
+macro push16(v) { local a:4 = zext(SP); *[ram]:2 a = v; SP = SP + 1; }
+macro pop16(dst) { SP = SP - 1; local a:4 = zext(SP); dst = *[ram]:2 a; }
+
+:POP "IFR"       is op16=0x0002 { pop16(IFR); }
+:POP "AR1H:AR0H" is op16=0x0003 { SP = SP - 2; }               # decode-only (pair pop)
+:POP "RPC"       is op16=0x0007 { SP = SP - 2; local a:4 = zext(SP); RPC = *[ram]:4 a; }
+:PUSH "RPC"      is op16=0x0004 { local a:4 = zext(SP); *[ram]:4 a = RPC; SP = SP + 2; }
+:PUSH "AR1H:AR0H" is op16=0x0005 { SP = SP + 2; }              # decode-only (pair push)
+:POP "DP"        is op16=0x7603 { pop16(DP); }
+:POP "ST0"       is op16=0x7613 { pop16(ST0); }
+:POP "ST1"       is op16=0x7600 { pop16(ST1); }
+:POP "DBGIER"    is op16=0x7612 { pop16(DBGIER); }
+:PUSH "IFR"      is op16=0x760A { push16(IFR); }
+:PUSH "DP"       is op16=0x760B { push16(DP); }
+:PUSH "ST0"      is op16=0x7618 { push16(ST0); }
+:PUSH "ST1"      is op16=0x7608 { push16(ST1); }

@@ -1,0 +1,145 @@
+# C28x ALU family: ADD/SUB/AND/OR/XOR/CMP/INC/DEC/NEG/NOT (+ flags).
+# Included by tms320c28x.sinc. Encodings verified against ch6_instruction_detail.txt.
+#
+# Flag semantics (SPRU430F per-instruction "Flags and Modes"):
+#   N = sign bit of result, Z = (result == 0),
+#   C = carry-out (add) / no-borrow (sub), V = signed overflow.
+# Implemented with SLEIGH p-code ops carry()/scarry()/sborrow(). These are the
+# flags the decompiler turns into readable conditionals (see the CC table in flow).
+#
+# Scope: the single-word AX/ACC forms that dominate the firmware. The 2-word
+# 0x56-prefixed extended-shift forms (ADD ACC,loc16<<T etc.) are deferred.
+
+# --- helper macros: set NZ for a 16-bit / 32-bit result ----------------------
+macro setNZ16(r) {
+    $(N) = (r s< 0);
+    $(Z) = (r == 0);
+}
+macro setNZ32(r) {
+    $(N) = (r s< 0);
+    $(Z) = (r == 0);
+}
+
+# =============================================================================
+# 16-bit ADD / SUB on AX (AL/AH), with full flags
+# =============================================================================
+# ADD AX, loc16     1001 010A LLLL LLLL
+:ADD AX, loc16   is op_hi7=0x4A & AX & loc16  {
+    local b:2 = loc16;
+    $(C) = carry(AX, b);
+    $(V) = scarry(AX, b);
+    AX = AX + b;
+    setNZ16(AX);
+}
+
+# SUB AX, loc16     1001 111A LLLL LLLL
+:SUB AX, loc16   is op_hi7=0x4F & AX & loc16  {
+    local b:2 = loc16;
+    $(C) = !(AX < b);            # C set when no borrow
+    $(V) = sborrow(AX, b);
+    AX = AX - b;
+    setNZ16(AX);
+}
+
+# =============================================================================
+# 16-bit logical ops on AX
+# =============================================================================
+# AND AX, loc16     1100 110A LLLL LLLL
+:AND AX, loc16   is op_hi7=0x66 & AX & loc16  { AX = AX & loc16; setNZ16(AX); }
+# OR AX, loc16      1100 101A LLLL LLLL
+:OR  AX, loc16   is op_hi7=0x65 & AX & loc16  { AX = AX | loc16; setNZ16(AX); }
+# XOR AX, loc16     0111 000A LLLL LLLL
+:XOR AX, loc16   is op_hi7=0x38 & AX & loc16  { AX = AX ^ loc16; setNZ16(AX); }
+
+# =============================================================================
+# 16-bit logical ops on ACC (single-word forms)
+# =============================================================================
+# AND ACC, loc16    1000 1001 LLLL LLLL
+:AND ACCreg, loc16  is op_hi8=0x89 & ACCreg & loc16  { ACC = ACC & zext(loc16); setNZ32(ACC); }
+# OR ACC, loc16     1010 1111 LLLL LLLL
+:OR ACCreg, loc16   is op_hi8=0xAF & ACCreg & loc16  { ACC = ACC | zext(loc16); setNZ32(ACC); }
+# XOR ACC, loc16    1011 0111 LLLL LLLL
+:XOR ACCreg, loc16  is op_hi8=0xB7 & ACCreg & loc16  { ACC = ACC ^ zext(loc16); setNZ32(ACC); }
+
+# =============================================================================
+# CMP (compare = subtract, set flags, discard result)
+# =============================================================================
+# CMP AX, loc16     0101 010A LLLL LLLL
+:CMP AX, loc16   is op_hi7=0x2A & AX & loc16  {
+    local b:2 = loc16;
+    local r:2 = AX - b;
+    $(C) = !(AX < b);
+    $(V) = sborrow(AX, b);
+    setNZ16(r);
+}
+
+# =============================================================================
+# 32-bit ALU on ACC (loc32)
+# =============================================================================
+# ADDL ACC, loc32   0000 0111 LLLL LLLL
+:ADDL ACCreg, loc32 is op_hi8=0x07 & ACCreg & loc32  {
+    local b:4 = loc32;
+    $(C) = carry(ACC, b);
+    $(V) = scarry(ACC, b);
+    ACC = ACC + b;
+    setNZ32(ACC);
+}
+# SUBL ACC, loc32   0000 0011 LLLL LLLL
+:SUBL ACCreg, loc32 is op_hi8=0x03 & ACCreg & loc32  {
+    local b:4 = loc32;
+    $(C) = !(ACC < b);
+    $(V) = sborrow(ACC, b);
+    ACC = ACC - b;
+    setNZ32(ACC);
+}
+# CMPL ACC, loc32   0000 1111 LLLL LLLL
+:CMPL ACCreg, loc32 is op_hi8=0x0F & ACCreg & loc32  {
+    local b:4 = loc32;
+    local r:4 = ACC - b;
+    $(C) = !(ACC < b);
+    $(V) = sborrow(ACC, b);
+    setNZ32(r);
+}
+
+# =============================================================================
+# INC / DEC of a 16-bit memory/register location
+# =============================================================================
+# INC loc16         0000 1010 LLLL LLLL
+:INC loc16   is op_hi8=0x0A & loc16  {
+    local v:2 = loc16;
+    $(V) = scarry(v, 1:2);
+    v = v + 1;
+    loc16 = v;
+    setNZ16(v);
+}
+# DEC loc16         0000 1011 LLLL LLLL
+:DEC loc16   is op_hi8=0x0B & loc16  {
+    local v:2 = loc16;
+    $(V) = sborrow(v, 1:2);
+    v = v - 1;
+    loc16 = v;
+    setNZ16(v);
+}
+
+# =============================================================================
+# NEG / NOT of ACC (single-word, FF-prefixed)
+# =============================================================================
+# NEG ACC           1111 1111 0101 0100
+:NEG ACCreg   is op16=0xFF54 & ACCreg  {
+    $(V) = (ACC == 0x80000000);
+    ACC = -ACC;
+    setNZ32(ACC);
+}
+# NOT ACC           1111 1111 0101 0101
+:NOT ACCreg   is op16=0xFF55 & ACCreg  {
+    ACC = ~ACC;
+    setNZ32(ACC);
+}
+
+# =============================================================================
+# TBIT loc16, #bit  0100 BBBB LLLL LLLL  -- test bit, result -> TC
+# =============================================================================
+:TBIT loc16, "#"tbit_b  is op_hi_4=0b0100 & tbit_b & loc16  {
+    local v:2 = loc16;
+    $(TC) = ((v >> tbit_b) & 1) != 0;
+}

@@ -1,0 +1,399 @@
+Register Figures                                                                                                                                           www.ti.com
+
+
+                     15   14     13    12    11      10     9    8         7        6         5         4         3         2          1         0
+
+                     0    0      0     0     0       0     0     0         0        0         0         0         0         0          0         0
+                               OVC/OVCU                         PM                 V          N         Z         C         TC     OVM       SXM
+                                       R/W                           R/W                R/W       R/W       R/W       R/W        R/W       R/W       R/W
+
+
+
+
+                               Negative flag                                                      Sign-extension mode
+                               0 Negative condition false                                         0 Sign extension suppressed
+                               1 Negative condition true                                          1 Sign extension mode selected
+
+
+                          Overflow flag                                                    ACC overflow mode
+                          0 Flag is reset                                                  0 Results overflow normally
+                          1 Overflow detected                                              1 Overflow mode selected
+
+                      Product shift mode                                                Test/control flag
+                      0 0 0 Left shift by 1                                             Holds result of test performed
+                      0 0 1 No shift                                                    by TBIT or NORM instruction
+                      0 1 0 Right shift by 1, sign extended
+                      0 1 1 Right shift by 2, sign extended
+                      1 0 0 Right shift by 3, sign extended                       Carry bit
+                      1 0 1 Right shift by 4, sign extended                       0 Carry not detected/borrow detected
+                      1 1 0 Right shift by 5, sign extended
+                                                                                  1 Carry detected/borrow not detected
+                      1 1 1 Right shift by 6, sign extended
+
+                   Overflow counter                                            Zero flag
+                   Behaves differently for signed and unsigned                 0 Zero condition false
+                   operations:                                                 1 Zero condition true
+                   Signed operations (OVC)
+                    Increments by 1 for each positive overflow;
+                    Decrements by 1 for each negative overflow.
+                   Unsigned operations (OVCU)
+                    Increments by 1 for ADD operations that
+                     generate a Carry
+                    Decrements by 1 for SUB operations that
+                     generate a Borrow
+
+                                                     Figure A-1. Status Register ST0
+
+
+          NOTE: Note: For more details about ST0, see section 2.3 on page 2-16.
+
+
+
+
+492    Register Quick Reference                                                                                   SPRU430F – August 2001 – Revised April 2015
+                                                                                                                             Submit Documentation Feedback
+                                                 Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                                        Register Figures
+
+                       15         14           13           12            11             10               9            8
+                       0          0            0            0             0              0               0             0
+                                 ARP                       XF          MOM1MAP         CNF           OBJMODE        AMODE
+                                       R/W                       R/W           R              R/W             R/W          R/W
+
+
+
+
+                                   XF status bit
+                                   0 XFS output signal low                                           Address mode bit
+                                   1 XFS output signal is high                                      0 C28x/C27x processing mode
+                                                                                                    1 C2xLP addressing modes
+
+                                                                                       Object compatibility mode bit
+                     Auxiliary register pointer
+                                                                                       0 C27x compatible map
+                      0 0 0 XAR0 selected
+                                                                                       1 C28x/C2xLP compatible map
+                      0 0 1 XAR1 selected
+                      0 1 0 XAR2 selected
+                      0 1 1 XAR3 selected
+                      1 0 0 XAR4 selected                                      C2xLP-mapping mode bit
+                      1 0 1 XAR5 selected                                      0 PAGE0 stack addressing mode
+                      1 1 0 XAR6 selected                                      1 PAGE0 direct addressing mode
+                      1 1 1 XAR7 selected
+                                                                  M0 and M1 mapping mode bit
+                                                                  0 M0 is 0−3FF data, 400−7FF pro-
+                                                                  1 gram
+                                                                     M0 is 0−3FF data and program
+                                                                     SP starts at 0x400.
+
+                                             Figure A-2. Status Register ST1, Bits 15-8
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                                         Register Quick Reference   493
+Submit Documentation Feedback
+                                               Copyright © 2001–2015, Texas Instruments Incorporated
+Register Figures                                                                                                                       www.ti.com
+
+
+                        7              6              5               4            3              2              1           0
+                        0              0              0               0           X‡              0              1           1
+                   IDLESTAT        EALLOW          LOOP           SPA           VMAP           PAGE0         DBGM          INTM
+                            R              R/W            R               R/W          R/W            R/W            R/W         R/W
+
+
+
+
+                                Stack pointer alignment bit
+                                0 Stack pointer has not been
+                                                                                             Interrupt enable mask bit
+                                1 aligned to even address
+                                  Stack pointer has been aligned to                          0 Maskable interrupts globally enabled
+                                  even address                                               1 Maskable interrupts globally disabled
+                         Loop instruction status bit
+                         0 LOOPNZ/LOOPZ instruction done                               Debug enable mask bit
+                         1 LOOPNZ/LOOPZ instruction in                                 0 Debug events enabled
+                           progress                                                    1 Debug events disabled
+                     Emulation access enable bit
+                     0 Access to emulation registers disabled
+                     1 Access to emulation registers enabled
+                                                                                PAGE0 addressing configuration bit
+                                                                                0 PAGE0 stack addressing mode
+                   IDLE status flag bit                                         1 PAGE0 direct addressing mode
+                     0 IDLE instruction done
+                     1 IDLE instruction in progress
+
+                                                                            Vector map bit
+                                                                            0 Interrupt vectors mapped to program-
+                                                                              memory addresses 00 000016−00 003F16
+                                                                            1 Interrupt vectors mapped to program-
+                                                                              memory addresses 3F FFC016−3F FFFF16
+
+             (1)   These reserved bits are always 0s and are not affected by writes.
+             (2)   The VMAP bit depends on the level of the VMAP input signal at reset. If the VMAP signal is low, the VMAP
+                   bit is 0 after reset; if the VMAP signal is high, the VMAP bit is 1 after reset. For C28x devices that do not pin
+                   out the VMAP signal, the signal is tied high internal to the device.
+                                             Figure A-3. Status Regsiter ST1, Bits 7-0
+
+
+          NOTE: For more details about ST1, see section 2.4 on page 2-34.
+
+
+
+
+494    Register Quick Reference                                                                         SPRU430F – August 2001 – Revised April 2015
+                                                                                                                   Submit Documentation Feedback
+                                                 Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                                                       Register Figures
+
+                              15                 14               13           12             11              10             9             8
+                              0                  0                0            0               0               0             0             0
+                        RTOSINT            DLOGINT              INT14        INT13           INT12           INT11      INT10          INT9
+                                  R/W                R/W          R/W          R/W             R/W             R/W          R/W            R/W
+
+
+
+
+                                                     INT13 flag bit                                       INT9 flag bit
+                                                     0 INT13 not pending                                  0 INT9 not pending
+                                                     1 INT13 pending                                      1 INT9 pending
+                                         INT14 flag bit                                              INT10 flag bit
+                                         0 INT14 not pending                                         0 INT10 not pending
+                                         1 INT14 pending                                             1 INT10 pending
+                              DLOGINT flag bit                                               INT11 flag bit
+                              0 DLOGINT not pending                                          0 INT11 not pending
+                              1 DLOGINT pending                                              1 INT11 pending
+
+                     RTOSINT flag bit                                                 INT12 flag bit
+                    0 RTOSINT not pending                                            0 INT12 not pending
+                    1 RTOSINT pending                                                1 INT12 pending
+
+
+                          7                6                5            4               3               2              1              0
+                          0                0                0            0               0               0              0              0
+                        INT8              INT7             INT6         INT5           INT4             INT3         INT2            INT1
+                              R/W              R/W              R/W          R/W             R/W             R/W            R/W         R/W
+
+
+
+
+                                                 INT5 flag bit                                           INT1 flag bit
+                                                 0 INT5 not pending                                      0 INT1 not pending
+                                                 1 INT5 pending                                          1 INT1 pending
+                                        INT6 flag bit                                              INT2 flag bit
+                                        0 INT6 not pending                                         0 INT2 not pending
+                                        1 INT6 pending                                             1 INT2 pending
+                          INT7 flag bit                                                   INT3 flag bit
+                          0 INT7 not pending                                              0 INT3 not pending
+                          1 INT7 pending                                                  1 INT3 pending
+
+                   INT8 flag bit                                                     INT4 flag bit
+                   0 INT8 not pending                                                0 INT4 not pending
+                   1 INT8 pending                                                    1 INT4 pending
+
+                                                 Figure A-4. Interrupt Flag Register (IFR)
+
+
+           NOTE: For more details about the IFR, see section 3.3.1 on page 3-7.
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                                                       Register Quick Reference   495
+Submit Documentation Feedback
+                                                      Copyright © 2001–2015, Texas Instruments Incorporated
+Register Figures                                                                                                                               www.ti.com
+
+
+                          15               14                 13          12              11              10             9       8
+                          0                  0                0             0             0               0              0       0
+                      RTOSINT         DLOGINT               INT14      INT13          INT12           INT11          INT10      INT9
+                              R/W                R/W           R/W          R/W            R/W            R/W            R/W      R/W
+
+
+
+
+                                                 INT13 enable bit                                    INT9 enable bit
+                                                 0 INT13 disabled                                    0 INT9 disabled
+                                                 1 INT13 enabled                                     1 INT9 enabled
+                                    INT14 enable bit                                            INT10 enable bit
+                                    0 INT14 disabled                                            0 INT10 disabled
+                                    1 INT14 enabled                                             1 INT10 enabled
+                         DLOGINT enable bit                                           INT11 enable bit
+                         0 DLOGINT disabled                                           0 INT11 disabled
+                         1 DLOGINT enabled                                            1 INT11 enabled
+
+                   RTOSINT enable bit                                             INT12 enable bit
+                   0 RTOSINT disabled                                             0 INT12 disabled
+                   1 RTOSINT enabled                                              1 INT12 enabled
+
+
+                         7             6                5             4               3               2              1           0
+                         0             0                0             0               0               0              0           0
+                       INT8           INT7             INT6          INT5           INT4            INT3            INT2       INT1
+                              R/W          R/W              R/W           R/W             R/W             R/W            R/W      R/W
+
+
+
+
+                                                 INT5 enable bit                                     INT1 enable bit
+                                                 0 INT5 disabled                                     0 INT1 disabled
+                                                 1 INT5 enabled                                      1 INT1 enabled
+                                    INT6 enable bit                                             INT2 enable bit
+                                    0 INT6 disabled                                             0 INT2 disabled
+                                    1 INT6 enabled                                              1 INT2 enabled
+                         INT7 enable bit                                              INT3 enable bit
+                         0 INT7 disabled                                              0 INT3 disabled
+                         1 INT7 enabled                                               1 INT3 enabled
+
+                   INT8 enable bit                                                INT4 enable bit
+                   0 INT8 disabled                                                0 INT4 disabled
+                   1 INT8 enabled                                                 1 INT4 enabled
+
+                                             Figure A-5. Interrupt Enable Register (IER)
+
+
+          NOTE: For more details about the IER, see section 3.3.2 on page 3-8.
+
+
+
+
+496    Register Quick Reference                                                                                 SPRU430F – August 2001 – Revised April 2015
+                                                                                                                           Submit Documentation Feedback
+                                                  Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                                                Register Figures
+
+                          15                14                 13         12              11              10          9          8
+                          0                   0                0            0             0               0           0          0
+                       RTOSINT         DLOGINT               INT14     INT13          INT12           INT11      INT10          INT9
+                              R/W                 R/W          R/W          R/W            R/W            R/W         R/W         R/W
+
+
+
+
+                                                  INT13 debug enable bit                             INT9 debug enable bit
+                                                  0 INT13 disabled                                   0 INT9 disabled
+                                                  1 INT13 enabled                                    1 INT9 enabled
+                                     INT14 debug enable bit                                     INT10 debug enable bit
+                                     0 INT14 disabled                                           0 INT10 disabled
+                                     1 INT14 enabled                                            1 INT10 enabled
+                          DLOGINT debug enable bit                                    INT11 debug enable bit
+                          0 DLOGINT disabled                                          0 INT11 disabled
+                          1 DLOGINT enabled                                           1 INT11 enabled
+
+                   RTOSINT debug enable bit                                       INT12 debug enable bit
+                   0 RTOSINT disabled                                             0 INT12 disabled
+                   1 RTOSINT enabled                                              1 INT12 enabled
+
+
+                          7             6                5            4               3               2           1              0
+                          0             0                0            0               0               0           0              0
+                        INT8           INT7             INT6         INT5           INT4            INT3        INT2           INT1
+                              R/W           R/W              R/W          R/W             R/W             R/W         R/W         R/W
+
+
+
+
+                                                  INT5 debug enable bit                              INT1 debug enable bit
+                                                  0 INT5 disabled                                    0 INT1 disabled
+                                                  1 INT5 enabled                                     1 INT1 enabled
+                                     INT6 debug enable bit                                      INT2 debug enable bit
+                                     0 INT6 disabled                                            0 INT2 disabled
+                                     1 INT6 enabled                                             1 INT2 enabled
+                          INT7 debug enable bit                                       INT3 debug enable bit
+                          0 INT7 disabled                                             0 INT3 disabled
+                          1 INT7 enabled                                              1 INT3 enabled
+
+                   INT8 debug enable bit                                          INT4 debug enable bit
+                   0 INT8 disabled                                                0 INT4 disabled
+                   1 INT8 enabled                                                 1 INT4 enabled
+
+                                    Figure A-6. Debug Interrupt Enable Register (DBGIER)
+
+
+           NOTE: For more details about the DBGIER, see section 3.3.2 on page 3-8
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                                                 Register Quick Reference   497
+Submit Documentation Feedback
+                                                   Copyright © 2001–2015, Texas Instruments Incorporated
+                                                                                                                              Appendix B
+                                                                                            SPRU430F – August 2001 – Revised April 2015
+
+
+
+                                       C2xLP and C28x Architectural Differences
+
+      This appendix highlights some of the architecture differences between the C2xLP and the C28x. Not all of
+      the changes are listed here. An emphasis is placed on those changes of which you need to be aware
+      while migrating from a C2xLP-based design to a C28x design. In particular changes in CPU registers and
+      memory map are addressed.
+
+      Topic    ...........................................................................................................................   Page
+
+
+         B.1      Summary of Architecture Differences Between C2xLP and C28x ............................ 499
+         B.2      Registers ......................................................................................................... 499
+         B.3      Memory Map .................................................................................................... 507
+
+
+
+
+498   C2xLP and C28x Architectural Differences                                                    SPRU430F – August 2001 – Revised April 2015
+                                                                                                             Submit Documentation Feedback
+                                             Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                           Summary of Architecture Differences Between C2xLP and C28x
+
+B.1    Summary of Architecture Differences Between C2xLP and C28x
+       The C28x CPU features many improvements over the C2xLP CPU. A summary of the enhancements is
+       given here.
+
+                                                       Table B-1. General Features
+                        Features                                       C2xLP                                         C28x
+                 Program memory space                        64K (16 address signals)                       4M (22 address signals)
+                   Data memory space                         64K (16 address signals)                       4G (32 address signals)
+                 Number of internal buses                  3 (prog, data-read, data-write)               3 (prog, data-read, data-write)
+                  Addressable word size                                  16                                          16/32
+                        Multiplier                                     16 bits                                     16/32 bits
+                 Maskable CPU interrupts                                  6                                            14
+
+
+
+B.1.1 Enhancements of the C28x over the C2xLP
+       •     Much higher MHz operation
+       •     32 x 32 MAC
+       •     16 x16 Dual MAC
+       •     32-bit register file
+       •     32-bit single-cycle operations
+       •     4M linear program-address reach
+       •     4G linear data-address reach
+       •     Dedicated software stack pointer
+       •     Monitorless real-time emulation
+       •     40−50% better C code efficiency than C2xLP
+       •     20−30% better assembly code efficiency than C2xLP
+       •     Atomic operation eliminates need to disable/re-enable interrupts
+       •     Extended debugging features (Analysis block, data logging, etc.)
+       •     Faster interrupt context save/restore
+       •     More efficient addressing modes
+       •     Unified memory map
+       •     Byte packing and unpacking operations
+       When you first recompile your C2xLP code set for C28x, you will not be able to take advantage of every
+       enhancement since you are limited by the original source code. Once you begin migrating your code,
+       however, you will quickly begin to take advantage of the full capabilities the C28x offers. See Appendix D
+       for help with migration to C28x.
+
+B.2    Registers
+       The register modifications to the C2xLP are shown in Figure B-1. Registers that are shaded show the
+       changes or enhancements on the C28x. The italicized names on the left are the original C2xLP names for
+       the registers. The names on the right are the C28x names for the registers.
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                  C2xLP and C28x Architectural Differences      499
+Submit Documentation Feedback
+                                            Copyright © 2001–2015, Texas Instruments Incorporated
+

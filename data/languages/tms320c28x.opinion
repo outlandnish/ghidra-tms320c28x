@@ -1,0 +1,5 @@
+<opinions>
+  <!-- Loader auto-detect constraints. TI C28x firmware is typically raw binary
+       or COFF; auto-detection rules will be added once a real image is loaded.
+       For now the language is selected manually (Language -> TMS320C28x). -->
+</opinions>

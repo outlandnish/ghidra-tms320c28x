@@ -1,0 +1,1900 @@
+CPU Architecture                                                                                                                       www.ti.com
+
+
+                     Program-read data bus, PRDB(0:31)
+
+
+                     Program address bus, PAB(0:21)
+
+
+                     Data-read address bus, DRAB(0:31)
+
+                                                                         Program-address            Program control
+                                                                         generation logic                logic
+                     Data-read data bus, DRDB(0:31)
+
+
+                            Data-read buffer register                           MUX                      MUX
+
+                                                          Address
+                                                        from stack
+                                                                                        Immediate
+                                                                                         address
+                      Operand bus
+
+                                                               XAR7
+                                                                                             Immediate
+                                                                                               data
+
+                                                                                                    Immediate
+                                                                                                      data
+
+                                                        Registers
+                                                                                                                   Multiplier,
+                                               XAR0           AH:AL
+                                                                                                                  barrel shifter,
+                                               XAR1           PH:PL
+                                                                                                                      and
+                                               XAR2            T:TL
+                                                                                                                      ALU
+                                               XAR3            IER
+                   ARAU                        XAR4          DBGIER
+                                               XAR5            IFR
+                                               XAR6            ST0
+                                               XAR7            PC
+                                                DP             RPC
+                                                SP
+                                                ST1
+
+
+
+
+                      Result bus
+
+                                                                Data-write buffer register
+
+
+                     Data-/program-write data bus, DWDB(0:31)
+
+
+
+                     Data-write address bus, DWAB(0:31)
+
+                                    Figure 2-1. Conceptual Block Diagram of the CPU
+
+
+
+
+22    Central Processing Unit                                                                           SPRU430F – August 2001 – Revised April 2015
+                                                                                                                   Submit Documentation Feedback
+                                            Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                                CPU Registers
+
+2.2    CPU Registers
+       Table 2-1 lists the main CPU registers and their values after reset. Section 2.2.1through Section 2.2.10
+       describe the registers in more detail. Figure 2-2 shows the registers.
+
+                                                  Table 2-1. CPU Register Summary
+        Register         Size            Description                                         Value After Reset
+        ACC              32 bits         Accumulator                                         0x00000000
+        AH               16 bits         High half of ACC                                    0x0000
+        AL               16 bits         Low half of ACC                                     0x0000
+        XAR0             16 bits         Auxiliary register 0                                0x00000000
+        XAR1             32 bits         Auxiliary register 1                                0x00000000
+        XAR2             32 bits         Auxiliary register 2                                0x00000000
+        XAR3             32 bits         Auxiliary register 3                                0x00000000
+        XAR4             32 bits         Auxiliary register 4                                0x00000000
+        XAR5             32 bits         Auxiliary register 5                                0x00000000
+        XAR6             32 bits         Auxiliary register 6                                0x00000000
+        XAR7             32 bits         Auxiliary register 7                                0x00000000
+        AR0              16 bits         Low half of XAR0                                    0x0000
+        AR1              16 bits         Low half of XAR1                                    0x0000
+        AR2              16 bits         Low half of XAR2                                    0x0000
+        AR3              16 bits         Low half of XAR3                                    0x0000
+        AR4              16 bits         Low half of XAR4                                    0x0000
+        AR5              16 bits         Low half of XAR5                                    0x0000
+        AR6              16 bits         Low half of XAR6                                    0x0000
+        AR7              16 bits         Low half of XAR7                                    0x0000
+        DP               16 bits         Data-page pointer                                   0x0000
+        IFR              16 bits         Interrupt flag register                             0x0000
+        IER              16 bits         Interrupt enable register                           0x0000 (INT1 to INT14, DLOGINT, RTOSINT
+                                                                                             disabled)
+        DBGIER           16 bits         Debug interrupt enable register                     0x0000 (INT1 to INT14, DLOGINT, RTOSINT
+                                                                                             disabled)
+        P                32 bits         Product register                                    0x00000000
+        PH               16 bits         High half of P                                      0x0000
+        PL               16 bits         Low half of P                                       0x0000
+        PC               22 bits         Program counter                                     0x3F FFC0
+        RPC              22 bits         Return program counte                               0x00000000
+        SP               16 bits         Stack pointer                                       0x0400
+        ST0              16 bits         Status register 0                                   0x0000
+        ST1              16 bits         Status register 1                                   0x080B (1)
+        XT               32 bits         Multiplicand register                               0x00000000
+        T                16 bits         High half of XT                                     0x0000
+        TL               16 bits         Low half of XT                                      0x0000
+       (1)
+             Reset value shown is for devices without the VMAP signal and MOM1MAP signal pinned out. On these devices both of these
+             signals are tied high internal to the device.
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                                 Central Processing Unit    23
+Submit Documentation Feedback
+                                            Copyright © 2001–2015, Texas Instruments Incorporated
+CPU Registers                                                                                                                       www.ti.com
+
+
+                                                 T[16]                   TL[16]             XT[32]
+
+                                                 PH[16]               PL[16]                P[32]
+
+                                                 AH[16]                  AL[16]             ACC[32]
+
+
+
+
+                                                                         SP[16]
+                                                                                  6/7-bit
+                                                            DP[16]
+                                                                                  offset†
+                                                AR0H[16]             AR0[16]                XAR0[32]
+
+                                                AR1H[16]             AR1[16]                XAR1[32]
+
+                                                AR2H[16]             AR2[16]                XAR2[32]
+
+                                                AR3H[16]             AR3[16]                XAR3[32]
+
+                                                AR4H[16]             AR4[16]                XAR4[32]
+
+                                                AR5H[16]             AR5[16]                XAR5[32]
+
+                                                AR6H[16]             AR6[16]                XAR6[32]
+
+                                                AR7H[16]             AR7[16]                XAR7[32]
+
+                                                                PC[22]
+
+                                                               RPC[22]
+
+
+
+
+                                                                         ST0[16]
+
+                                                                         ST1[16]
+
+
+
+
+                                                                         IER[16]
+
+                                                                     DBGIER[16]
+
+                                                                         IFR[16]
+
+
+            (1)   A 6-bit offset is used when operating in C28x mode or C27x object-compatible mode.
+            (2)   A 7-bit offset is used when operating in C2xLP source-compatible mode. The least significant bit of the DP is
+                  ignored when operating in this mode.
+                                                   Figure 2-2. C28x Registers
+
+
+
+
+24    Central Processing Unit                                                                        SPRU430F – August 2001 – Revised April 2015
+                                                                                                                Submit Documentation Feedback
+                                           Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                             CPU Registers
+
+2.2.1    Accumulator (ACC, AH, AL)
+        The accumulator (ACC) is the main working register for the device. It is the destination for all ALU
+        operations except those which operate directly on memory or registers. ACC supports single-cycle move,
+        add, subtract, and compare operations from 32-bit-wide data memory. It can also accept the 32-bit result
+        of a multiplication operation.
+        The halves and quarters of the ACC can also be accessed (see Figure 2-3). ACC can be treated as two
+        independent 16-bit registers: AH (high 16 bits) and AL (low 16 bits). The bytes within AH and AL can also
+        be accessed independently. Special byte-move instructions load and store the most significant byte or
+        least significant byte of AH or AL. This enables efficient byte packing and unpacking.
+
+                                                AH                                       AL
+
+
+                                                                    ACC
+
+                                   AH.MSB               AH.LSB              AL.MSB              AL.LSB
+
+
+                               AH = ACC (31:16)                        AL = ACC (15:0)
+                               AH.MSB = ACC (31:24)                    AL.MSB = ACC (15:8)
+                               AH.LSB = ACC (23:16)                    AL.LSB = ACC (7:0)
+
+                          Figure 2-3. Individually Accessible Portions of the Accumulator
+
+        The accumulator has the following associated status bits. For the details on these bits, see Section 2.3.
+        • Overflow mode bit (OVM)
+        • Sign-extension mode bit (SXM)
+        • Test/control flag bit (TC)
+        • Carry bit (C)
+        • Zero flag bit (Z)
+        • Negative flag bit (N)
+        • Latched overflow flag bit (V)
+        • Overflow counter bits (OVC)
+        Table 2-2 shows the ways to shift the content of AH, AL, or ACC.
+
+                         Table 2-2. Available Operations for Shifting Values in the Accumulator
+        Register                       Shift Direction                     Shift Type                    Instruction
+        ACC                            Left                                Logical                       LSL or LSLL
+                                                                           Rotation                      ROL
+                                       Right                               Arithmetic                    SFR with SXM = 1 or ASRL
+                                                                           Logical                       SFR with SXM = 0 or LSRL
+                                                                           Rotation                      ROR
+        AH or AL                       Left                                Logical                       LSL
+                                       Right                               Arithmetic                    ASR
+                                                                           Logical                       LSR
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                              Central Processing Unit    25
+Submit Documentation Feedback
+                                            Copyright © 2001–2015, Texas Instruments Incorporated
+CPU Registers                                                                                                                   www.ti.com
+
+2.2.2 Multiplicand Register (XT)
+        The multiplicand register (XT register) is used primarily to store a 32-bit signed integer value prior to a
+        32-bit multiply operation.
+        The lower 16-bit portion of the XT register is referred to as the TL register. This register can be loaded
+        with a signed 16-bit value that is automatically sign-extended to fill the 32-bit XT register.
+        The upper 16-bit portion of the XT register is referred to as the T register. The T register is mainly used to
+        store a 16-bit integer value prior to a 16-bit multiply operation.
+        The T register is also used to specify the shift value for some shift operations. In this case, only a portion
+        of the T register is used, depending on the instruction.
+        For example:
+        ASR       AX, T           performs an arithmetic shift right based on the four least significant bits
+                                        of T: T(3:0) = 0...15
+        ASRL      ACC, T          performs an arithmetic shift right by the five least significant bits of T:
+                                        T(4:0) 0...31
+
+        For these operations, the most significant bits of T are ignored.
+
+                                                T = XT(16:31)                           TL = XT(15:0)
+
+
+                                                                    XT
+
+
+                            Figure 2-4. Individually Accessible Halves of the XT Register
+
+
+2.2.3     Product Register (P, PH, PL)
+        The product register (P register) is typically used to hold the 32-bit result of a multiplication. It can also be
+        loaded directly from a 16- or 32-bit data-memory location, a 16-bit constant, the 32-bit ACC, or a 16-bit or
+        a 32-bit addressable CPU register. The P register can be treated as a 32-bit register or as two
+        independent 16-bit registers: PH (high 16 bits) and PL (low 16 bits); see Figure 2-5.
+
+                                           PH = P(31:16)                          PL = P(15:0)
+
+
+                                                                     P
+
+
+                             Figure 2-5. Individually Accessible Halves of the P Register
+
+        When some instructions access P, PH, or PL, all 32-bits are copied to the ALU- shifter block, where the
+        barrel shifter may perform a left shift, a right shift, or no shift. The action of the shifter for these instructions
+        is determined by the product shift mode (PM) bits in status register ST0. Table 2-3 shows the possible PM
+        values and the corresponding product shift modes. When the barrel shifter performs a left shift, the low
+        order bits are filled with zeros. When the shifter performs a right shift, the P register value is sign
+        extended. Instructions that use PH or PL as operands ignore the product shift mode.
+        For a complete list of instructions affected by PM bits, see Table 2-6.
+
+
+
+
+26      Central Processing Unit                                                                  SPRU430F – August 2001 – Revised April 2015
+                                                                                                            Submit Documentation Feedback
+                                           Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                               CPU Registers
+
+                                                 Table 2-3. Product Shift Modes
+                               PM Value              Product Shift Mode
+                               0002                  Left shift by 1
+                               0012                  No shift 7
+                               0102                  Right shift by 1
+                               0112                  Right shift by 2
+                               1002                  Right shift by 3
+                               1012                  Right shift by 4 (if AMODE = 1, left 4)
+                               1102                  Right shift by 5
+                               1112                  Right shift by 6
+
+
+
+2.2.4    Data Page Pointer (DP)
+        In the direct addressing modes, data memory is addressed in blocks of 64 words called data pages. The
+        lower 4M words of data memory consists of 65 536 data pages labeled 0 through 65 535, as shown in
+        Figure 2-6. In DP direct addressing mode, the 16-bit data page pointer (DP) holds the current data page
+        number. You change the data page by loading the DP with a new number. For information about the direct
+        addressing modes, see Section 5.4.
+                                        Data page           Offset                Data memory
+                                  00 0000 0000 0000 00      00 0000
+                                           .                    .
+                                           .                    .       Page 0:     0000 0000−0000 003F
+                                           .                    .
+                                  00 0000 0000 0000 00      11 1111
+                                  00 0000 0000 0000 01      00 0000
+                                           .                    .
+                                           .                    .       Page 1:     0000 0040−0000 007F
+                                           .                    .
+                                  00 0000 0000 0000 01      11 1111
+                                  00 0000 0.000 0000 10     00 0.000
+                                           .                    .
+                                           .                    .       Page 2:     0000 0080−0000 00BF
+                                  00 0000 0000 0000 10      11 1111
+
+                                            .                  .          .                 .
+                                            .                  .          .                 .
+                                            .                  .          .                 .
+                                            .                  .          .                 .
+                                            .                  .          .                 .
+                                            .                  .          .                 .
+
+                                  11 111 1 1111 111 1 11    00 0000
+                                             .                  .
+                                             .                  .       Page 65 535: 003F FFC0−003F FFFF
+                                             .                  .
+                                  11 111 1 111 1 111 1 11   11 1111
+
+                                                Figure 2-6. Pages of Data Memory
+
+        Data memory above 4M words is not accessible using the DP.
+        When operating in C2xLP source-compatible mode, a 7-bit offset is used and the least significant bit of the
+        DP register is ignored. See Appendix C for more details.
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                                Central Processing Unit   27
+Submit Documentation Feedback
+                                            Copyright © 2001–2015, Texas Instruments Incorporated
+CPU Registers                                                                                                                     www.ti.com
+
+2.2.5     Stack Pointer (SP)
+        The stack pointer (SP) enables the use of a software stack in data memory. The stack pointer has only 16
+        bits and can only address the low 64K of data space (see Figure 2-7). When the SP is used, the upper six
+        bits of the 32-bit address are forced to 0. (For information about addressing modes that use the SP, see
+        Section 5.5). After reset, SP points to address 0000040016.
+                                                                               Data memory
+
+
+                                                    Range accessible
+                                                                           0000 0000−0000 FFFF
+                                                      by way of SP
+
+
+
+
+                                                   Range not accessible
+                                                      by way of SP        0001 0000−FFFF FFFF
+
+
+
+
+                                        Figure 2-7. Address Reach of the Stack Pointer
+
+        The operation of the stack is as follows:
+        • The stack grows from low memory to high memory.
+        • The SP always points to the next empty location in the stack.
+        • At reset, the SP is initialized, so that it points to address 0000 040016.
+        • When 32-bit values are saved to the stack, the least significant 16 bits are saved first, and the most
+           significant 16 bits are saved to the next higher address (little endian format).
+        • When 32-bit operations read or write a 32-bit value, the C28x CPU expects the memory wrapper or
+           peripheral-interface logic to align that read or write to an even address. For example, if the SP contains
+           the odd address 0000 008316, a 32-bit read operation reads from addresses 0000 008216 and 0000
+        • The SP overflows if its value is increased beyond FFFF16 or decreased below 000016. When the SP
+           increases past FFFF16, it counts forward from 000016. For example, if SP = FFFE16 and an instruction
+           adds 3 to the SP, the result is 000116. When the SP decreases past 000016, it counts backward from
+           FFFF16. For example, if SP = 000216 and an instruction subtracts 4 from SP, the result is FFFE16.
+        • When values are being saved to the stack, the SP is not forced to align with even or odd addresses.
+           Alignment is forced by the memory wrapper or peripheral-interface logic.
+
+2.2.6     Auxiliary Registers (XAR0-XAR7, AR0-AR7)
+        The CPU provides eight 32-bit registers that can be used as pointers to memory or as general-purpose
+        registers (see Section 5.6). The auxiliary registers are: XAR0, XAR1, XAR2, XAR3, XAR4, XAR5, XAR6,
+        and XAR7.
+        Many instructions allow you to access the 16 LSBs of XAR0-XAR7. As shown in Figure 2-8, the 16 LSBs
+        of the auxiliary registers are referred to as AR0-AR7. AR0-AR7 can be used as general purpose registers
+        for loop control and for efficient 16-bit comparisons.
+        When accessing AR0-AR7, the upper 16 bits of the register (known as AR0H-AR7H) may or may not be
+        modified, depending on the instruction used (see Chapter 6 for information on the behavior of particular
+        instructions). AR0H-AR7H are accessed only as part of XAR0-XAR7 and are not individually accessible.
+
+                                           ARnH = XARn(31:16)                        ARn = XARn(15:0)
+
+
+                                                                       XARn(31:0)
+
+                                  n = number 0 through 7
+
+                                                 Figure 2-8. XAR0 - XAR7 Registers
+
+
+
+28      Central Processing Unit                                                                    SPRU430F – August 2001 – Revised April 2015
+                                                                                                              Submit Documentation Feedback
+                                               Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                       CPU Registers
+
+        For ACC operations, all 32 bits are valid ([@XARn]). For 16-bit operations, the lower 16 bits are used and
+        upper 16 bits are ignored ([@ARn]).
+        XAR0 - XAR7 can also be used by some instructions to point to any value in program memory; see
+        Section 5.6.
+        Many instructions allow you to access the 16 least significant bits (LSBs) of XAR0-XAR7. As shown in
+        Figure 2-9, 16 LSBs of XAR0-XAR7 are known as one auxiliary register of AR0-AR7.
+
+                                                                               AR0 = XAR0(15:0)
+
+
+                                                               XAR0(32:0)
+
+
+
+
+                                                                                AR7 = XAR7(15:0)
+
+
+                                                               XAR7(32:0)
+
+
+                                                   Figure 2-9. XAR0 - XAR7
+
+
+2.2.7    Program Counter (PC)
+        When the pipeline is full, the 22-bit program counter (PC) always points to the instruction that is currently
+        being processed â€” the instruction that has just reached the decode 2 phase of the pipeline. Once an
+        instruction reaches this phase of the pipeline, it cannot be flushed from the pipeline by an interrupt. It is
+        executed before the interrupt is taken. The pipeline is discussed in Chapter 4.
+
+2.2.8    Return Program Counter (RPC)
+        When a call operation is performed using the LCR instruction, the return address is saved in the RPC
+        register and the old value in the RPC is saved on the stack (in two 16-bit operations). When a return
+        operation is performed using the LRETR instruction, the return address is read from the RPC register and
+        the value on the stack is written into the RPC register (in two 16-bit operations). Other call instructions do
+        not use the RPC register. For more information, see the instructions in Chapter 6.
+
+2.2.9    Status Registers (ST0, ST1)
+        The C28x has two status registers, ST0 and ST1, which contain various flag bits and control bits. These
+        registers can be stored into and loaded from data memory, enabling the status of the machine to be saved
+        and restored for subroutines.
+        The status bits have been organized according to when the bit values are modified in the pipeline. Bits in
+        ST0 are modified in the execute phase of the pipeline; bits in ST1 are modified in the decode 2 phase.
+        (For details about the pipeline, see Chapter 4.) The status bits are described in detail in Section 2.3 and
+        Section 2.4. Also, ST0 and ST1 are included in Appendix A.
+
+2.2.10     Interrupt-Control Registers (IFR, IER, DBGIER)
+        The C28x CPU has three registers dedicated to the control of interrupts:
+        • Interrupt flag register (IFR)
+        • Interrupt enable register (IER)
+        • Debug interrupt enable register (DBGIER)
+        These registers handle interrupts at the CPU level. Devices with a peripheral interrupt expansion (PIE)
+        block will have additional interrupt control as part of the PIE module.
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                        Central Processing Unit   29
+Submit Documentation Feedback
+                                          Copyright © 2001–2015, Texas Instruments Incorporated
+Status Register ST0                                                                                                                www.ti.com
+
+          The IFR contains flag bits for maskable interrupts (those that can be enabled and disabled with software).
+          When one of these flags is set, by hardware or software, the corresponding interrupt will be serviced if it is
+          enabled. You enable or disable a maskable interrupt with its corresponding bit in the IER. The DBGIER
+          indicates the time-critical interrupts that will be serviced (if enabled) while the DSP is in real-time
+          emulation mode and the CPU is halted.
+          The C28x CPU interrupts and the interrupt-control registers are described in detail in Section 3.1. Also, the
+          IFR, IER, and DBGIER are included in Appendix A.
+
+2.3       Status Register ST0
+          The following figure shows the bit fields of status register (ST0). All of these bit fields are modified in the
+          execute phase of the pipeline. Detailed descriptions of these bits follow the figure.
+
+                                            Table 2-4. Bit Fields of Status Register (ST0)
+     15                                      10        9                  7        6         5        4       3        2       1         0
+                     OVC/OVCU                                   PM                 V         N        Z       C       TC     OVM       SXM
+                     R/W-00 0000                              R/W-0              R/W-0    R/W-0     R/W-0   R/W-0   R/W-0   R/W-0     R/W-0
+LEGEND: R/W = Read/Write; R = Read only; -n = value after reset
+
+          OVC/OVCU (Bits 15-10) — Overflow counter.
+               The overflow counter behaves differently for signed and unsigned operations.
+               For signed operations, the overflow counter is a 6-bit signed counter with a range of -32 to 31.
+               When overflow mode is off (OVM = 0), ACC overflows normally, and OVC keeps track of overflows.
+               When overflow mode is on (OVM = 1) and an overflow occurs in ACC, the OVC is not affected.
+               Instead, the CPU automatically fills ACC with a positive or negative saturation value (see the
+               description for OVM).
+               When ACC overflows in the positive direction (from 7FFF FFFF16 to 8000 000016), the OVC is
+               incremented by 1. When ACC overflows in the negative direction (from 8000 000016 to 7FFF
+               FFFF16) the OVC is decremented by 1. The increment or decrement is performed as the overflow
+               affects the V flag.
+               For unsigned operations (OVCU), the counter increments for ADD when a Carry is generated and
+               decrements for a SUB when a Borrow is generated (similar to a carry counter).
+               If OVC increments past its most positive value, 31, the counter wraps around to -32. If OVC
+               decrements past its most negative value, -32, the counter wraps around to 31. At reset, OVC is
+               cleared.
+               OVC is not affected by overflows in registers other than ACC and is not affected by compare
+               instructions (CMP and CMPL). The table that follows explains how OVC may be affected by the
+               saturate accumulator (SAT ACC) instruction.
+               Table 2-5 lists the instructions affecting OVC/OVCU. See the instruction set in Chapter 6 for a
+               complete description of each instruction.
+
+                                       Table 2-5. Instructions That Affect OVC/OVCU
+                  Signed Addition Instructions                         Effect on OVC/OVCU
+                  ADD ACC,loc16 << shift                               if(OVM == 0) Inc OVC on +ve signed overflow
+                  ADD ACC,#16bit << shift
+                  ADD ACC,loc16 << T
+                  ADD loc16,#16bitSigned
+                  ADDB ACC,#8bit
+                  ADDCL ACC,loc32
+                  ADDCU ACC,loc16
+                  ADDL ACC,loc32
+                  ADDL loc32,ACC
+                  ADDU ACC,loc16
+
+
+30        Central Processing Unit                                                                SPRU430F – August 2001 – Revised April 2015
+                                                                                                            Submit Documentation Feedback
+                                            Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                         Status Register ST0
+
+                             Table 2-5. Instructions That Affect OVC/OVCU (continued)
+                Signed Addition Instructions                         Effect on OVC/OVCU
+                DMAC ACC:P,loc32,*XAR7/++
+                INC loc16
+                MAC P,loc16,*XAR7/++
+                MAC P,loc16,0:pma
+                MOVA T,loc16
+                MOVAD T,loc16
+                MPYA P,loc16,#16bit
+                MPYA P,T,loc16
+                QMACL P,loc32,*XAR7/++
+                QMPYAL P,XT,loc32
+                SQRA loc16
+                XMAC P,loc16,*(pma)
+                XMACD P,loc16,*(pma)
+                Signed Subtraction Instructions                      Effect on OVC/OVCU
+                DEC loc16 MOVS T,loc16                               if(OVM == 0) Dec OVC on -ve signed overflow
+                Signed Addition Instructions                         Effect on OVC/OVCU
+                MPYS P,T,loc16
+                QMPYSL P,XT,loc32
+                SBBU ACC,loc16
+                SQRS loc16
+                SUB ACC,#16bit << shift
+                SUB ACC,loc16 << shift
+                SUB ACC,loc16 << T
+                SUBB ACC,#8bit
+                SUBBL ACC,loc32
+                SUBL ACC,loc32
+                SUBL loc32,ACC
+                SUBRL loc32,ACC
+                SUBU ACC,loc16
+                SUBUL ACC,loc32
+                SUBUL P,loc32
+                Unsigned Instructions                                Effect on OVC/OVCU
+                ADDUL ACC,loc32                                      Inc OVC/OVCU on unsigned carry
+                ADDUL P,loc32
+                IMPYAL P,XT,loc32
+                IMACL P,loc32,*XAR7/++
+                Misc Instructions                                    Effect on OVC/OVCU
+                                                                     if(OVC > 0) Saturate +ve if(OVC < 0) Saturate -ve
+                SAT ACC
+                                                                     OVC = 0
+                SAT64 ACC:P
+                ZAPA                                                 OVC = 0
+                ZAP OVC
+                MOV OVC,loc16                                        OVC = [loc16(15:10)]
+                Signed Addition Instructions                         Effect on OVC/OVCU
+                MOVU OVC,loc16                                       OVC = [loc16(5:0)]
+                Condition                                            Operation Performed by SAT ACC Instruction
+                OVC = 0                                              Leave ACC and OVC unchanged.
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                               Central Processing Unit   31
+Submit Documentation Feedback
+                                          Copyright © 2001–2015, Texas Instruments Incorporated
+Status Register ST0                                                                                                         www.ti.com
+
+
+                             Table 2-5. Instructions That Affect OVC/OVCU (continued)
+               Signed Addition Instructions                         Effect on OVC/OVCU
+                                                                    Saturate ACC in the positive direction (fill ACC with
+               OVC > 0
+                                                                    7FFF FFFF16) and clear OVC.
+                                                                    Saturate ACC in the negative direction (fill ACC with
+               OVC < 0
+                                                                    8000 000016) and clear OVC.
+
+
+       PM (Bits 9-7) — Product shift mode bits.
+             This 3-bit value determines the shift mode for any output operation from the product (P) register.
+             The shift modes are shown in the following table. The output can be to the ALU or to memory. All
+             instructions that are affected by the product shift mode will sign extend the P register value during a
+             right shift operation. At reset, PM is cleared (left shift by 1 bit is the default).
+             PM is summarized as follows:
+             000 = Left shift by 1. During the shift the low-order bit is zero filled. At reset this mode is selected.
+             001 = No shift
+             010 = Right shift by 1. During the shift the lower bits are lost and the shifted value is sign extended.
+             011 = Right shift by 2. During the shift the lower bits are lost and the shifted value is sign extended.
+             100 = Right shift by 3. During the shift the lower bits are lost and the shifted value is sign extended.
+             101 = Right shift by 4. During the shift the lower bits are lost and the shifted value is sign extended.
+             Note if AMODE = 1 then 101 is a left shift by 4.
+             110 = Right shift by 5. During the shift the lower bits are lost and the shifted value is sign extended.
+             111 = Right shift by 6. During the shift the lower bits are lost and the shifted value is sign extended.
+             Note: For performing unsigned arithmetic, you must use a product shift of 0 (PM = 001) to avoid
+             sign extension and generation of incorrect results.
+             Table 2-6 lists instructions that are affected by the PM bits. See the instruction set in Chapter 6 for
+             a complete description of each instruction.
+
+                                     Table 2-6. Instructions Affected by the PM Bits
+               Instruction                              Effect of PM
+               CMPL ACC,P << PM                         flags set on(ACC - P << PM)
+               DMAC ACC:P,loc32,*XAR7/++                ACC = ACC + MSW*MSW << PM P = P + LSW*LSW << PM
+               IMACL P,loc32,*XAR7/++                   P = ([loc32] * Prog[*XAR7/++]) << PM
+               IMPYAL P,XT,loc32                        P = (XT * [loc32]) << PM
+               IMPYL P,XT,loc32                         P = (XT *[loc32]) << PM
+               IMPYSL P,XT,loc32                        ACC = ACC - P unsigned > > P = (XT * [loc32]) << PM
+               IMPYXUL P,XT,loc32                       P = (XT sign * [loc32]uns) << PM
+               MAC P,loc16,*XAR7/++                     ACC = ACC + P << PM
+               MAC P,loc16,0:pma                        ACC = ACC + P << PM
+               MOV loc16,P                              [loc16] = low(P << PM)
+               MOVA T,loc16                             ACC = ACC + P << PM
+               MOVAD T,loc16                            ACC = ACC + P << PM
+               MOVH loc16,P                             [loc16] = high(P << PM)
+               MOVP T,loc16                             ACC = P << PM
+               MOVS T,loc16                             ACC = ACC - P << PM
+               MPYA P,loc16,#16bit                      ACC = ACC + P << PM
+               MPYA P,T,loc16                           ACC = ACC + P << PM
+               MPYS P,T,loc16                           ACC = ACC - P << PM
+               QMACL P,loc32,*XAR7                      ACC = ACC + P << PM
+               QMACL P,loc32,*XAR7++                    ACC = ACC + P << PM
+               QMPYAL P,XT,loc32                        ACC = ACC + P << PM
+
+
+32     Central Processing Unit                                                               SPRU430F – August 2001 – Revised April 2015
+                                                                                                        Submit Documentation Feedback
+                                         Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                    Status Register ST0
+
+                              Table 2-6. Instructions Affected by the PM Bits (continued)
+                Instruction                               Effect of PM
+                QMPYSL P,XT,loc32                         ACC = ACC - P << PM
+                SQRA loc16                                ACC = ACC + P << PM
+                SQRS loc16                                ACC = ACC - P << PM
+                XMAC P,loc16,*(pma)                       ACC = ACC + P << PM
+                XMACD P,loc16,*(pma)                      ACC = ACC + P << PM
+
+
+       V (Bit 6) — Overflow flag.
+              If the result of an operation causes an overflow in the register holding the result, V is set and
+              latched. If no overflow occurs, V is not modified. Once V is latched, it remains set until it is cleared
+              by reset or by a conditional branch instruction that tests V. Such a conditional branch clears V
+              regardless of whether the tested condition (V = 0 or V = 1) is true.
+              An overflow occurs in ACC (and V is set) if the result of an addition or subtraction does not fit within
+              the signed numerical range -231 to (+231 - 1), or 8000 000016 to 7FFF FFFF16.
+              An overflow occurs in AH, AL, or another 16-bit register or data-memory location if the result of an
+              addition or subtraction does not fit within the signed numerical range -215 to (+215 - 1), or 800016 to
+              7FFF16.
+              The instructions CMP, CMPB and CMPL do not affect the state of the V flag. Table 2-7 lists the
+              instructions that are affected by V flag. See Chapter 6 for more details on instructions.
+              V can be summarized as follows:
+              0 = V has been cleared.
+              1 = An overflow has been detected, or V has been set.
+
+                                          Table 2-7. Instructions Affected by V flag
+                ABS ACC                                               if(ACC == 0x8000 0000) V = 1
+                ABSTC ACC                                             if(ACC == 0x8000 0000) V = 1
+                ADD ACC,#16bit << shift                               V = 1 on signed overflow
+                ADD ACC,loc16 << shift                                V = 1 on signed overflow
+                ADD ACC,loc16 << T                                    V = 1 on signed overflow
+                ADD AX,loc16                                          V = 1 on signed overflow
+                ADD loc16,#16bitSigned                                V = 1 on signed overflow
+                ADD loc16,AX                                          V = 1 on signed overflow
+                ADDB ACC,#8bit                                        V = 1 on signed overflow
+                ADDB AX,#8bitSigned                                   V = 1 on signed overflow
+                ADDCL ACC,loc32                                       V = 1 on signed overflow
+                ADDCU ACC,loc16                                       V = 1 on signed overflow
+                ADDL ACC,loc32                                        V = 1 on signed overflow
+                ADDL loc32,ACC                                        V = 1 on signed overflow
+                ADDU ACC,loc16                                        V = 1 on signed overflow
+                ADDUL ACC,loc32                                       V = 1 on signed overflow
+                ADDUL P,loc32                                         V = 1 on signed overflow
+                B 16bitOff,COND                                       V = 0 if tested
+                BF 16bitOff,COND                                      V = 0 if tested
+                DEC loc16                                             V = 1 on signed overflow
+                DMAC ACC:P,loc33,*XAR77/++                            V = 1 on signed overflow
+                IMACL P,loc32,*XAR77/++                               V = 1 on signed overflow
+                DMAC ACC:P,loc32,*XAR7/++                             V = 1 on signed overflow
+                IMACL P,loc32,*XAR7/++                                V = 1 on signed overflow
+                IMPYAL P,XT,loc32                                     V = 1 on signed overflow
+
+
+SPRU430F – August 2001 – Revised April 2015                                                          Central Processing Unit   33
+Submit Documentation Feedback
+                                           Copyright © 2001–2015, Texas Instruments Incorporated
+Status Register ST0                                                                                                         www.ti.com
+
+
+                                 Table 2-7. Instructions Affected by V flag (continued)
+               IMPYSL P,XT,loc32                                    V = 1 on signed overflow
+               INC loc16                                            V = 1 on signed overflow
+               MAC P,loc16,*XAR7/++                                 V = 1 on signed overflow
+               MAC P,loc16,0:pma                                    V = 1 on signed overflow
+               MAX AX,loc16                                         if((AX - [loc16]) < 0) V = 1
+               MAXL ACC,loc32                                       if((ACC - [loc32]) < 0) V = 1
+               MIN AX,loc16                                         if((AX - [loc16]) > 0) V = 1
+               MINL ACC,loc32                                       if((ACC - [loc32]) > 0) V = 1
+               MOV loc16,AX,COND                                    V = 0 if tested
+               MOVA T,loc16                                         V = 1 on signed overflow
+               MOVAD T,loc16                                        V = 1 on signed overflow
+               MOVB loc16,#8bit,COND                                V = 0 if tested
+               MOVL loc32,ACC,COND                                  V = 0 if tested
+               MOVS T,loc16                                         V = 1 on signed overflow
+               MPYA P,loc16,#16bit                                  V = 1 on signed overflow
+               MPYA P,T,loc16                                       V = 1 on signed overflow
+               MPYS P,T,loc16                                       V = 1 on signed overflow
+               NEG ACC                                              if(ACC == ox8000 0000) V = 1
+               NEGAX                                                if(AX == 0x8000) V = 1
+               NEG64 ACC:P                                          if(ACC:P == 0x80....00) V = 1
+               NEGTC ACC                                            if(TC == 1)
+                                                                    if(ACC == 0x8000 0000) V = 1
+               QMACL P,loc32,*XAR7/++                               V = 1 on signed overflow
+               QMPYAL P,XT,loc32                                    V = 1 on signed overflow
+               QMPYSL P,XT,loc32                                    V = 1 on signed overflow
+               SAT ACC                                              if(OVC == 0) V = 0 else V = 1
+               SAT64 ACC:P                                          if(Oâ€‹VC == 0) V = 0 else V = 1
+               SB 8bitOff,COND                                      V = 0 if tested
+               SBBU ACC,loc16                                       V = 1 on signed overflow
+               SQRA loc16                                           V = 1 on signed overflow
+               SQRS loc16                                           V = 1 on signed overflow
+               SUB ACC,#16bit << shift                              V = 1 on signed overflow
+               SUB ACC,loc16 << shift                               V = 1 on signed overflow
+               SUB ACC,loc16 << T                                   V = 1 on signed overflow
+               SUB AX,loc16                                         V = 1 on signed overflow
+               SUB loc16,AX                                         V = 1 on signed overflow
+               SUBB ACC,#8bit                                       V = 1 on signed overflow
+               SUBBL ACC,loc32                                      V = 1 on signed overflow
+               SUBL ACC,loc32                                       V = 1 on signed overflow
+               SUBL loc32,ACC                                       V = 1 on signed overflow
+               SUBR loc16,AX                                        V = 1 on signed overflow
+               SUBRL loc32,ACC                                      V = 1 on signed overflow
+               SUBU ACC,loc16                                       V = 1 on signed overflow
+               SUBUL ACC,loc32                                      V = 1 on signed overflow
+               SUBUL P,loc32                                        V = 1 on signed overflow
+               XB pma,COND                                          V = 0 if tested
+               XCALL pma,COND                                       V = 0 if tested
+               XMAC P,loc16,*(pma)                                  V = 1 on signed
+
+
+34     Central Processing Unit                                                               SPRU430F – August 2001 – Revised April 2015
+                                                                                                        Submit Documentation Feedback
+                                         Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                      Status Register ST0
+
+                                  Table 2-7. Instructions Affected by V flag (continued)
+                  XMACD P,loc16,*(pma)                                  V = 1 on signed overflow
+                  XRETC COND                                            V = 0 if tested
+
+
+       N (Bit 5) — Negative flag.
+              During certain operations, N is set if the result of the operation is a negative number or cleared if
+              the result is a positive number. At reset, N is cleared.
+              Results in ACC are tested for the negative condition. Bit 31 of ACC is the sign bit. If bit 31 is a 0,
+              ACC is positive; if bit 31 is a 1, ACC is negative. N is set if a result in ACC is negative or cleared if
+              a result is positive.
+              Results in AH, AL, and other 16-bit registers or data-memory locations are also tested for the
+              negative condition. In these cases bit 15 of the value is the sign bit (1 indicates negative,
+              0 indicates positive). N is set if the value is negative or cleared if the value is positive.
+              The TEST ACC instruction sets N if the value in ACC is negative. Otherwise the instruction clears
+              N.
+              As shown in Table 2-8, under overflow conditions, the way the N flag is set for compare operations
+              is different from the way it is set for addition or subtraction operations. For addition or subtraction
+              operations, the N flag is set to match the most significant bit of the truncated result. For compare
+              operations, the N flag assumes infinite precision. This applies to operations whose result is loaded
+              to ACC, AH, AL, another register, or a data-memory location.
+
+                                         Table 2-8. Negative Flag Under Overflow Conditions
+                A (1)            B (1)                                  (A - B)                      Subtraction       Compare (2)
+                Pos              Neg                 Neg (due to overflow in positive direction)        N=1               N=0
+               Neg               Pos                 Pos (due to overflow in negative direction)        N=0               N=1
+       (1)
+             For 32-bit data: Pos = Positive nummber from 0000 000016 to 7FFF FFFF16. Neg=Negative number from 8000-000016 to FFFF-
+             FFFF16. For 16-bit data: Pos = Positive number from 000016 to 7FFF16. Neg = Negative number from 800016 to FFFF16.
+       (2)
+             The compare instructions are CMP, CMPB, CMPL, MIN, MAX, MINL, and MAXL.
+
+       N can be summarized as follows:
+       0 = The tested number is positive, or N has been cleared.
+       1 = The tested number is negative, or N has been set.
+       Z (Bit 4) — Zero flag.
+              Z is set if the result of certain operations is 0 or is cleared if the result is nonzero. This applies to
+              results that are loaded into ACC, AH, AL, another register, or a data-memory location. At reset, Z is
+              cleared.
+              The TEST ACC instruction sets Z if the value in ACC is 0. Otherwise, it clears Z.
+              Z can be summarized as follows:
+              0 = The tested number is nonzero, or Z has been cleared.
+              1 = The tested number is 0, or Z has been set.
+       C (Bit 3) — Carry bit.
+              This bit indicates when an addition or increment generates a carry or when a subtraction, compare,
+              or decrement generates a borrow. It is also affected by rotate operations on ACC and barrel shifts
+              on ACC, AH, and AL.
+              During additions/increments, C is set if the addition generates a carry; otherwise C is cleared.
+              There is one exception: If you are using the ADD instruction with a shift of 16, the ADD instruction
+              can set C but cannot clear C.
+              During subtractions/decrements/compares, C is cleared if the subtraction generates a carry;
+              otherwise C is set. There is one exception: if you are using the SUB instruction with a shift of 16,
+              the SUB instruction can clear C but cannot set C.
+
+
+SPRU430F – August 2001 – Revised April 2015                                                            Central Processing Unit        35
+Submit Documentation Feedback
+                                             Copyright © 2001–2015, Texas Instruments Incorporated
+Status Register ST0                                                                                                         www.ti.com
+
+               This bit can be individually set and cleared by the SETC C instruction and CLRC C instruction,
+               respectively. At reset, C is cleared.
+               C can be summarized as follows:
+               0 = A subtraction generated a borrow, an addition did not generate a carry, or C has been cleared.
+               Exception: An ADD instruction with a shift of 16 cannot clear C.
+               1 = An addition generated a carry, a subtraction did not generate a borrow, or C has been set.
+               Exception: A SUB instruction with a shift of 16 cannot set C.
+               Table 2-9 lists the bits that are affected by the C bit. For more information on instructions, see
+               Chapter 6.
+
+                                          Table 2-9. Bits Affected by the C Bit
+               Instruction                                Affect of or Affect on C
+               ABS ACC                                    C=0
+               ABSTC ACC                                  C=0
+               ADD ACC,#16bit << shift                    C = 1 on carry else C = 0
+               ADD ACC,loc16 << shift                     if(shift == 16)
+                                                          C = 1 on carry
+                                                          if(shift != 16)
+                                                          C = 1 on carry else C = 0
+               ADD ACC,loc16 << shift                     C = 1 on carry else C = 0
+               ADD ACC,loc16 << T                         C = 1 on carry else C = 0
+               ADD AX,loc16                               C = 1 on carry else C = 0
+               ADD loc16,#16bitSigned                     C = 1 on carry else C = 0
+               ADD loc16,AX                               C = 1 on carry else C = 0
+               ADDB ACC,#8bit                             C = 1 on carry else C = 0
+               ADDB AX,#8bitSigned                        C = 1 on carry else C = 0
+               ADDCL ACC,loc32                            ACC = ACC + [loc32] + C
+                                                          C = 1 on carry else C = 0
+               ADDCU ACC,loc16                            ACC = ACC + [loc16] + C
+                                                          C = 1 on carry else C = 0
+               ADDL ACC,loc32                             C = 1 on carry else C = 0
+               ADDL loc32,ACC                             C = 1 on carry else C = 0
+               ADDU ACC,loc16                             C = 1 on carry else C = 0
+               ADDUL ACC,loc32                            C = 1 on carry else C = 0
+               ADDUL P,loc32                              C = 1 on carry else C = 0
+               ASR AX,1..16                               C = AX(bit(shift-1))
+               ASR AX,T                                   if(T == 0) C = 0 else C =
+                                                          AX(bit(T-1))
+               ASR64 ACC:P,1..16                          C = P(bit(shift-1))
+               ASR64 ACC:P,T                              if(T == 0) C = 0 else C =
+                                                          P(bit(T-1))
+               ASRL ACC,T                                 if(T == 0) C = 0 else C =
+                                                          ACC(bit(T-1))
+               B 16bitOff,COND                            C bit used as test condition
+               BF 16bitOff,COND                           C bit used as test condition
+               CLRC C                                     C=0
+               CMP AX,loc16                               C = 0 on borrow else C = 1
+               CMP loc16,#16bitSigned                     for([loc16] - 16bitSigned) C = 0
+                                                          on borrow else C = 1
+               CMPB AX,#8bit                              C = 0 on borrow else C = 1
+               CMPL ACC,loc32                             for(ACC - [loc32]) C = 0 on borrow
+                                                          else C = 1
+
+36     Central Processing Unit                                                               SPRU430F – August 2001 – Revised April 2015
+                                                                                                        Submit Documentation Feedback
+                                         Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                 Status Register ST0
+
+                                    Table 2-9. Bits Affected by the C Bit (continued)
+                Instruction                                Affect of or Affect on C
+                CMPL ACC,P << PM                           for(ACC - P << PM) C = 0 on
+                                                           borrow else C = 1
+                DEC loc16+                                 C = 0 on borrow else C = 1
+                DMAC ACC:P,loc32,*XAR7/++                  C = 1 on carry else C = 0
+                IMACL P,loc32,*XAR7/++                     C = 1 on carry else C = 0
+                IMPYAL P,XT,loc32                          C = 1 on carry else C = 0
+                IMPYSL P,XT,loc32                          C = 0 on borrow else C = 1
+                INC loc16                                  C = 1 on carry else C = 0
+                LSL ACC,1..16                              C = ACC(bit(32-shift))
+                LSL ACC,T                                  if(T == 0) C = 0 else C =
+                                                           ACC(bit(32-T))
+                LSL AX,1..16                               C = AX(bit(16-shift))
+                LSL AX,T                                   if(T == 0) C = 0 else C =
+                                                           AX(bit(16-T))
+                LSL64 ACC:P,1..16                          C = ACC(bit(32-shift))
+                LSL64 ACC:P,T                              if(T == 0) C = 0 else C =
+                                                           ACC(bit(32-T))
+                LSLL ACC,T                                 if(T == 0) C = 0 else C =
+                                                           ACC(bit(32-T))
+                LSR AX,1..16                               C = AX(bit(shift-1))
+                LSR AX,T                                   if(T == 0) C = 0 else C =
+                                                           AX(bit(T-1))
+                LSR64 ACC:P,1..16                          C = P(bit(shift-1))
+                LSR64 ACC:P,T                              if(T == 0) C = 0 else C =
+                                                           P(bit(T-1))
+                LSRL ACC,T                                 if(T == 0) C = 0 else C =
+                                                           ACC(bit(T-1))
+                MAC P,loc16,*XAR7/++                       C = 1 on carry else C = 0
+                MAC P,loc16,0:pma                          C = 1 on carry else C = 0
+                MAX AX,loc16                               for(AX - [loc16]) C = 0 on borrow
+                                                           else C = 1
+                MAXL ACC,loc32                             for(ACC - [loc32]) C = 0 on borrow
+                                                           else C = 1
+                MIN AX,loc16                               for(AX - [loc16]) C = 0 on borrow
+                                                           else C = 1
+                MINL ACC,loc32                             for(ACC - [loc32]) C = 0 on borrow
+                                                           else C = 1
+                MOV loc16,AX,COND                          C bit used as test condition
+                MOVA T,loc16                               C = 1 on carry else C = 0
+                MOVAD T,loc16                              C = 1 on carry else C = 0
+                MOVB loc16,#8bit,COND                      C bit used as test condition
+                MOVL loc32,ACC,COND                        C bit used as test condition
+                MOVS T,loc16                               C = 0 on borrow else C = 1
+                MPYA P,loc16,#16bit                        C = 1 on carry else C = 0
+                MPYA P,T,loc16                             C = 1 on carry else C = 0
+                MPYS P,T,loc16                             C = 0 on borrow else C = 1
+                NEG ACC                                    if( ACC == 0) C = 1 else C = 0
+
+
+SPRU430F – August 2001 – Revised April 2015                                                       Central Processing Unit   37
+Submit Documentation Feedback
+                                          Copyright © 2001–2015, Texas Instruments Incorporated
+Status Register ST0                                                                                                         www.ti.com
+
+
+                                  Table 2-9. Bits Affected by the C Bit (continued)
+               Instruction                                Affect of or Affect on C
+               NEG AX                                     if(AX == 0) C = 1 else C = 0
+               NEG64 ACC:P                                if( ACC:P == 0) C = 1 else C = 0
+               NEGTC ACC                                  if(TC == 1) if( ACC == 0) C = 1
+                                                          else C = 0
+               QMACL P,loc32,*XAR7/++                     C = 1 on carry else C = 0
+               QMPYAL P,XT,loc32                          C = 1 on carry else C = 0
+               QMPYSL P,XT,loc32                          C = 0 on borrow else C = 1
+               ROL ACC                                    C <- (ACC << 1) <- C(before)
+               ROR ACC                                    C(before) -(ACC >1) -C
+               SAT ACC                                    C=0
+               SAT64 ACC:P                                C=0
+               SB 8bitOff,COND                            C bit used as test condition
+               SBBU ACC,loc16                             ACC = ACC - ([loc16] + ~C) C = 0 on
+                                                          borrow else C = 1
+               SETC C                                     C=1
+               SFR ACC,1..16                              C = ACC(bit(shift-1))
+               SFR ACC,T                                  if(T == 0) C = 0 else C =
+                                                          ACC(bit(T-1))
+               SQRA loc16                                 C = 1 on carry else C = 0
+               SQRS loc16                                 C = 0 on borrow else C = 1
+               SUB ACC,#16bit << shift                    C = 0 on borrow else C = 1
+               SUB ACC,loc16 << shift                     if(shift == 16) C = 0 on borrow
+                                                          if(shift != 16) C = 0 on borrow
+                                                          else C = 1
+               SUB ACC,loc16 << T                         C = 0 on borrow else C = 1
+               SUB AX,loc16                               C = 0 on borrow else C = 1
+               SUB loc16,AX                               C = 0 on borrow else C = 1
+               SUBB ACC,#8bit                             C = 0 on borrow else C = 1
+               SUBBL ACC,loc32                            ACC = ACC - ([loc32] + ~C) C = 0 on
+                                                          borrow else C = 1
+               SUBCU ACC,loc16                            for(ACC - [loc16]<<15) C = 0
+                                                          on borrow else C = 1
+               SUBCUL ACC,loc32                           for(ACC<<1 + P(31) - [loc32]) C = 0
+                                                          on borrow else C = 1
+               SUBL ACC,loc32                             C = 0 on borrow else C = 1
+               SUBL loc32,ACC                             C = 0 on borrow else C = 1
+               SUBR loc16,AX                              C = 0 on borrow else C = 1
+               SUBRL loc32,ACC                            C = 0 on borrow else C = 1
+               SUBU ACC,loc16                             C = 0 on borrow else C = 1
+               SUBUL ACC,loc32                            C = 0 on borrow else C = 1
+               SUBUL P,loc32                              C = 0 on borrow else C = 1
+               XB pma,COND                                C bit used as test condition
+               XCALL pma,COND                             C bit used as test condition
+               XMAC P,loc16,*(pma)                        C = 1 on carry else C = 0
+               XMACD P,loc16,*(pma)                       C = 1 on carry else C = 0
+               XRETC COND                                 C bit used as test condition
+
+
+
+
+38     Central Processing Unit                                                               SPRU430F – August 2001 – Revised April 2015
+                                                                                                        Submit Documentation Feedback
+                                         Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                 Status Register ST0
+
+       TC (Bit 2) — Test/control flag.
+             This bit shows the result of a test performed by either the TBIT (test bit) instruction or the NORM
+             (normalize) instruction.
+             The TBIT instruction tests a specified bit. When TBIT is executed, the TC bit is set if the tested bit
+             is 1 or cleared if the tested bit is 0.
+             When a NORM instruction is executed, TC is modified as follows: If ACC holds 0, TC is set. If ACC
+             does not hold 0, the CPU calculates the exclusive-OR of ACC bits 31 and 30, and then loads TC
+             with the result.
+             This bit can be individually set and cleared by the SETC TC instruction and CLRC TC instruction,
+             respectively. At reset, TC is cleared.
+             Table 2-10 lists the instructions that affect the TC bit. See the instruction set in Chapter 6 for a
+             complete description of each instruction.
+
+                                     Table 2-10. Instructions That Affect the TC Bit
+                Instruction                                    Affect on the TC bit
+                ABSTC ACC                                      if( ACC < 0 ) TC = TC ^ 1
+                B 16bitOff,COND                                TC bit used as test condition
+                BF 16bitOff,COND                               TC bit used as test condition
+                CLRC TC                                        TC = 0
+                CMPR 0/1/2/3                                   TC = 0
+                                                               0: if(AR(ARP) == AR0) TC = 1
+                                                               1: if(AR(ARP) < AR0) TC = 1
+                                                               2: if(AR(ARP) > AR0) TC = 1
+                                                               3: if(AR(ARP) != AR0) TC = 1
+                CSB ACC                                        TC = N flag
+                MOV loc16,AX,COND                              TC bit used as test condition
+                MOVB loc16,#8bit,COND                          TC bit used as test condition
+                MOVL loc32,ACC,COND                            TC bit used as test condition
+                NEGTC ACC                                      TC bit used as test condition
+                NORM ACC,XARn++/--                             if(ACC |= 0)
+                NORM ACC,*ind                                  TC = ACC(31) ^ ACC(30)
+                                                               else
+                                                               TC = 1
+                SB 8bitOff,COND                                TC bit used as test condition
+                SBF 8bitOff,TC/NTC                             TC bit used as test condition
+                SETC TC                                        TC = 1
+                TBIT loc16,#bit                                TC = [loc16(bit)]
+                TBIT loc16,T                                   TC = [loc16(15-T)]
+                TCLR loc16,#bit                                TC = [loc16(bit)]
+                TSET loc16,#bit                                TC = [loc16(bit)]
+                XB pma,COND                                    TC bit used as test condition
+                XCALL pma,COND                                 TC bit used as test condition
+                XRETC COND                                     TC bit used as test condition
+
+
+       OVM (Bit 1) — Overflow mode bit.
+            When ACC accepts the result of an addition or subtraction and the result causes an overflow, OVM
+            determines how the CPU handles the overflow as follows:
+            0 = Results overflow normally in ACC. The OVC reflects the overflow
+            1 = ACC is filled with either its most positive or most negative value as follows:
+            If ACC overflows in the positive direction (from 7FFF FFFF16 to 8000 000016), ACC is then filled with
+            7FFF FFFF16.
+            If ACC overflows in the negative direction (from 8000 000016 to 7FFF FFFF16), ACC is then filled
+            with 8000 000016.
+
+
+SPRU430F – August 2001 – Revised April 2015                                                       Central Processing Unit   39
+Submit Documentation Feedback
+                                          Copyright © 2001–2015, Texas Instruments Incorporated
+Status Register ST0                                                                                                          www.ti.com
+
+               This bit can be individually set and cleared by the SETC OVM instruction and CLRC OVM
+               instruction, respectively. At reset, OVM is cleared.
+       SXM (Bit 0) — Sign-extension mode bit.
+            SXM affects the MOV, ADD, and SUB instructions that use a 16-bit value in an operation on the 32-
+            bit accumulator. When the 16-bit value is loaded into (MOV), added to (ADD), or subtracted from
+            (SUB) the accumulator, SXM determines whether the 16-bit value is sign extended during the
+            operation as follows:
+            0 = Sign extension is suppressed. (The 16-bit value is treated as unsigned.)
+            1 = Sign extension is enabled. (The 16-bit value is treated as signed.)
+            For example:
+               ADD ACC, loc16 << shift
+                if SXM = 0, do not sign extend loc16 before adding to the 32-bit ACC.
+                if SXM = 1, sign extend loc16 before adding to the 32-bit ACC.
+               SXM also determines whether the accumulator is sign extended when it is shifted right by the SFR
+               instruction. SXM does not affect instructions that shift the product register value; all right shifts of
+               the product register value use sign extension.
+               This bit can be individually set and cleared by the SETC SXM instruction and CLRC SXM
+               instruction, respectively. At reset, SXM is cleared. Table 2-11 lists the instructions that are affected
+               by SXM. See Chapter 6 for more details on instructions.
+
+                                         Table 2-11. Instructions Affected by SXM
+               Instruction                                           Description
+               ADD ACC,#16bit << shift                               Affected By SXM
+               ADD ACC,loc16 << shift                                Affected By SXM
+               ADD ACC,loc16 << T                                    Affected By SXM
+               CLRC SXM                                              SXM = 0
+               MOV ACC,#16bit << shift                               Affected By SXM
+               MOV ACC,loc16 << shift                                Affected By SXM
+               MOV ACC,loc16 << T                                    Affected By SXM
+               SETC SXM                                              SXM = 1
+               SFR ACC,1..16                                         Affected By SXM
+               SFR ACC,T                                             Affected By SXM
+               SUB ACC,#16bit << shift                               Affected By SXM
+               SUB ACC,loc16 << shift                                Affected By SXM
+               SUB ACC,loc16 << T                                    Affected By SXM
+
+
+
+
+40     Central Processing Unit                                                                SPRU430F – August 2001 – Revised April 2015
+                                                                                                         Submit Documentation Feedback
+                                          Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                         Status Register ST1
+
+2.4    Status Register ST1
+       The following figure shows the bit fields of status register ST1. All of these bit fields are modified in the
+       decode 2 phase of the pipeline. Detailed descriptions of these bits follow the figure.
+
+                                        Table 2-12. Bit Fields of Status Register 1 (ST1)
+       15                              13                  12                 11                    10       9                8
+                      ARP                                  XF            MOM1MAP             Reserved    OBJMODE           AMODE
+                    R/W-000                              R/W-0              R/W-1              R/W-0       R/W-0            R/W-0
+       7               6                5                   4                  3                    2        1                0
+   IDLESTAT         EALLOW            LOOP                SPA               VMAP              PAGE0        DBGM             INTM
+      R-0            R/W-0             R-0               R/W-0              R/W-1              R/W-0       R/W-1            R/W-1
+LEGEND: R/W = Read/Write; R = Read only; -n = value after reset
+
+       ARP (Bits 15-13) — Auxiliary register pointer.
+            This 3-bit field points to the current auxiliary register. This is one of the 32-bit auxiliary registers
+            (XAR0-XAR7). The mapping of ARP values to auxiliary registers is as follows:
+            000 = XAR0 (selected at reset)
+            001 = XAR1
+            010 = XAR2
+            011 = XAR3
+            100 = XAR4
+            101 = XAR5
+            110 = XAR6
+            111 = XAR7
+       XF (Bit 12) — XF status bit.
+             This bit reflects the current state of the XFS output signal, which is compatible to the C2XLP CPU.
+             This bit is set by the "M SETC XF"M instruction. This bit is cleared by the "M CLRC XF"M
+             instruction. The pipeline is not flushed when setting or clearing this bit using the given instructions.
+             This bit can be saved and restored by interrupts and when restoring the ST1 register. This bit is set
+             to 0 on reset.
+
+                   NOTE: Use of the XFS signal requires an external pin that is only present on TMS320x2801x
+                         devices.
+
+       M0M1MAP (Bit 11) — M0 and M1 mapping mode bit.
+           The M0M1MAP bit should always remain set to 1 in the C28x object mode. This is the default value
+           at reset. The M0M1MAP bit may be set low when operating in C27x-compatible mode. The effect of
+           this bit, when low, is to swap the location of blocks M0 and M1 only in program space and to set
+           the stack pointer default reset value to 0x000. C28x mode users should never set this bit to 0.
+       Reserved (Bit 10) — Reserved.
+            This bit is reserved. Writes to this bit have no effect.
+       OBJMODE (Bit 9) — Object compatibility mode bit.
+           This mode is used to select between C27x object mode (OBJMODE == 0) and C28x object mode
+           (OBJMODE == 1) compatibility. This bit is set by the "M C28OBJ"M (or "M SETC OBJMODE"M )
+           instructions. This bit is cleared by the "M C27OBJ"M (or "M CLRC OBJMODE"M ) instructions. The
+           pipeline is flushed when setting or clearing this bit using the given instructions. This bit is saved and
+           restored by interrupts and when restoring the ST1 register. This bit is set to 0 on reset.
+       AMODE (Bit 8) — Address mode bit.
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                              Central Processing Unit    41
+Submit Documentation Feedback
+                                            Copyright © 2001–2015, Texas Instruments Incorporated
+Status Register ST1                                                                                                      www.ti.com
+
+               This mode, in conjunction with the PAGE0 mode bit, is used to select the appropriate addressing
+               mode decodes. This bit is set by the "LPADDR"M ("M SETC AMODE"M ) instructions. This bit is
+               cleared by the "M C28ADDR"M (or "M CLRC AMODE"M ) instructions. The pipeline is not flushed
+               when setting or clearing this bit using the given instructions. This bit is saved and restored by
+               interrupts and when restoring the ST1 register. This bit is set to 0 on reset.
+               Note: Setting PAGE0 = AMODE = 1 will generate an illegal instruction trap ONLY for instructions
+               that decode a memory or register addressing mode field (loc16 or loc32).
+       IDLESTAT (Bit 7) — IDLE status bit.
+            This read-only bit is set when the IDLE instruction is executed. It is cleared by any one of the
+            following events:
+            • An interrupt is serviced.
+            • An interrupt is not serviced but takes the CPU out of the IDLE state.
+            • A valid instruction enters the instruction register (the register that holds the instruction currently
+                being decoded).
+            • A device reset occurs.
+            When the CPU services an interrupt, the current value of IDLESTAT is saved on the stack (when
+            ST1 is saved on the stack), and then IDLESTAT is cleared. Upon return from the interrupt,
+            IDLESTAT is not restored from the stack.
+       EALLOW (Bit 6) — Emulation access enable bit.
+            This bit, when set, enables access to emulation and other protected registers. Set this bit by using
+            the EALLOW instruction and clear this bit by using the EDIS instruction. See the data sheet for a
+            particular device to determine the registers that are protected.
+            When the CPU services an interrupt, the current value of EALLOW is saved on the stack (when
+            ST1 is saved on the stack), and then EALLOW is cleared. Therefore, at the start of an interrupt
+            service routine (ISR), access to protected registers is disabled. If the ISR must access protected
+            registers, it must include an EALLOW instruction. At the end of the ISR, EALLOW can be restored
+            by the IRET instruction.
+       LOOP (Bit 5)— Loop instruction status bit.
+            LOOP is set when a loop instruction (LOOPNZ or LOOPZ) reaches the decode 2 phase of the
+            pipeline. The loop instruction does not end until a specified condition is met. When the condition is
+            met, LOOP is cleared. LOOP is a read-only bit; it is not affected by any instruction except a loop
+            instruction.
+            When the CPU services an interrupt, the current value of LOOP is saved on the stack (when ST1 is
+            saved on the stack), and then LOOP is cleared. Upon return from the interrupt, LOOP is not
+            restored from the stack.
+       SPA (Bit 4) — Stack pointer alignment bit.
+            SPA indicates whether the CPU has previously aligned the stack pointer to an even address by the
+            ASP instruction:
+            • 0: The stack pointer has not been aligned to an even address.
+            • 1: The stack pointer has been aligned to an even address.
+            When the ASP (align stack pointer) instruction is executed, if the stack pointer (SP) points to an
+            odd address, SP is incremented by 1 so that it points to an even address, and SPA is set. If SP
+            already points to an even address, SP is not changed, but SPA is cleared. When the NASP
+            (unalign stack pointer) instruction is executed, if SPA is 1, SP is decremented by 1 and SPA is
+            cleared. If SPA is 0, SP is not changed.
+            At reset, SPA is cleared.
+       VMAP (Bit 3) — Vector map bit.
+           VMAP determines whether the CPU interrupt vectors (including the reset vector) are mapped to the
+           lowest or highest addresses in program memory:
+           • 0: CPU interrupt vectors are mapped to the bottom of program memory, addresses 00 000016-00
+               003F16.
+
+42     Central Processing Unit                                                            SPRU430F – August 2001 – Revised April 2015
+                                                                                                     Submit Documentation Feedback
+                                      Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                 Status Register ST1
+
+               •   1: CPU interrupt vectors are mapped to the top of program memory, addresses 3F FFC016-3F
+                   FFFF16.
+               On C28x designs, the VMAP signal is tied high internally, forcing the VMAP bit to be set high on a
+               reset.
+               This bit can be individually set and cleared by the SETC VMAP instruction and CLRC VMAP
+               instruction, respectively.
+       PAGE0 (Bit 2) — PAGE0 addressing mode configuration bit.
+           PAGE0 selects between two mutually-exclusive addressing modes: PAGE0 direct addressing mode
+           and PAGE0 stack addressing mode. Selection of the modes is as follows:
+           • 0: PAGE0 stack addressing mode
+           • 1: PAGE0 direct addressing mode
+           Note: Illegal Instruction Trap Setting PAGE0 = AMODE = 1 will generate an illegal instruction
+           trap.
+           PAGE0 = 1 is included for compatibility with the C27x. the recommended operating mode for C28x
+           is PAGE0 = 0.
+           This bit can be individually set and cleared by the SETC PAGE0 instruction and
+           CLRC PAGE0 instruction, respectively. At reset, the PAGE0 bit is cleared (PAGE0 stack
+           addressing mode is selected).
+           For details about the above addressing modes, see Chapter 5, Addressing Modes.
+       DBGM (Bit 1) — Debug enable mask bit.
+           When DBGM is set, the emulator cannot accesss memory or registers in real time. The debugger
+           cannot update its windows.
+           In the real-time emulation mode, if DBGM = 1, the CPU ignores halt requests or hardware
+           breakpoints until DBGM is cleared. DBGM does not prevent the CPU from halting at a software
+           breakpoint. One effect of this may be seen in real-time emulation mode.
+           If you single-step an instruction in real time emulation mode and that instruction sets DBGM, the
+           CPU continues to execute instructions until DBGM is cleared.
+           When you give the TI debugger the REALTIME command (to enter real-time mode), DBGM is
+           forced to 0. Having DBGM = 0 ensures that debug and test direct memory accesses (DT-DMAs)
+           are allowed; memory and register values can be passed to the host processor for updating
+           debugger windows.
+           Before the CPU executes an interrupt service routine (ISR), it sets DBGM. When DBGM = 1, halt
+           requests from the host processor and hardware breakpoints are ignored. If you want to single-step
+           through or set breakpoints in a non-time-critical ISR, you must add a CLRC DBGM instruction at
+           the beginning of the ISR.
+           DBGM is primarily used in emulation to block debug events in time-critical portions of program
+           code. DBGM enables or disables debug events as follows:
+           • 0: Debug events are enabled.
+           • 1: Debug events are disabled.
+           When the CPU services an interrupt, the current value of DBGM is saved on the stack (when ST1
+           is saved on the stack), and then DBGM is set. Upon return from the interrupt, DBGM is restored
+           from the stack.
+           This bit can be individually set and cleared by the SETC DBGM instruction and CLRC DBGM
+           instruction, respectively. DBGM is also set automatically during interrupt operations. At reset,
+           DBGM is set. Executing the ABORTI (abort interrupt) instruction also sets DBGM.
+       INTM (Bit 0) — Interrupt global mask bit.
+             This bit globally enables or disables all maskable CPU interrupts (those that can be blocked by
+             software):
+             • 0: Maskable interrupts are globally enabled. To be acknowledged by the CPU, a maskable
+                 interrupt must also be locally enabled by the interrupt enable register (IER).
+
+
+SPRU430F – August 2001 – Revised April 2015                                                       Central Processing Unit   43
+Submit Documentation Feedback
+                                          Copyright © 2001–2015, Texas Instruments Incorporated
+Program Flow                                                                                                              www.ti.com
+
+                •   1: Maskable interrupts are globally disabled. Even if a maskable interrupt is locally enabled by
+                    the IER, it is not acknowledged by the CPU.
+                INTM has no effect on the nonmaskable interrupts, including a hardware reset or the hardware
+                interrupt NMI. In addition, when the CPU is halted in real-time emulation mode, an interrupt enabled
+                by the IER and the DBGIER will be serviced even if INTM is set to disable maskable interrupts.
+                When the CPU services an interrupt, the current value of INTM is saved on the stack (when ST1 is
+                saved on the stack), and then INTM is set. Upon return from the interrupt, INTM is restored from
+                the stack.
+                This bit can be individually set and cleared by the SETC INTM instruction and CLRC INTM
+                instruction, respectively. At reset, INTM is set. The value in INTM does not cause modification to
+                the interrupt flag register (IFR), the interrupt enable register (IER), or the debug interrupt enable
+                register (DBGIER).
+
+2.5     Program Flow
+        The program control logic and program-address generation logic work together to provide proper program
+        flow. Normally, the flow of a program is sequential: the CPU executes instructions at consecutive program-
+        memory addresses. At times, a discontinuity is required; that is, a program must branch to a
+        nonsequential address and then execute instructions sequentially at that new location. For this purpose,
+        the '28x supports interrupts, branches, calls, returns, and repeats.
+        Proper program flow also requires smooth flow at the instruction level. To meet this need, the '28x has a
+        protected pipeline and an instruction-fetch mechanism that attempts to keep the pipeline full.
+
+2.5.1     Interrupts
+        Interrupts are hardware or software-driven events that cause the CPU to suspend its current program
+        sequence and execute a subroutine called an interrupt service routine. Interrupts are described in detail in
+        Section 3.1.
+
+2.5.2     Branches, Calls, and Returns
+        Branches, calls, and returns break the sequential flow of instructions by transferring control to another
+        location in program memory. A branch only transfers control to the new location. A call also saves the
+        return address (the address of the instruction following the call). Called subroutines or interrupt service
+        routines are each concluded with a return instruction, which takes the return address from the stack or
+        from XAR7 or RPC and places it into the program counter (PC).
+        The following branch instructions are conditional: B, BANZ, BAR, BF, SB, SBF, XBANZ, XCALL, and
+        XRETC. They are executed only if a certain specified or predefined condition is met. For detailed
+        descriptions of these instructions, see Chapter 6.
+
+2.5.3     Repeating a Single Instruction
+        The repeat (RPT) instruction allows the execution of a single instruction (N + 1) times, where N is
+        specified as an operand of the RPT instruction. The instruction is executed once and then repeated N
+        times. When RPT is executed, the repeat counter (RPTC) is loaded with N. RPTC is then decremented
+        every time the repeated instruction is executed, until RPTC equals 0. For a description of RPT and a list of
+        repeatable instructions, see Chapter 6.
+
+
+
+
+44      Central Processing Unit                                                            SPRU430F – August 2001 – Revised April 2015
+                                                                                                      Submit Documentation Feedback
+                                       Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                       Program Flow
+
+2.5.4    Instruction Pipeline
+        Each instruction passes through eight independent phases that form an instruction pipeline. At any given
+        time, up to eight instructions may be active, each in a different phase of completion. Not all reads and
+        writes happen in the same phases, but a pipeline-protection mechanism stalls instructions as needed to
+        ensure that reads and writes to the same location happen in the order in which they are programmed.
+        To maximize pipeline efficiency, an instruction-fetch mechanism attempts to keep the pipeline full. Its role
+        is to fill an instruction-fetch queue, which holds instructions in preparation for decoding and execution. The
+        instruction-fetch mechanism fetches 32-bits at a time from program memory; it fetches one 32-bit
+        instruction or two 16-bit instructions.
+        The instruction-fetch mechanism uses three program-address counters: the program counter (PC), the
+        instruction counter (IC), and the fetch counter (FC). When the pipeline is full the PC will always point to
+        the instruction in its decode 2 pipeline phase. The IC points to the next instruction to be processed. When
+        the PC points to a 1-word instruction, IC = (PC+1); when the PC points to a 2-word instruction, IC =
+        (PC+2). The value in the FC is the address from which the next fetch is to be made.
+        The pipeline and the instruction-fetch mechanism are described in more detail in Chapter 4.
+
+2.6     Multiply Operations
+        The C28x features a hardware multiplier that can perform 16-bit × 16-bit or 32-bit × 32-bit fixed-point
+        multiplication. This functionality is enhanced by 16-bit × 16-bit multiply and accumulate (MAC), 32 × 32
+        MAC, and 16-bit × 16-bit dual MAC (DMAC) instructions. This section describes the components involved
+        in each type of multiplication.
+
+2.6.1    16-bit × 16-bit Multiplication
+        The C28x multiplier can perform a 16-bit × 16-bit multiplication to produce a signed or unsigned 32-bit
+        product. Figure 2-10 shows the CPU components involved in this multiplication.
+        The multiplier accepts two 16-bit inputs:
+        • One input is from the upper 16 bits of the multiplicand register (T). Most 16 × 16 multiplication
+           instructions require that you load T from a datamemory location or a register before you execute the
+           instruction. However, the MAC and some versions of the MPY and MPYA instructions load T for you
+           before the multiplication.
+        • The other input is from one of the following:
+           – A data-memory location or a register (depending on which you specify in the multiply instruction).
+           – An instruction opcode. Some C28x multiply instructions allow you to include a constant as an
+               operation.
+        After the value has been multiplied by the second value, the 32-bit result is stored in one of two places,
+        depending on the particular multiply instruction: the 32-bit product register (P) or the 32-bit accumulator
+        (ACC).
+        One special 16-bit × 16-bit multiplication instruction takes two 32-bit input values as its operands. This
+        instruction is the 16 × 16 DMAC instruction, which performs dual 16 × 16 MAC operations in one
+        instruction. In this case, the ACC contains the result of multiplying and adding the upper word of the 32-bit
+        operands. The P register contains the result of multiplying and adding the results of the lower word of the
+        32-bit operands.
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                       Central Processing Unit   45
+Submit Documentation Feedback
+                                          Copyright © 2001–2015, Texas Instruments Incorporated
+Multiply Operations                                                                                                              www.ti.com
+
+
+                                   From data memory or a register              From data memory or a register
+                                                                                      From an instruction opcode
+
+                                        16                                       16    16
+
+
+
+                                    T                                           MUX
+
+                                        16                                            16
+                                                             Multiplier
+
+
+
+
+                                                                    32
+
+
+                                                               MUX
+
+
+
+
+                                                   32                                          32
+
+
+                                               P                                            ACC
+
+            Figure 2-10. Conceptual Diagram of Components Involved in 16 X16-Bit Multiplication
+
+
+
+
+2.6.2     32-Bit × 32-Bit Multiplication
+        The C28x multiplier can also perform 32-bit by 32-bit multiplication. Figure 2-11 shows the CPU
+        components involved n this multiplication. In this case, the multiplier accepts two 32-bit inputs:
+        • The first input is from one of the following:
+           – A program memory location. Some C28x 32 × 32 multiply MAC-type instructions such as IMACL
+             and QMACL take one data value directly from memory using the program-address bus.
+           – The 32-bit multiplicand register (XT). Most 32 × 32-bit multiplication instructions require that you
+             load XT from data memory or a register before you execute the instruction.
+        • A data-memory location or a register (depending on which you specify in the multiply instruction).
+        After the two values have ben multiplied, 32 bits of the 64-bit result are stored in the product register (P).
+        You can control which half is stored (upper 32 bits or lower 32 Bits) and whether the multiplication is
+        signed or unsigned by the instruction used.
+        If you need support for larger data values, the 32 X 32 multiplication instructions can be combined to
+        implement 32 × 32 = 64-bit or 64 × 64 = 128-bit math.
+
+
+
+
+46      Central Processing Unit                                                                   SPRU430F – August 2001 – Revised April 2015
+                                                                                                             Submit Documentation Feedback
+                                             Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                                                  Shift Operations
+
+                                                                                  From data memory
+                                                                            32    or register
+
+                                                                       XT
+                                        From
+                                     program
+                                     memory
+                                                        32        32
+
+                                                                                                          From data
+                                                        MUX                                            memory or register
+
+                                                             32                                                    32
+                                                                                       Multiplier
+
+
+
+
+                                                                            Upper 32                Lower 32
+
+
+                                                                                        MUX
+
+
+                                                                                               32
+                                                                                                               P
+
+             Figure 2-11. Conceptual Diagram of Components Involved in 32 X 32-Bit Multiplication
+
+
+2.7    Shift Operations
+       The shifter holds 64 bits and accepts either a 16-bit, 32-bit, or 64-bit input value. When the input value has
+       16 bits, the value is loaded into the 16 least significant bits (LSBs) of the shifter. When the input value has
+       32 bits, the value is loaded into the 32 LSBs of the shifter. Depending on the instruction that uses the
+       shifter, the output of the shifter may be all of its 64 bits or just its 16 LSBs.
+       When a value is shifted right by an amount N, the N LSBs of the value are lost and the bits to the left of
+       the value are filled with all 0s or all 1s. If sign extension is specified, the bits to the left are filled with
+       copies of the sign bit. If sign extension is not specified, the bits to the left are filled with 0s, or zero filled.
+       When a value is shifted left by an amount N, the bits to the right of the shifted value are zero filled. If the
+       value has 16 bits and sign extension is specified, the bits to the left are filled with copies of the sign bit. If
+       the value has 16 bits and sign extension is not specified, the bits to the left are zero filled. If the value has
+       32 bits, the N MSBs of the value are lost, and sign extension is irrelevant.
+       The figure below lists the instructions that use the shifter and provides an illustration of the corresponding
+       shifter operation. The table uses the following graphical symbols:
+                                                                       This symbol represents the 32-bit shifter. The text
+                                           Shift left
+                                                                       inside the box indicates the direction of the shift.
+
+                                                                       This symbol indicates zero filling.
+                                 0
+
+                                                                       This symbol indicates sign extending.
+                                  Sign
+
+                                  SXM                                  This symbol indicates that the MSBs of the shifter
+                                                                       depend on the sign-extension mode bit (SXM). If
+                                  0/Sign
+                                                                       SXM = 0, the MSBs are zero filled after the shift. If
+                                                                       SXM = 1, the MSBs are filled with the sign of the
+                                                                       shifted value.
+
+                                                                       This symbol indicates the carry bit (C).
+                                 C
+
+
+                                                                       Figure 2-12.
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                                                    Central Processing Unit   47
+Submit Documentation Feedback
+                                               Copyright © 2001–2015, Texas Instruments Incorporated
+Shift Operations                                                                                                                                        www.ti.com
+
+                                                           Table 2-13. Shift Operations
+         Operation Type                                                                                        Illustration
+
+         Left shift of 16-bit value for ACC operation
+                                                                                                                 16-bit value to 16 LSBs
+         Syntaxes: ADD ACC, loc16 << 0...16
+         ADD ACC, # 16Bit << 0...15                                                              SXM
+         ADD ACC, loc16 <<T
+                                                                                                 0/Sign             Shift left                      0
+         SUB ACC, loc16 << 0...16
+         SUB ACC, # 16Bit << 0 ...15
+         SUB ACC, loc16<< T
+         MOV ACC, loc16 << 0...16                                                                                32 bits to ALU
+         MOV ACC, # 16Bit << 0...15                                                              Figure 2-13. ADD Command
+         MOV ACC , loc16, << T
+
+
+                                                                                                                          ACC
+
+
+         Store 16 LSBs of left-shifted ACC                                                      Discard                 Shift left                  0
+         Syntax:
+         MOV loc16, ACC << 1...8
+                                                                                                                           16 LSBs to ALU
+
+                                                                                                 Figure 2-14. MOV Command
+
+
+                                                                                                            ACC
+
+         Store 16 MSBs of left-shifted ACC.
+         Syntax:                                                                                          Shift right                     Discard
+         MOVH loc16, ACC << 1...8
+         Note: This instruction performs a single right shift by (16- shift1),
+         where shift1 is a value from 0 to 8.                                                                 16 LSBs to ALU
+
+                                                                                                Figure 2-15. MOVH Command
+
+                                                                                                                              ACC
+         Logical left shift of ACC. The last bit to be shifted out fills the
+         carry bit (C)                                                                      Last
+                                                                                                  C
+         Syntaxes:                                                                        bit out
+         LSL ACC, 1...16                                                                                                    Shift left                   0
+                                                                                            Discard
+         LSL ACC, T (shift = T(3:0))                                                      other bits
+         LSL ACC, T (shift = T(4:0))
+                                                                                                                        32 bits to ACC
+         Note: If T(3:0) = 0 or T(4:0) = 0, indicating a shift of 0, C is
+         cleared.                                                                                 Figure 2-16. LSL Command
+
+                                                                                                                        AH/AL to 16 LSBs
+                                                                                        Last
+                                                                                                C
+                                                                                      bit out
+         Logical left shift of AH or AL. The last AH/AL to 16 LSBs bit to
+         be shifted out fills the carry bit (C).                                                                             Shift left             0
+         Syntaxes:
+         LSL A X, 1...16
+         LSL A X, T (shift = T(3:0)) Note: If T(3:0) = 0, indicating a shift of                                         16 LSBs to AH/AL
+         0, C is cleared.
+         Right shift of ACC. If SXM = 0, a logical shift is performed. If                                         ACC
+         SXM = 1, an arithmetic shift is performed. The last bit to be
+         shifted out fills the carry bit (C).                                              SXM                                                           Last
+                                                                                                                                                    C
+         Syntaxes:                                                                                                                                       bit out
+                                                                                          0/Sign               Shift right
+         SFR ACC, 1...16
+         SFR ACC, T                                                                                                                                 Discard
+                                                                                                                                                    other bits
+         Note: If T(3:0) = 0, indicating a shift of 0, C is cleared.                                         32 bits to ACC
+
+                                                                                        Figure 2-17. LSL and SFR Commands
+
+
+
+
+48   Central Processing Unit                                                                           SPRU430F – August 2001 – Revised April 2015
+                                                                                                                  Submit Documentation Feedback
+                                                Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                                             Shift Operations
+
+                                                 Table 2-13. Shift Operations (continued)
+        Operation Type                                                                                       Illustration
+
+                                                                                                          AH/AL to 16 LSBs
+        Logical right shift of AH or AL. The last bit to be shifted out fills                                                                 Last
+                                                                                                                                       C
+        the carry bit (C).                                                                                                                    bit out
+        Syntaxes:                                                                        0               Shift right
+                                                                                                                                       Discard
+        LSR A X, shift                                                                                                                 other bits
+        LSR A X, T (shift = T(3:0)) ARLACC, T (shift = T(4:0)
+                                                                                                          16 LSBs to AH/AL
+        Note: If T(4:0) = 0, indicating a shift of 0, C is cleared.
+                                                                                              Figure 2-18. LSR Command
+
+
+                                                                                                            AH/AL to 16 LSBs
+        Arithmetic right shift of AH or AL. The last bit to be shifted out                                                                C
+                                                                                                                                                Last
+        fills the carry bit (C).                                                                                                                bit out
+                                                                                       Sign                Shift right
+        Syntaxes:                                                                                                                          Discard
+        ASR A X, shift                                                                                                                     other bits
+        ASR A X, T
+        Note: If T(4:0) = 0, indicating a shift of 0, C is cleared.                                         16 LSBs to AH/AL
+
+                                                                                              Figure 2-19. ASR Command
+
+
+                                                                                                                       ACC
+
+
+
+        Rotate ACC left by 1 bit. Bit 31 of ACC fills the carry bit (C). C                     C                 Rotate left
+        fills bit 0 of ACC.
+        Syntax:
+        ROL ACC
+                                                                                                              32 bits to ACC
+
+                                                                                              Figure 2-20. ROL Command
+
+                                                                                                                ACC
+
+
+
+        Rotate ACC right by 1 bit. Bit 0 of ACC fills the carry bit (C). C                                  Rotate right               C
+        fills bit 31 of ACC.
+        Syntax:
+        ROR ACC
+                                                                                                          32 bits to ACC
+
+                                                                                              Figure 2-21. ROR Command
+
+
+                                                                                                          ACC:P
+                                                                                                                                              Last
+                                                                                                                                      C
+        Logical right shift of ACC:P.                                                                                                         bit out
+                                                                                         0               Shift right
+        Syntaxes                                                                                                                       Discard
+        LSR64 ACC:P, 1...16                                                                                                            other bits
+        LSR64, ACC:P, T shift = T(5:0)
+                                                                                                      64 bits to ACC:P
+
+                                                                                             Figure 2-22. LSR64 Command
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                                                  Central Processing Unit      49
+Submit Documentation Feedback
+                                              Copyright © 2001–2015, Texas Instruments Incorporated
+Shift Operations                                                                                                                               www.ti.com
+
+
+                                                Table 2-13. Shift Operations (continued)
+         Operation Type                                                                                       Illustration
+
+                                                                                                                          ACC:P
+                                                                                          Last
+                                                                                                C
+         Logical left shift of ACC:P.                                                   bit out
+                                                                                                                          Shift left           0
+         Syntaxes:                                                                        Discard
+         LSL64 ACC:P, 1...16                                                            other bits
+         LSL64 ACC:P, T shift = T(5:0)
+                                                                                                                    64 bits to ACC:P
+
+                                                                                            Figure 2-23. LSL64 Command
+
+
+                                                                                                             ACC:P
+                                                                                                                                           Last
+                                                                                                                                       C
+         Arithmetic right shift of ACC:P.                                                                                                  bit out
+                                                                                        Sign                Shift right
+         Syntaxes:                                                                                                                     Discard
+         ASR64 ACC:P, 1...16                                                                                                           other bits
+         ASR64, ACC:P, T shift = T(5:0)
+                                                                                                       64 bits to ACC:P
+
+                                                                                           Figure 2-24. ASR64 Command
+
+
+                                                                                                                      ACC
+
+
+         Conditional shift of ACC by 1 bit.
+                                                                                           Discard                  Shift left             0
+         Syntaxes: NORM ACC, aux++
+         NORM ACC, aux- -
+         SUBCU ACC, loc
+                                                                                                                 32 bits to ACC
+
+                                                                                   Figure 2-25. NORM and SUBCU Command
+
+
+                                                                                     For PM = 0:                          P
+
+
+                                                                                            Discard                  Shift left            0
+         Shift of P as per PM bits.
+         Syntaxes:
+         ADD ACC, P                                                                                               32 bits to ALU
+         SUB ACC, P CMP ACC, P
+         MAC P, loc, 0: pmem                                                         For PM = 1: No shift
+         MOV ACC, P
+         MOVA T, loc
+         MOVP T, loc                                                                 For PM from 2−7:                     P
+         MOVS T, loc
+         MPYA P, loc, # 16BitSigned
+         MPYA P, T, loc                                                                         Sign                Shift right            Discard
+         MPYS P, T, loc
+
+                                                                                                                  32 bits to ALU
+
+                                                                                               Figure 2-26. Shift Operations
+
+
+
+
+50   Central Processing Unit                                                                         SPRU430F – August 2001 – Revised April 2015
+                                                                                                                Submit Documentation Feedback
+                                              Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                                       Shift Operations
+
+                                               Table 2-13. Shift Operations (continued)
+        Operation Type                                                                                      Illustration
+
+                                                                                     For PM = 0:                     P
+
+
+                                                                                           Discard               Shift left         0
+
+
+                                                                                                             16 LSBs to ALU
+
+        Store 16 LSBs of shifted P. P is shifted as per the PM bits. The             For PM = 1: No shift
+        16 LSBs of shifter are stored.
+        Syntax:
+        MOV loc16, P                                                                 For PM from 2−7:                P
+
+
+                                                                                              Sign              Shift right         Discard
+
+
+                                                                                                             16 LSBs to ALU
+
+                                                                                            Figure 2-27. MOV Command
+
+
+                                                                                     For PM = 0:                     P
+
+
+                                                                                     1)   Discard                Shift left         0
+
+
+                                                                                     2)                      Shift right by 16      Discard
+
+
+                                                                                                             16 LSBs to ALU
+
+        Store 16 MSBs of shifted P. P is shifted as per the PM bits. The
+        result is shifted right by 16 so that its 16 MSBs are in the For PM          For PM = 1: No shift
+        = 0: P 16 LSBs of the shifter. 16 LSBs of shifter are stored.
+        Syntax:
+        MOVH loc16, P                                                                For PM from 2−7:                P
+
+
+                                                                                     1)      Sign               Shift right         Discard
+
+
+                                                                                     2)                      Shift right by 16      Discard
+
+
+                                                                                                             16 LSBs to ALU
+
+                                                                                            Figure 2-28. MOV Command
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                                        Central Processing Unit    51
+Submit Documentation Feedback
+                                             Copyright © 2001–2015, Texas Instruments Incorporated
+                                                                                                                                Chapter 3
+                                                                                           SPRU430F – August 2001 – Revised April 2015
+
+
+
+                                                                                 CPU Interrupts and Reset
+
+     This chapter describes the available CPU interrupts and how they are handled by the CPU. It also
+     explains how to control those interrupts that can be controlled through software. Finally, it describes how a
+     hardware reset affects the CPU.
+
+     Topic    ...........................................................................................................................   Page
+
+
+        3.1      CPU Interrupts Overview .................................................................................... 53
+        3.2      CPU Interrupt Vectors and Priorities .................................................................... 53
+        3.3      Maskable Interrupts: INT1–INT14, DLOGINT, and RTOSINT .................................... 55
+        3.4      Standard Operation for Maskable Interrupts ......................................................... 58
+        3.5      Nonmaskable Interrupts ..................................................................................... 62
+        3.6      Illegal-Instruction Trap ....................................................................................... 65
+        3.7      Hardware Reset (RS) .......................................................................................... 65
+
+
+
+
+52   CPU Interrupts and Reset                                                                    SPRU430F – August 2001 – Revised April 2015
+                                                                                                            Submit Documentation Feedback
+                                            Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                             CPU Interrupts Overview
+
+3.1    CPU Interrupts Overview
+       Interrupts are hardware- or software-driven signals that cause the C28x CPU to suspend its current
+       program sequence and execute a subroutine. Typically, interrupts are generated by peripherals or
+       hardware devices that need to give data to or take data from the C28x (for example, A/D and D/A
+       converters and other processors). Interrupts can also signal that a particular event has taken place (for
+       example, a timer has finished counting).
+       On the C28x, interrupts can be triggered by software (the INTR, OR IFR, or TRAP instruction) or by
+       hardware (a pin, an external peripheral, or on-chip peripheral/logic). If hardware interrupts are triggered at
+       the same time, the C28x services them according to a set priority ranking.
+       Some 28x devices include a peripheral interrupt expansion (PIE) module that multiplexes interrupts from a
+       number of peripherals into a single CPU interrupt. The PIE module provides additional control before an
+       interrupt reaches the C28x CPU. See the TMS320C8x System and Interrupts Reference Guide
+       (SPRU078) for more details.
+       At the CPU level, each of the C28x interrupts, whether hardware or software, can be placed in one of the
+       following two categories:
+       • Maskable interrupts. These are interrupts that can be blocked (masked) or enabled (unmasked)
+           through software.
+       • Nonmaskable interrupts. These interrupts cannot be blocked. The C28x will immediately approve this
+           type of interrupt and branch to the corresponding subroutine. All software-initiated interrupts are in this
+           category.
+       The C28x handles interrupts in four main phases:
+       1. Receive the interrupt request. Suspension of the current program sequence must be requested by a
+          software interrupt (from program code) or a hardware interrupt (from a pin or an on-chip device).
+       2. Approve the interrupt. The C28x must approve the interrupt request. If the interrupt is maskable,
+          certain conditions must be met in order for the C28x to approve it. For nonmaskable hardware
+          interrupts and for software interrupts, approval is immediate.
+       3. Prepare for the interrupt service routine and save register values. The main tasks performed in
+          this phase are:
+          • Complete execution of the current instruction and flush from the pipeline any instructions that have
+               not reached the decode 2 phase.
+          • Automatically save most of the current program context by saving the following registers to the
+               stack: ST0, T, AL, AH, PL, PH, AR0, AR1, DP, ST1, DBGSTAT, PC, and IER.
+          • Fetch the interrupt vector and load it into the program counter (PC). For devices with a PIE
+               module, the vector fetched will depend on the setting of the PIE enable and flag registers.
+       4. Execute the interrupt service routine. The C28x branches to its corresponding subroutine called an
+          interrupt service routine (ISR). The C28x branches to the address (vector) you store at a
+          predetermined vector location and executes the ISR you have written.
+
+3.2    CPU Interrupt Vectors and Priorities
+       The C28x supports 32 CPU interrupt vectors, including the reset vector. Each vector is a 22-bit address
+       that is the start address for the corresponding interrupt service routine (ISR). Each vector is stored in 32
+       bits at two consecutive addresses. The location at the lower address holds the 16 least significant bits
+       (LSBs) of the vector. The location at the higher address holds the 6 most significant bits (MSBs) right-
+       justified. When an interrupt is approved, the 22-bit vector is fetched, and the 10 MSBs at the higher
+       address are ignored.
+       The C28x supports 32 CPU interrupt vectors, including the reset vector. Each vector is a 22-bit address
+       that is the start address for the corresponding interrupt service routine (ISR). Each vector is stored in 32
+       bits at two consecutive addresses. The location at the lower address holds the 16 least significant bits
+       (LSBs) of the vector. The location at the higher address holds the 6 most significant bits (MSBs) right-
+       justified. When an interrupt is approved, the 22-bit vector is fetched, and the 10 MSBs at the higher
+       address are ignored.
+       For devices with a PIE module, this table is re-mapped and expanded into the PIE vector table.
+
+SPRU430F – August 2001 – Revised April 2015                                                       CPU Interrupts and Reset   53
+Submit Documentation Feedback
+                                          Copyright © 2001–2015, Texas Instruments Incorporated
+

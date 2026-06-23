@@ -1,0 +1,32 @@
+# C28x VCU-II instructions (F2837x) -- DECODE-ONLY, with CRC data-flow hints.
+# Included by tms320c28x.sinc. Encodings verified against docs/c28x/vcu2_instructions.txt
+# (spruhs1c ch.5). Confirmed used in DIR (~256 ext-ISA words).
+#
+# WHY THIS MATTERS FOR CAN RE: CAN-message CRCs are computed in the VCU hardware
+# (VCRC* instructions update the VCRC result register from memory). Decoding these
+# -- and marking VCRC as updated from the source pointer -- is exactly the signal
+# for finding CAN CRC-check/compute code. (The VCRC opcodes are the VCU subset that
+# the earlier histogram counted as "VCRC".)
+#
+# SCOPE: decode-only. CRC polynomial math is NOT modeled; we mark VCRC as touched so
+# data flow shows it being updated from the source operand.
+
+# =============================================================================
+# VCRC -- compute CRC on a 16-bit memory operand, accumulate into VCRC register.
+# All share the 1110 0010 11.. .... prefix and take a loc16 (mem16) source.
+# Decode-only: VCRC = f(VCRC, [loc16]) modeled as a dependency, not the real poly.
+# =============================================================================
+# NOTE: these are 2-word -- LSW = opcode, MSW = "0000 0000 mem16" (loc field in the
+# second word's low byte). So the loc16 sub-table is matched AFTER the ';' word break.
+:VCRC8L_1 loc16     is op16=0xE2CB ; loc16     { local s:2 = loc16; VCRC = VCRC + zext(s); }
+:VCRC16P1L_1 loc16  is op16=0xE2CE ; loc16     { local s:2 = loc16; VCRC = VCRC + zext(s); }
+:VCRC32L_1 loc16    is op16=0xE2C1 ; loc16     { local s:2 = loc16; VCRC = VCRC + zext(s); }
+:VCRCCLR            is op16=0xE524             { VCRC = 0; }
+
+# =============================================================================
+# VMOV -- the VCU register <-> memory / register moves that surround CRC code.
+# =============================================================================
+# VMOV32 mem32, VSTATUS  -- store status (used to read CRC/flags out)  0xE20D
+:VMOV32 loc32, "VSTATUS"  is op16=0xE20D ; loc32  { loc32 = VSTATUS; }
+# VMOV32 VSTATUS, mem32  -- load status   0xE2B0
+:VMOV32 "VSTATUS", loc32  is op16=0xE2B0 ; loc32  { VSTATUS = loc32; }

@@ -1,0 +1,103 @@
+# TMS320C28x instruction constructors.
+# Included by tms320c28x.slaspec.
+#
+# SKELETON STAGE: only a handful of fixed-opcode instructions are defined here,
+# enough to prove the toolchain compiles and disassembles. The shared loc16/loc32
+# addressing sub-tables and the bulk of the ISA follow in later stages.
+#
+# Encodings verified against SPRU430F (docs/c28x/ch6_instruction_detail.txt).
+# Instructions are fetched as 16-bit words, low byte first (little-endian).
+
+# --- 16-bit instruction word token --------------------------------------------
+# All sub-fields of the opcode word live here, including the loc-field decode bits
+# (loc_* ), which overlay the low byte. Defining them on ONE token keeps byte
+# consumption correct (the loc field shares the instruction word, not extra bytes).
+define token instr16 (16)
+    op16    = (0,15)        # whole 16-bit opcode
+    op_hi8  = (8,15)        # high byte (opcode group)
+    op_hi7  = (9,15)        # top 7 bits (group when bit 8 is an operand 'A' bit)
+    op_hi5  = (11,15)       # top 5 bits (group when bits 8..10 are an AR selector)
+    op_lo8  = (0,7)         # low byte (often the loc16 field)
+    # loc-field sub-fields (low byte, bits 0..7):
+    loc_b7    = (7,7)
+    loc_b76   = (6,7)
+    loc_mode5 = (3,7)       # mode selector for the 1 0 xxx group
+    loc_areg  = (0,2)       # XARn selector (AAA) -> attached to XAR0..XAR7
+    loc_areg16= (0,2)       # same bits, attached to AR0..AR7 (16-bit @ARn mode)
+    loc_off6  = (0,5)       # 6-bit offset (@6bit, *-SP[6bit])
+    loc_imm3  = (0,2)       # 3-bit index (*+XARn[3bit])
+    loc_full8 = (0,7)       # whole loc field (fixed encodings)
+    # operand sub-fields that share the opcode word:
+    ax_bit    = (8,8)       # 0 = AL, 1 = AH  (the 'A' bit in 1001 xxxA ....)
+    arsel3    = (8,10)      # 3-bit AR selector (the 'nnn' in 0111 1nnn ....)
+    imm8      = (0,7)       # 8-bit immediate (CCCC CCCC, low byte)
+    simm8     = (0,7) signed # 8-bit signed offset (SB)
+    cond4     = (0,3)       # 4-bit condition code (COND), low nibble (B/BF)
+    cond4hi   = (8,11)      # COND in bits 8..11 (SB: 0110 COND CCCC CCCC)
+    sb_grp    = (12,15)     # top nibble = 0110 for SB
+    banz_n    = (0,2)       # ARn selector for BANZ (0000 0000 0000 1nnn)
+    op_lo_hi5 = (3,7)       # bits 3..7 of low byte (BANZ: 00001 nnn -> this=00001)
+    op_lo_76  = (6,7)       # bits 6..7 of the low byte (LCR #22bit group selector)
+    op_lo_35  = (3,7)       # bits 3..7 of the low byte (LCR *XARn selector)
+    op_lo_hi4 = (4,7)       # bits 4..7 of the low byte (B: 1110 COND -> this=1110)
+    op_hi_4   = (12,15)     # top nibble (TBIT: 0100 BBBB ....)
+    tbit_b    = (8,11)      # 4-bit bit index (TBIT)
+    op_hi_6   = (10,15)     # top 6 bits (MOVZ DP: 1011 10CC ....)
+    dp10      = (0,9)       # 10-bit DP immediate (MOVZ DP,#10bit)
+;
+
+# --- trailing 16-bit immediate / extension word -------------------------------
+define token imm16w (16)
+    imm16   = (0,15)
+    simm16  = (0,15) signed
+;
+
+# --- shared loc16 / loc32 addressing sub-tables (Table 5-1) --------------------
+# The loc field is the low byte of the opcode word; the locfield token in the
+# addr include overlays op_lo8's bits. Included before the instructions that use it.
+@include "tms320c28x_addr.sinc"
+
+# =============================================================================
+# Fixed-opcode, no-operand instructions (verified single-word encodings).
+# =============================================================================
+
+:ABORTI         is op16=0x0001  { }                 # Abort interrupt (skeleton: no semantics yet)
+
+:EALLOW         is op16=0x7622  { }                 # Enable write access to protected space
+:EDIS           is op16=0x761A  { }                 # Disable write access to protected space
+:IDLE           is op16=0x7621  { }                 # Put processor in idle mode
+:ESTOP0         is op16=0x7625  { }                 # Emulation stop 0
+
+# NOP with optional indirect modify: 0111 0111 LLLL LLLL.
+# Skeleton form shows only the plain (no-modify) case where the loc field is 0.
+:NOP            is op_hi8=0x77 & op_lo8=0x00  { }   # No operation
+
+# =============================================================================
+# Register-display operands.  A bare register name cannot sit in an instruction's
+# operand position (SLEIGH treats it as an undefined operand). The idiom (cf. 8051
+# `Areg`) is a zero-width subtable that prints the register name and exports the
+# register varnode, matched with `epsilon` (no pattern bits). Reused everywhere.
+# =============================================================================
+ACCreg: "ACC" is epsilon { export ACC; }
+IERreg: "IER" is epsilon { export IER; }
+Preg:   "P"   is epsilon { export P;   }
+XTreg:  "XT"  is epsilon { export XT;  }
+Treg:   "T"   is epsilon { export T;   }
+PHreg:  "PH"  is epsilon { export PH;  }
+PLreg:  "PL"  is epsilon { export PL;  }
+
+# AX register select: the 'A' bit (ax_bit) picks AL (0) or AH (1).
+AX: "AL"  is ax_bit=0 { export AL; }
+AX: "AH"  is ax_bit=1 { export AH; }
+
+# =============================================================================
+# Instruction families (encodings verified against ch6_instruction_detail.txt).
+# =============================================================================
+@include "tms320c28x_mov.sinc"
+@include "tms320c28x_flow.sinc"
+@include "tms320c28x_alu.sinc"
+@include "tms320c28x_mac.sinc"
+@include "tms320c28x_fpu.sinc"
+@include "tms320c28x_vcu.sinc"
+@include "tms320c28x_more.sinc"
+@include "tms320c28x_ext56.sinc"

@@ -1,0 +1,767 @@
+TMU Instruction Set                                                                                                                       www.ti.com
+
+7.5.2 Common Restrictions
+         For all the TMU instructions, the inputs are conditioned as follows (LVF, LUF are not affected):
+         • Negative zero is treated as positive zero
+         • Positive or negative denormalized numbers are treated as positive zero
+         • Positive and negative NaN are treated as positive and negative infinity respectively
+
+7.5.3 TMU Type 0 Instructions
+         The TMU Type 0 instructions are listed below.
+
+                                                   Table 7-6. Summary of Instructions
+Title   ......................................................................................................................................   Page
+
+ MPY2PIF32 RaH, RbH — 32-Bit Floating-Point Multiply by Two Pi ..............................................................                    783
+ DIV2PIF32 RaH, RbH — 32-Bit Floating-Point Divide by Two Pi .................................................................                   784
+ DIVF32 RaH, RbH, RcH — 32-Bit Floating-Point Division .........................................................................                 785
+ SQRTF32 RaH, RbH — 32-Bit Floating-Point Square Root .......................................................................                    787
+ SINPUF32 RaH, RbH — 32-Bit Floating-Point Sine (per unit) ....................................................................                  788
+ COSPUF32 RaH, RbH — 32-Bit Floating-Point Cosine (per unit) ................................................................                    790
+ ATANPUF32 RaH, RbH — 32-Bit Floating-Point ArcTangent (per unit) .........................................................                      792
+ QUADF32 RaH, RbH, RcH — Quadrant Determination Used in Conjunction With ATANPUF32() ..........................                                  793
+
+
+
+
+782      Trigonometric Math Unit (TMU)                                                       SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                              Submit Documentation Feedback
+                                                 Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                    MPY2PIF32 RaH, RbH — 32-Bit Floating-Point Multiply by Two Pi
+
+MPY2PIF32 RaH, RbH 32-Bit Floating-Point Multiply by Two Pi
+
+Operands
+
+        RaH             Floating-point destination register (R0H to R7H)
+        RbH             Floating-point source register (R0H to R7H)
+
+Opcode
+
+        LSW             1110 0010 0111 0000
+        MSW             0000 0000 00bb baaa
+
+Description               This operation is similar to the MPYF32 operation except that the second operand is the
+                          constant value 2pi:
+                              RaH = RbH * 2pi
+                          This operation is used in converting Per Unit values to Radians. Per Unit values are
+                          used in control applications to represent normalized radians:
+
+                                 Per Unit                                                         Radians
+                                   1.0                                                              2pi
+                                   0.0                                                               0
+                                   1.0                                                              2pi
+
+                          2pi = 6.28318530718 = 1.570796326795 * 2^2
+                          In IEEE 32-bit Floating point format:
+                                S = 0 << 31= 0x00000000
+                                E = (2 + 127) << 23= 129 << 23= 0x40800000
+                                M = (1.570796326795 * 2^23) & 0x007FFFFF= 0x00490FDB
+                                2pi = S+E+M = 0x40C90FDB
+
+Flags
+
+             Flag         TF             ZI              NI               ZF                NF           LUF              LVF
+           Modified       No             No              No               No                No            No               Yes
+
+Restrictions              If( RaH result is too big for floating-point number, Ea > 255 ){
+                              RaH = ±Infinity
+                              LVF = 1;
+                          }
+
+Pipeline                  Instruction takes 2 pipeline cycles to execute if followed by either SINPUF32,
+                          COSPUF32 or MOV32 mem, Rx operations and 3 pipeline cycles for all other operations
+                          (FPU or TMU).
+Example                   ;; Convert Per Unit value to Radians:
+                            MOV32      R0H,@PerUnit ; R0H = Per Unit value
+                            MPY2PIF32 R0H,R0H        ; R0H = R0H * 2pi
+                            NOP                      ; pipeline delay
+                            MOV32      @Radians,R0H ; store Radian result
+                                                     ; 4 cycles
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                  Trigonometric Math Unit (TMU)   783
+Submit Documentation Feedback
+                                         Copyright © 2014–2019, Texas Instruments Incorporated
+DIV2PIF32 RaH, RbH — 32-Bit Floating-Point Divide by Two Pi                                                                 www.ti.com
+
+
+DIV2PIF32 RaH, RbH 32-Bit Floating-Point Divide by Two Pi
+
+Operands
+
+        RaH               Floating-point destination register (R0H to R7H)
+        RbH               Floating-point source register (R0H to R7H)
+
+Opcode
+
+        LSW               1110 0010 0111 0001
+        MSW               0000 0000 00bb baaa
+
+Description                 This operation is similar to the MPYF32 operation except that the second operand is the
+                            constant value 1/2pi:
+                                                                 RaH = RbH * 1/2pi
+                            This operation is used in converting Radians to Per unit values. Per unit values are used
+                            in control representing normalized Radians:
+
+                                   Per Unit                                                           Radians
+                                      1.0                                                                2pi
+                                      0.0                                                                 0
+                                     -1.0                                                               -2pi
+
+                            In IEEE 32-bit Floating point format:
+                                 1/2pi = 0.1591549430919 = 1.273239544735 * 2^-3
+                                 S = 0 << 31= 0x00000000
+                                 E = (-3+127) << 23 = 124 << 23 = 0x3E000000
+                                 M = (1.273239544735 * 2^23) & 0x007FFFFF = 0x0022F983
+                                 1/2pi = S+E+M = 0x3E22F983
+
+Flags
+
+            Flag            TF              ZI              NI               ZF                NF           LUF             LVF
+           Modified         No              No              No               No                No            Yes             No
+
+Restrictions                If( RaH result is too small for floating-point number, Ea < 0) {
+                                RaH = 0.0
+                                LUF = 1;
+                            }
+
+Pipeline                    Instruction takes 2 pipeline cycles to execute if followed by either SINPUF32,
+                            COSPUF32 or MOV32 mem, Rx operations and 3 pipeline cycles for all other operations
+                            (FPU or TMU).
+Example                     ;; Convert Per Unit value to Radians:
+                              MOV32      R0H,@Radians ; R0H = Radian value
+                              DIV2PIF32 R0H,R0H        ; R0H = R0H * 1/2pi
+                              NOP                      ; pipeline delay
+                              MOV32      @Per Unit     ; store Per Unit result
+                                                       ; 4 cycles
+
+
+784     Trigonometric Math Unit (TMU)                                                   SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                         Submit Documentation Feedback
+                                            Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                             DIVF32 RaH, RbH, RcH — 32-Bit Floating-Point Division
+
+DIVF32 RaH, RbH, RcH 32-Bit Floating-Point Division
+
+Operands
+
+        RaH             Floating-point destination register (R0H to R7H)
+        RbH             Floating-point source register (R0H to R7H)
+        RcH             Floating-point source register (R0H to R7H)
+
+Opcode
+
+        LSW             1110 0010 0111 0100
+        MSW             0000 000c ccbb baaa
+
+Description                                               RaH = RbH/RcH
+                          The sequence of operations are as follows:
+                          Sa = Sb ^ Sc;                                // Set sign of result
+                          Ea = (Eb – Ec) + 127;                        // Calculate Exponent
+                          Ma = Mb / Mc;                                // 0.5 < Ma < 2.0
+                          if(Ma < 1.0){){                              // Re-normalize mantissa range
+                             Ea = Ea – 1;
+                             Ma = Ma * 2.0;
+                          }
+                          if(Ea >= 255){                               // Chek if result too big:
+                             Ea = 255;                                 // Return Inf
+                             Ma = 0;
+                             LVF = 1;                                  // Set overflow flag
+                          }
+                          if((Ea == 0) & (Ma != 0)){                   // Check if result Denorm value:
+                             Sa = 0;
+                             Ea = 0;                                   // Return zero
+                             Ma = 0;
+                             LUF = 1;                                  // Set underflow flag
+                          }
+                          if(Ea < 0){                                  // Check if result too small:
+                             Sa = 0;
+                             Ea = 0;                                   // Return zero
+                             Ma = 0;
+                             LUF = 1;                                  // Set underflow flag
+                          }
+
+Flags
+
+             Flag         TF            ZI             NI               ZF                NF           LUF              LVF
+         Modified         No           No              No               No                No            Yes              Yes
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                Trigonometric Math Unit (TMU)   785
+Submit Documentation Feedback
+                                       Copyright © 2014–2019, Texas Instruments Incorporated
+DIVF32 RaH, RbH, RcH — 32-Bit Floating-Point Division                                                                   www.ti.com
+
+Restrictions                The following boundary conditions apply:
+
+                Division                        Result                               LVF                          LUF
+                   0/0                              0                                  1                            -
+                  0/Inf                             0                                   -                          1
+               Inf/Normal                          Inf                                 1                            -
+                  Inf/0                            Inf                                 1                            -
+                  Inf/Inf                          Inf                                  -                          1
+                Normal/0                           Inf                                 1                            -
+               Normal/Inf                           0                                   -                          1
+
+Pipeline                    Instruction takes 5 pipeline cycles to execute.
+Example                     ;; Calculate Z = Y/X
+                              MOV32   R0H,@X             ; R0H = X
+                              MOV32   R1H,@Y             ; R1H = Y
+                              DIVF32 R2H,R1H,R0H         ; R2H = R1H/R0H = Y/X = Z
+                              NOP                        ; pipeline delay
+                              NOP                        ; pipeline delay
+                              NOP                        ; pipeline delay
+                              NOP                        ; pipeline delay
+                              MOV32   @Z,R2H             ; Z = Y/X
+                                                         ; 8 cycles
+
+
+
+
+786   Trigonometric Math Unit (TMU)                                                 SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                     Submit Documentation Feedback
+                                        Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                           SQRTF32 RaH, RbH — 32-Bit Floating-Point Square Root
+
+SQRTF32 RaH, RbH 32-Bit Floating-Point Square Root
+
+Operands
+
+        RaH             Floating-point destination register (R0H to R7H)
+        RbH             Floating-point source register (R0H to R7H)
+
+Opcode
+
+        LSW             1110 0010 0111 0111
+        MSW             0000 0000 00bb baaa
+
+Description                                               Rah = RbH
+
+Flags
+
+             Flag         TF            ZI             NI               ZF                NF           LUF              LVF
+           Modified       No           No              No               No                No            No               Yes
+
+Restrictions              If( RbH < 0.0 or -Inf ) { // Check if input is negative:
+                                Sa = 0;                      // Return zero
+                                Ea = 0;
+                                Ma = 0;
+                                LVF = 1;                    // Set overflow flag
+                          }
+                          If( RbH == +Inf ) {
+                               Sa = 0;                      // Return Inf
+                               Ea = 255;
+                               Ma = 0;
+                               LVF = 1;                     // Set overflow flag
+                          }
+
+Pipeline                  Instruction takes 5 pipeline cycles to execute.
+Example                   ;; Calculate Y = sqrt(X)
+                            MOV32   R0H,@X       ; R0H = X
+                            SQRTF32 R1H,R0H      ; R1H = sqrt(X)
+                            NOP                  ; pipeline delay
+                            NOP                  ; pipeline delay
+                            NOP                  ; pipeline delay
+                            NOP                  ; pipeline delay
+                            MOV32   @Y,R1H       ; Y = sqrt(X)
+                                                 ; 7 cycles
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                Trigonometric Math Unit (TMU)   787
+Submit Documentation Feedback
+                                       Copyright © 2014–2019, Texas Instruments Incorporated
+SINPUF32 RaH, RbH — 32-Bit Floating-Point Sine (per unit)                                                                    www.ti.com
+
+
+SINPUF32 RaH, RbH 32-Bit Floating-Point Sine (per unit)
+
+Operands
+
+        RaH                  Floating-point destination register (R0H to R7H)
+        RbH                  Floating-point source register (R0H to R7H)
+
+Opcode
+
+        LSW                  1110 0010 0111 1000
+        MSW                  0000 0000 00bb baaa
+
+Description                   This instruction performs the following equivalent operation:
+                                   PerUnit = fraction(RbH)
+                                   RaH = sin(PerUnit*2pi)
+                              In control applications radians are usually normalized to the range of -1.0 to 1.0.
+
+                                     Per Unit                                                          Radians
+                                        1.0                                                               2pi
+                                        0.0                                                                0
+                                       -1.0                                                              -2pi
+
+                              The operation takes the fraction of the input value RbH. This equates to the cosine
+                              waveform repeating itself every 2pi radians
+
+                     RbH                            Per Unit                            Radians                    Sine Value
+                      2.0                              0.0                                  0                          0.0
+                     1.75                             0.75                                3pi/2                       -1.0
+                      1.5                              0.5                                 pi                          0.0
+                     1.25                             0.25                                pi/2                         1.0
+                      1.0                              0.0                                  0                          0.0
+                     0.75                             0.75                                3pi/2                       -1.0
+                      0.5                              0.5                                 pi                          0.0
+                     0.25                             0.25                                pi/2                         1.0
+                      0.0                              0.0                                  0                          0.0
+                     -0.25                            -0.25                               -pi/2                       -1.0
+                     -0.5                              -0.5                                -pi                         0.0
+                     -0.75                            -0.75                              -3pi/2                        1.0
+                     -1.0                              0.0                                  0                          0.0
+                     -1.25                            -0.25                               -pi/2                       -1.0
+                     -1.5                              -0.5                                -pi                         0.0
+                     -1.75                            -0.75                              -3pi/2                        1.0
+                     -2.0                              0.0                                  0                          0.0
+
+
+Flags
+
+            Flag              TF            ZI                NI             ZF                   NF        LUF              LVF
+          Modified            No           No                 No             No                   No         No                 No
+
+
+
+788     Trigonometric Math Unit (TMU)                                                   SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                         Submit Documentation Feedback
+                                            Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                        SINPUF32 RaH, RbH — 32-Bit Floating-Point Sine (per unit)
+
+Restrictions              If the input value is too small (<= 2^-33) or too big (>= 2^22), then the output will be
+                          returned as 0.0 (no flags affected).
+
+Pipeline                  Instruction takes 4 pipeline cycles to execute.
+Example                   ;; Convert Radian value to PerUnit value and
+                          ;; calculate Sin value:
+                            MOV32      R0H,@RadianValue ; R0H = Radian value
+                            DIV2PIF32 R1H,R0H
+                                                         ; R1H=R0H/2pi= Per Unit Value
+                            NOP                          ; pipeline delay
+                            SINPUF32 R2H,R1H             ; R2H = SINPU(fraction(R1H))
+                            NOP                          ; pipeline delay
+                            NOP                          ; pipeline delay
+                            NOP                          ; pipeline delay
+                            MOV32 @SinValue,R2H          ; Sin Value=sin(Radian Value)
+                                                         ; 8 cycles
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                Trigonometric Math Unit (TMU)   789
+Submit Documentation Feedback
+                                       Copyright © 2014–2019, Texas Instruments Incorporated
+COSPUF32 RaH, RbH — 32-Bit Floating-Point Cosine (per unit)                                                                  www.ti.com
+
+
+COSPUF32 RaH, RbH 32-Bit Floating-Point Cosine (per unit)
+
+Operands
+
+        RaH                  Floating-point destination register (R0H to R7H)
+        RbH                  Floating-point source register (R0H to R7H)
+
+Opcode
+
+        LSW                  1110 0010 0111 1001
+        MSW                  0000 0000 00bb baaa
+
+Description                   This instruction performs the following equivalent operation:
+                                   PerUnit = fraction(RbH)
+                                   RaH = cos(PerUnit*2pi)
+                              In control applications radians are usually normalized to the range of -1.0 to 1.0.
+
+                                     Per Unit                                                          Radians
+                                        1.0                                                               2pi
+                                        0.0                                                                0
+                                       -1.0                                                              -2pi
+
+                              The operation takes the fraction of the input value RbH. This equates to the cosine
+                              waveform repeating itself every 2pi radians
+
+                     RbH                            Per Unit                            Radians                   Cosine Value
+                      2.0                              0.0                                  0                          1.0
+                     1.75                             0.75                                3pi/2                        0.0
+                      1.5                              0.5                                 pi                         -1.0
+                     1.25                             0.25                                pi/2                         0.0
+                      1.0                              0.0                                  0                          1.0
+                     0.75                             0.75                                3pi/2                        0.0
+                      0.5                              0.5                                 pi                         -1.0
+                     0.25                             0.25                                pi/2                         0.0
+                      0.0                              0.0                                  0                          1.0
+                     -0.25                            -0.25                               -pi/2                        0.0
+                     -0.5                              -0.5                                -pi                        -1.0
+                     -0.75                            -0.75                              -3pi/2                        0.0
+                     -1.0                              0.0                                  0                          1.0
+                     -1.25                            -0.25                               -pi/2                        0.0
+                     -1.5                              -0.5                                -pi                        -1.0
+                     -1.75                            -0.75                              -3pi/2                        0.0
+                     -2.0                              0.0                                  0                          1.0
+
+
+Flags
+
+            Flag              TF            ZI                NI             ZF                   NF        LUF              LVF
+          Modified            No           No                 No             No                   No         No               No
+
+
+
+790     Trigonometric Math Unit (TMU)                                                   SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                         Submit Documentation Feedback
+                                            Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                    COSPUF32 RaH, RbH — 32-Bit Floating-Point Cosine (per unit)
+
+Restrictions              If the input value is too small (<= 2^-33) or too big (>= 2^22), then the output will be
+                          returned as 1.0 (no flags affected).
+
+Pipeline                  Instruction takes 4 pipeline cycles to execute.
+Example                   ;; Convert Radian value to PerUnit value and
+                          ;; calculate Sin value:
+                            MOV32      R0H,@RadianValue ; R0H = Radian value
+                            DIV2PIF32 R1H,R0H
+                                                         ; R1H=R0H/2pi= Per Unit Value
+                            NOP                          ; pipeline delay
+                            COSPUF32 R2H,R1H             ; R2H = COSPU(fraction(R1H))
+                            NOP                          ; pipeline delay
+                            NOP                          ; pipeline delay
+                            NOP                          ; pipeline delay
+                            MOV32 @CosValue,R2H          ; Cos Value=cos(Radian Value)
+                                                         ; 8 cycles
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                Trigonometric Math Unit (TMU)   791
+Submit Documentation Feedback
+                                       Copyright © 2014–2019, Texas Instruments Incorporated
+ATANPUF32 RaH, RbH — 32-Bit Floating-Point ArcTangent (per unit)                                                           www.ti.com
+
+
+ATANPUF32 RaH, RbH 32-Bit Floating-Point ArcTangent (per unit)
+
+Operands
+
+        RaH               Floating-point destination register (R0H to R7H)
+        RbH               Floating-point source register (R0H to R7H)
+
+Opcode
+
+        LSW               1110 0010 0111 1010
+        MSW               0000 0000 00bb baaa
+
+Description                 This instruction computes the arc tangent of a given value and returns the result as a
+                            per-unit value:
+                                                                PerUnit = atan(RbH)/2pi
+                            The operation limits the input ranget of the input value RbH to:
+                                                                -1.0 < = RbH < = 1.0
+                            Values outside this range return 0.125 as follows:
+
+               RbH                      Per Unit                       Radians                 ATANPU Value           LVF Flag
+               >1.0                      0.125                             pi/4                    0.125                  1
+                1.0                      0.125                             pi/4                    0.125
+                0.0                       0.0                               0                       0.0
+                -1.0                     -0.125                           -pi/4                    -0.125
+               <-1.0                     -0.125                           -pi/4                    -0.125                 1
+
+Flags
+
+            Flag            TF             ZI              NI               ZF                NF            LUF            LVF
+           Modified         No             No              No               No                No            No                Yes
+
+Pipeline                    Instruction takes 4 pipeline cycles to execute.
+Example                     ;; Calculate ATAN and generate Per Unit value and
+                            ;; convert to Radians:
+                              MOV32      R0H,@AtanValue    ; R0H = Atan Value
+                              ATANPUF32 R1H,R0H            ; R1H = ATANPU(R0H)
+                              NOP                          ; pipeline delay
+                              NOP                          ; pipeline delay
+                              NOP                          ; pipeline delay
+                              MPY2PIF32 R2H,R1H            ; R2H = R1H * 2pi
+                                                           ;     = Radian value
+                              NOP                          ; pipeline delay
+                              MOV        @RadianValue,R2H ; Store result
+                                                           ; 8 cycles
+
+
+
+
+792     Trigonometric Math Unit (TMU)                                                  SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                        Submit Documentation Feedback
+                                           Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                  QUADF32 RaH, RbH, RcH — Quadrant Determination Used in Conjunction With ATANPUF32()
+
+QUADF32 RaH, RbH, RcH Quadrant Determination Used in Conjunction With ATANPUF32()
+
+Operands
+
+        RaH             Floating-point destination register (R0H to R7H)
+        RbH             Floating-point destination register (R0H to R7H)
+        RcH             Floating-point source register (R0H to R7H)
+        RdH             Floating-point source register (R0H to R7H)
+
+Opcode
+
+        LSW             1110 0010 0111 1100
+        MSW             0000 dddc ccbb baaa
+
+Description               This operation, in conjunction with atanpu(), is used in calculating atanpu2() for a full
+                          circle:
+                               RdH = X value
+                               RcH = Y value
+                               RbH = Ratio of X & Y
+                               RaH = Quadrant value (0.0, ±0.25, ±0.5)
+                          Figure 7-1 shows how the values RaH and RbH are generated based on the contents of
+                          RbH and RcH.
+
+     Figure 7-1. Calculation of RaH (Quadrant) and RbH (Ratio) Based on RcH (Y) and RdH (X) Values
+                                                                 If( (|Y| > |X|) & (Y >= 0) )
+                                                              { Quadrant = 0.25; Ratio = -X/Y; }
+                                                  0.375 (PU) = 3*pi/4                             0.125 (PU) = pi/4
+                                                                           0.25 (PU) = pi/2
+                       If( (|Y| <= |X|)                                           Y
+                       & (X < 0) & (Y >= 0) )
+                            { Quadrant = 0.5;
+                                                      ATANPU2(Y,X) = Quadrant + ATANPU(Ratio)
+                             Ratio = Y/X }
+                                                                                          If( (|Y| <= |X|) & (X >=0) )
+                                 0.5 (PU) = pi
+                                                                                     X         { Ratio = Y/X;
+                              ~0.5 (PU) = ~-pi                                                   Quadrant = 0.0; }
+                       If( (|Y| <= |X|)                                                                   Note: If( (Y==0) & (X ==0) )
+                       & (X < 0) & (Y < 0) )                                                                        { Ratio = 0.0;
+                            { Quadrant = -0.5;                           -0.25 (PU) = -pi/2                           Quadrant = 0.0; }
+                             Ratio = Y/X }
+                                                 -0.375 (PU) = -3*pi/4                        -0.125 (PU) = -pi/4
+
+                                                                  If( (|Y| > |X|) & (Y < 0) )
+                                                               { Quadrant = -0.25; Ratio = -X/Y }
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                                        Trigonometric Math Unit (TMU)   793
+Submit Documentation Feedback
+                                                 Copyright © 2014–2019, Texas Instruments Incorporated
+QUADF32 RaH, RbH, RcH — Quadrant Determination Used in Conjunction With ATANPUF32()                                          www.ti.com
+
+                                The algorithm for this instruction is as follows:
+                                if( (fabs(RcH(Y)) == 0.0) & (fabs(RdH(X)) == 0.0) ) {
+                                   RaH(Quadrant) = 0.0;
+                                   RbH(Ratio)    = 0.0;
+                                 }else if( fabs(RcH(Y)) < = fabs(RdH(X)) ) {
+                                   RbH(Ratio) = RcH(Y) / RdH(X);
+                                   if( RdH(X) >= 0.0 )
+                                       RaH(Quadrant) = 0.0;
+                                   else {
+                                       if( RcH(Y) >= 0.0 )
+                                          RaH(Quadrant) = 0.5;
+                                       else
+                                          RaH(Quadrant) = -0.5;
+                                    }
+                                }else {
+                                    if( RcH(Y) >= 0.0 )
+                                        RaH(Quadrant) = 0.25;
+                                    else
+                                        RaH(Quadrant) = -0.25;
+                                    RbH(Ratio) = - RdH(X) / RcH(Y);
+                                 }
+
+Flags
+
+            Flag                TF           ZI               NI              ZF                 NF          LUF             LVF
+           Modified             No           No               No              No                 No           Yes             Yes
+
+Restrictions
+
+                   Division                          Result                               LVF                          LUF
+                       0/0                               0                                  1                            -
+                      0/Inf                              0                                   -                          1
+                 Inf/Normal                             Inf                                 1                            -
+                      Inf/0                             Inf                                 1                            -
+                      Inf/Inf                           Inf                                  -                          1
+                   Normal/0                             Inf                                 1                            -
+                 Normal/Inf                              0                                   -                          1
+
+Pipeline                        Instruction takes 5 pipeline cycles to execute.
+
+
+
+
+794     Trigonometric Math Unit (TMU)                                                    SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                          Submit Documentation Feedback
+                                             Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                 QUADF32 RaH, RbH, RcH — Quadrant Determination Used in Conjunction With ATANPUF32()
+
+Example                   ;; Calculate Z = atan2(Y,X), where Z is in
+                          ;; radians:
+                            MOV32       R0H,@X          ; R0H = X
+                            MOV32       R1H,@Y          ; R1H = Y
+                          ;; if(Y <= X) R2H= R1H/R0H
+                          ;; else       R2H= -R0H/R1H
+                          ;; R3H= 0.0, +/-0.25, +/-0.5
+                            QUADF32     R3H,R2H,R1H,R0H
+                            NOP                         ; pipeline delay
+                            NOP                         ; pipeline delay
+                            NOP                         ; pipeline delay
+                            NOP                         ; pipeline delay
+                          ;; R4H = ATANPU(R2H)(Per Unit result)
+                            ATANPUF32   R4H,R2H
+                            NOP                         ; pipeline delay
+                            NOP                         ; pipeline delay
+                            NOP                         ; pipeline delay
+                          ;; R5H = R3H + ATANPU(R4H) = ATANPU2 value
+                            ADDF32      R5H,R3H,R4H
+                            NOP                         ; pipeline delay
+                          ;; R6H = ATANPU2 * 2pi = atan2 value(radians)
+                            MPY2PIF32   R6H,R5H
+                            NOP                         ; pipeline delay
+                            MOV32       @Z,R6H          ; store result
+                                                        ; 16 cycles
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                Trigonometric Math Unit (TMU)   795
+Submit Documentation Feedback
+                                       Copyright © 2014–2019, Texas Instruments Incorporated
+TMU Instruction Set                                                                                                                       www.ti.com
+
+7.5.4 TMU Type 1 Instructions
+         TMU Type 1 has all of the Type 0 instructions and adds the IEXP2F32 and LOG2F32 instructions.
+
+                                                   Table 7-7. Summary of Instructions
+Title   ......................................................................................................................................   Page
+
+ IEXP2F32 RaH, RbH — 32-Bit Floating-Point Inverse Exponent ................................................................. 797
+ LOG2F32 RaH, RbH — 32-Bit Floating-Point Base-2 Logarithm ................................................................. 798
+
+
+
+
+796      Trigonometric Math Unit (TMU)                                                       SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                              Submit Documentation Feedback
+                                                 Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                         IEXP2F32 RaH, RbH — 32-Bit Floating-Point Inverse Exponent
+
+IEXP2F32 RaH, RbH 32-Bit Floating-Point Inverse Exponent
+
+Operands
+
+        RaH             Floating-point destination register (R0H to R7H)
+        RbH             Floating-point source register (R0H to R7H)
+
+Opcode
+
+        LSW             1110 0010 0111 0011
+        MSW             0000 0000 00bb baaa
+
+Description               This instruction computes 2.0f raised to the inverse power of a floating point number.
+                          The equivalent operation is:
+                                                              RaH = 2-|RbH|
+
+                                 RbH                                                           EXP Value (RaH)
+                           -Inf / Nan 0.0                                                            0.0
+                                 -2.0                                                               0.25
+                                 -1.0                                                                0.5
+                                 0.0                                                                 1.0
+                               Denorm                                                                1.0
+                                 1.0                                                                 0.5
+                                 2.0                                                                0.25
+                               Inf / Nan                                                             0.0
+
+Flags
+
+             Flag         TF               ZI              NI               ZF                NF           LUF              LVF
+           Modified       No               No              No               No                No            Yes              No
+
+Pipeline                  Instruction takes 4 pipeline cycles to execute.
+Example                   ;; Calculate inverse exponent
+                              IEXP2F32   R2H,R1H        ; R2H = 2^-|R1H|
+                              NOP                       ; pipeline delay
+                              NOP                       ; pipeline delay
+                              NOP                       ; pipeline delay
+                              MOV32     @ExpValue,R2H   ; ExpValue = 2^-|R1H|
+                                                        ; 5 Cycles
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                    Trigonometric Math Unit (TMU)   797
+Submit Documentation Feedback
+                                           Copyright © 2014–2019, Texas Instruments Incorporated
+LOG2F32 RaH, RbH — 32-Bit Floating-Point Base-2 Logarithm                                                                    www.ti.com
+
+
+LOG2F32 RaH, RbH 32-Bit Floating-Point Base-2 Logarithm
+
+Operands
+
+        RaH               Floating-point destination register (R0H to R7H)
+        RbH               Floating-point source register (R0H to R7H)
+
+Opcode
+
+        LSW               1110 0010 0111 0010
+        MSW               0000 0000 00bb baaa
+
+Description                 This instruction computes the base-2 logarithm of a floating point number. The
+                            equivalent operation is:
+                                                                  RaH = LOG2(RbH)
+                            Domain (RbH) = [-Inf, Inf]
+                            Range (RaH) = [0, 128) U {Inf}
+
+                                   RbH                                                          LOG2 Value (RaH)
+                             -Inf / Nan 0.0                                                            -Inf
+                                   -2.0                                                                -Inf
+                                   -1.0                                                                -Inf
+                                   0.0                                                                 -Inf
+                                 Denorm                                                                -Inf
+                                   1.0                                                                 0.0
+                                   2.0                                                                 1.0
+                                 Inf / Nan                                                              Inf
+
+Flags
+
+            Flag            TF               ZI              NI               ZF                NF            LUF            LVF
+           Modified         No               No              No               No                No            Yes             Yes
+
+Pipeline                    Instruction takes 4 pipeline cycles to execute.
+Example                     ;; Calculate base-2 logarithm
+                                LOG2F32   R2H,R1H         ; R2H = LOG2(R1H)
+                                NOP                       ; pipeline delay
+                                NOP                       ; pipeline delay
+                                NOP                       ; pipeline delay
+                                MOV32     @LogValue,R2H   ; LogValue = LOG2(RbH)
+                                                          ; 5 Cycles
+
+
+
+
+798     Trigonometric Math Unit (TMU)                                                    SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                          Submit Documentation Feedback
+                                             Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                                                                                             Revision History
+
+
+                                                                Revision History
+
+Changes from May 23, 2018 to November 15, 2018 ........................................................................................................ Page
+
+•   Related Documentation: Extensive changes have been made to this document since the last publication. ................. 9
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                                                                 Revision History       799
+Submit Documentation Feedback
+                                                  Copyright © 2014–2019, Texas Instruments Incorporated
+

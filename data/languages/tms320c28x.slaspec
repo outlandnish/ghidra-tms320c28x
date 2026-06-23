@@ -1,0 +1,93 @@
+# SLEIGH specification for the TI TMS320C28x fixed-point DSP core.
+# Target device: TMS320F28377D (dual C28x + FPU).
+# Source: SPRU430F - TMS320C28x CPU and Instruction Set Reference Guide.
+#
+# KEY ARCHITECTURAL FACT: the C28x is WORD-ADDRESSABLE. The smallest addressable
+# unit is 16 bits ("byte" == 16 bits on this CPU). We model this with wordsize=2
+# on the data/code space so one address == one 16-bit word, which is what makes
+# XREFs to peripheral (e.g. CAN) registers land correctly.
+
+define endian=little;
+define alignment=2;
+
+# --- Address spaces -----------------------------------------------------------
+# The C28x has a UNIFIED address space: program and data share one 22-bit/32-bit
+# address map (the same address, e.g. 0x048000 for CANA, is reached by either the
+# program or data bus). So we model ONE space `ram` (not separate CODE/DATA) -- this
+# matches the hardware AND satisfies the decompiler, which requires the default space
+# to be the global space. wordsize=2 => addressable unit is a 16-bit word (the C28x
+# "16-bit byte").
+define space ram      type=ram_space      size=4  wordsize=2  default;
+define space register type=register_space size=4;
+
+# =============================================================================
+# Register file (SPRU430F Table 2-1, Figure 2-2).
+# Little-endian layout: a 32-bit register's low 16 bits sit at the lower offset,
+# so ACC[0:2]=AL, ACC[2:2]=AH, etc.  Bytes within AH/AL are also accessible.
+# =============================================================================
+
+# --- Accumulator: ACC[32] = AH[16]:AL[16], each half split into MSB/LSB bytes
+define register offset=0x00 size=4 [ ACC ];
+define register offset=0x00 size=2 [ AL AH ];
+define register offset=0x00 size=1 [ AL_LSB AL_MSB AH_LSB AH_MSB ];
+
+# --- Product register: P[32] = PH[16]:PL[16]
+define register offset=0x08 size=4 [ P ];
+define register offset=0x08 size=2 [ PL PH ];
+
+# --- Multiplicand register: XT[32] = T[16]:TL[16]  (T is the HIGH half)
+define register offset=0x10 size=4 [ XT ];
+define register offset=0x10 size=2 [ TL T ];
+
+# --- Auxiliary registers: XARn[32] = ARnH[16]:ARn[16]  (ARn is the LOW half)
+define register offset=0x20 size=4 [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
+define register offset=0x20 size=2 [ AR0 AR0H AR1 AR1H AR2 AR2H AR3 AR3H
+                                     AR4 AR4H AR5 AR5H AR6 AR6H AR7 AR7H ];
+
+# --- Pointers and program counters
+define register offset=0x40 size=2 [ DP SP ];
+define register offset=0x44 size=4 [ PC RPC ];   # 22-bit values held in 32-bit slots
+
+# --- Status registers
+define register offset=0x50 size=2 [ ST0 ST1 ];
+
+# --- Interrupt control
+define register offset=0x58 size=2 [ IFR IER DBGIER ];
+
+# --- FPU registers (F2837x C28x+FPU, spruhs1c ch.1) ---------------------------
+# Eight 32-bit float result registers, the FPU status register, and the repeat
+# block register. Used by the (decode-only) FPU instruction variant.
+define register offset=0x60 size=4 [ R0H R1H R2H R3H R4H R5H R6H R7H ];
+define register offset=0x90 size=4 [ STF RB ];
+
+# --- VCU-II registers (F2837x C28x+VCU, spruhs1c ch.5) ------------------------
+# General-purpose VR0-VR8, transition-bit regs, status, and the CRC result reg.
+# Used by the (decode-only) VCU/VCRC instructions -- relevant because CAN-message
+# CRCs are computed here. VR0-VR8 = 9 regs.
+define register offset=0xA0 size=4 [ VR0 VR1 VR2 VR3 VR4 VR5 VR6 VR7 VR8 ];
+define register offset=0xC8 size=4 [ VT0 VT1 VSTATUS VCRC ];
+
+# =============================================================================
+# Status flags as named bit-fields (subset; expanded as semantics are added).
+# ST0: SXM OVM TC C Z N V PM(3) OVC(6)   ST1: AMODE PAGE0 VMAP ... (SPRU430F 2.3-2.4)
+# =============================================================================
+@define SXM   "ST0[0,1]"   # sign-extension mode
+@define OVM   "ST0[1,1]"   # overflow mode
+@define TC    "ST0[2,1]"   # test/control flag
+@define C     "ST0[3,1]"   # carry
+@define Z     "ST0[4,1]"   # zero
+@define N     "ST0[5,1]"   # negative
+@define V     "ST0[6,1]"   # overflow
+@define AMODE "ST1[8,1]"   # addressing-mode select bit
+
+# =============================================================================
+# Decode context. AMODE selects the loc16/loc32 field interpretation (Table 5-1).
+# OBJMODE/AMODE live in ST1 at runtime; for decode we track AMODE as context.
+# =============================================================================
+define register offset=0x80 size=4 contextreg;
+define context contextreg
+  ctx_AMODE = (0,0)        # 0 = C28x modes (compiler default), 1 = C2xLP-compatible
+;
+
+# Tokens and instruction constructors live in the .sinc include.
+@include "tms320c28x.sinc"

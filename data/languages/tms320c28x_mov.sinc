@@ -1,0 +1,139 @@
+# C28x MOV / MOVL / MOVB / MOVW family (data movement).
+# Included by tms320c28x.sinc.  Encodings verified against
+# docs/c28x/ch6_instruction_detail.txt (SPRU430F ch.6).
+#
+# This is the highest-impact family for CAN RE: these are the loads/stores that
+# read/write peripheral (CAN) registers and set the data page. Frequency analysis
+# of the DIR firmware confirms MOVW DP,#imm (0x761F) is the single most common
+# word, and the MOVL loc32,XARn store family populates the dominant 0xaX group.
+
+# =============================================================================
+# 16-bit moves (loc16)
+# =============================================================================
+
+# MOV AX, loc16     1001 001A LLLL LLLL   -- load AL/AH from 16-bit location
+# Top 7 bits (op_hi7) = 1001001 = 0x49; bit 8 = the A bit consumed by the AX subtable.
+:MOV AX, loc16      is op_hi7=0x49 & AX & loc16  {
+    AX = loc16;
+}
+
+# MOV loc16, AX     1001 011A LLLL LLLL   -- store AL/AH to 16-bit location
+# Top 7 bits = 1001011 = 0x4B.
+:MOV loc16, AX      is op_hi7=0x4B & loc16 & AX  {
+    loc16 = AX;
+}
+
+# MOV loc16, #16bit 0010 1000 LLLL LLLL : iiii iiii iiii iiii   (2-word)
+:MOV loc16, "#"imm16  is op_hi8=0x28 & loc16 ; imm16  {
+    loc16 = imm16:2;
+}
+
+# MOV loc16, #0     0010 1011 LLLL LLLL   -- clear 16-bit location
+:MOV loc16, "#0"   is op_hi8=0x2B & loc16  {
+    loc16 = 0:2;
+}
+
+# MOV T, loc16      0010 1101 LLLL LLLL   -- load high half of XT
+:MOV Treg, loc16    is op_hi8=0x2D & Treg & loc16  {
+    T = loc16;
+}
+
+# MOV loc16, T      0010 0001 LLLL LLLL   -- store T
+:MOV loc16, Treg    is op_hi8=0x21 & loc16 & Treg  {
+    loc16 = T;
+}
+
+# MOV PH, loc16     0010 1111 LLLL LLLL
+:MOV PHreg, loc16   is op_hi8=0x2F & PHreg & loc16  {
+    PH = loc16;
+}
+
+# MOV PL, loc16     0010 0111 LLLL LLLL
+:MOV PLreg, loc16   is op_hi8=0x27 & PLreg & loc16  {
+    PL = loc16;
+}
+
+# MOV loc16, IER    0010 0000 LLLL LLLL
+:MOV loc16, IERreg  is op_hi8=0x20 & loc16 & IERreg  {
+    loc16 = IER;
+}
+
+# MOV IER, loc16    is 0010 1100 LLLL LLLL (load IER) -- verify hi byte
+:MOV IERreg, loc16  is op_hi8=0x2C & IERreg & loc16  {
+    IER = loc16;
+}
+
+# MOV loc16, ARn    0111 1nnn LLLL LLLL   -- store low 16 of XARn (n=0..7)
+# Top 5 bits = 01111 = 0x0F; bits 8..10 = arsel3 (attached to AR0..AR7).
+:MOV loc16, arsel3  is op_hi5=0x0F & loc16 & arsel3  {
+    loc16 = arsel3;
+}
+
+# =============================================================================
+# 8-bit immediate loads (MOVB)
+# =============================================================================
+
+# MOVB ACC, #8bit   0000 0010 CCCC CCCC   -- ACC = zero-extended 8-bit
+:MOVB ACCreg, "#"imm8  is op_hi8=0x02 & ACCreg & imm8  {
+    ACC = zext(imm8:1);
+}
+
+# MOVB AX, #8bit    1001 101A CCCC CCCC   -- AL/AH = 8-bit constant
+# Top 7 bits = 1001101 = 0x4D.
+:MOVB AX, "#"imm8   is op_hi7=0x4D & AX & imm8  {
+    AX = zext(imm8:1);
+}
+
+# =============================================================================
+# 32-bit moves (loc32)
+# =============================================================================
+
+# MOVL ACC, loc32   0000 0110 LLLL LLLL
+:MOVL ACCreg, loc32  is op_hi8=0x06 & ACCreg & loc32  {
+    ACC = loc32;
+}
+
+# MOVL loc32, ACC   0001 1110 LLLL LLLL
+:MOVL loc32, ACCreg  is op_hi8=0x1E & loc32 & ACCreg  {
+    loc32 = ACC;
+}
+
+# MOVL P, loc32     1010 0011 LLLL LLLL
+:MOVL Preg, loc32   is op_hi8=0xA3 & Preg & loc32  {
+    P = loc32;
+}
+
+# MOVL loc32, P     1010 1001 LLLL LLLL
+:MOVL loc32, Preg   is op_hi8=0xA9 & loc32 & Preg  {
+    loc32 = P;
+}
+
+# MOVL XT, loc32    1000 0111 LLLL LLLL
+:MOVL XTreg, loc32  is op_hi8=0x87 & XTreg & loc32  {
+    XT = loc32;
+}
+
+# MOVL loc32, XT    1010 1011 LLLL LLLL
+:MOVL loc32, XTreg  is op_hi8=0xAB & loc32 & XTreg  {
+    loc32 = XT;
+}
+
+# MOVL loc32, XARn  -- per-register scattered opcodes (NOT a clean bit field).
+# XAR0=3A XAR1=B2 XAR2=AA XAR3=A2 XAR4=A8 XAR5=A0 XAR6=C2 XAR7=C3
+# Register name is literal display text (quoted) so it is not parsed as an operand.
+:MOVL loc32, "XAR0"   is op_hi8=0x3A & loc32  { loc32 = XAR0; }
+:MOVL loc32, "XAR1"   is op_hi8=0xB2 & loc32  { loc32 = XAR1; }
+:MOVL loc32, "XAR2"   is op_hi8=0xAA & loc32  { loc32 = XAR2; }
+:MOVL loc32, "XAR3"   is op_hi8=0xA2 & loc32  { loc32 = XAR3; }
+:MOVL loc32, "XAR4"   is op_hi8=0xA8 & loc32  { loc32 = XAR4; }
+:MOVL loc32, "XAR5"   is op_hi8=0xA0 & loc32  { loc32 = XAR5; }
+:MOVL loc32, "XAR6"   is op_hi8=0xC2 & loc32  { loc32 = XAR6; }
+:MOVL loc32, "XAR7"   is op_hi8=0xC3 & loc32  { loc32 = XAR7; }
+
+# =============================================================================
+# MOVW DP, #16bit   0111 0110 0001 1111 : iiii iiii iiii iiii   (2-word)
+# Loads the full 16-bit data-page pointer. The most common instruction in DIR.
+# =============================================================================
+:MOVW "DP", "#"imm16  is op16=0x761F ; imm16  {
+    DP = imm16:2;
+}

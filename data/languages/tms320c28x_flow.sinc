@@ -1,0 +1,119 @@
+# C28x control flow: branches, calls, returns.
+# Included by tms320c28x.sinc. Encodings verified against ch6_instruction_detail.txt.
+#
+# Highest-priority family after MOV: without branch/call/return the linear
+# disassembler dead-ends, so implementing these is what lifts real coverage and
+# connects functions (essential for following CAN ISR / setup code).
+#
+# PC is word-addressed; branch targets are PC-relative in words. `inst_next` is the
+# address of the following instruction; `inst_start` the current one.
+
+# =============================================================================
+# COND condition codes (4-bit, SPRU430F B-instruction table). The CC subtable
+# exports a 1-byte boolean = "branch taken". Flags live in ST0 (@define'd in the
+# .slaspec): $(Z) $(N) $(C) $(V) $(TC).
+# =============================================================================
+CC: "NEQ"   is cond4=0x0 { local c:1 = ($(Z) == 0);              export c; }
+CC: "EQ"    is cond4=0x1 { local c:1 = ($(Z) != 0);              export c; }
+CC: "GT"    is cond4=0x2 { local c:1 = (($(Z)==0) && ($(N)==0)); export c; }
+CC: "GEQ"   is cond4=0x3 { local c:1 = ($(N) == 0);              export c; }
+CC: "LT"    is cond4=0x4 { local c:1 = ($(N) != 0);              export c; }
+CC: "LEQ"   is cond4=0x5 { local c:1 = (($(Z)!=0) || ($(N)!=0)); export c; }
+CC: "HI"    is cond4=0x6 { local c:1 = (($(C)!=0) && ($(Z)==0)); export c; }
+CC: "HIS"   is cond4=0x7 { local c:1 = ($(C) != 0);              export c; }
+CC: "LO"    is cond4=0x8 { local c:1 = ($(C) == 0);              export c; }
+CC: "LOS"   is cond4=0x9 { local c:1 = (($(C)==0) || ($(Z)!=0)); export c; }
+CC: "NOV"   is cond4=0xa { local c:1 = ($(V) == 0);              export c; }
+CC: "OV"    is cond4=0xb { local c:1 = ($(V) != 0);              export c; }
+CC: "NTC"   is cond4=0xc { local c:1 = ($(TC) == 0);             export c; }
+CC: "TC"    is cond4=0xd { local c:1 = ($(TC) != 0);             export c; }
+CC: "NBIO"  is cond4=0xe { local c:1 = 0:1;                      export c; } # BIO not modeled
+CC: "UNC"   is cond4=0xf { local c:1 = 1:1;                      export c; } # unconditional
+
+# Parallel condition subtable for SB, where COND occupies bits 8..11 (cond4hi).
+CC8: "NEQ"  is cond4hi=0x0 { local c:1 = ($(Z) == 0);              export c; }
+CC8: "EQ"   is cond4hi=0x1 { local c:1 = ($(Z) != 0);              export c; }
+CC8: "GT"   is cond4hi=0x2 { local c:1 = (($(Z)==0) && ($(N)==0)); export c; }
+CC8: "GEQ"  is cond4hi=0x3 { local c:1 = ($(N) == 0);              export c; }
+CC8: "LT"   is cond4hi=0x4 { local c:1 = ($(N) != 0);              export c; }
+CC8: "LEQ"  is cond4hi=0x5 { local c:1 = (($(Z)!=0) || ($(N)!=0)); export c; }
+CC8: "HI"   is cond4hi=0x6 { local c:1 = (($(C)!=0) && ($(Z)==0)); export c; }
+CC8: "HIS"  is cond4hi=0x7 { local c:1 = ($(C) != 0);              export c; }
+CC8: "LO"   is cond4hi=0x8 { local c:1 = ($(C) == 0);              export c; }
+CC8: "LOS"  is cond4hi=0x9 { local c:1 = (($(C)==0) || ($(Z)!=0)); export c; }
+CC8: "NOV"  is cond4hi=0xa { local c:1 = ($(V) == 0);              export c; }
+CC8: "OV"   is cond4hi=0xb { local c:1 = ($(V) != 0);              export c; }
+CC8: "NTC"  is cond4hi=0xc { local c:1 = ($(TC) == 0);             export c; }
+CC8: "TC"   is cond4hi=0xd { local c:1 = ($(TC) != 0);             export c; }
+CC8: "NBIO" is cond4hi=0xe { local c:1 = 0:1;                      export c; }
+CC8: "UNC"  is cond4hi=0xf { local c:1 = 1:1;                      export c; }
+
+# =============================================================================
+# Branch targets
+# =============================================================================
+# PC-relative branch targets. The destination is a CODE address = address-of-this-
+# instruction + signed offset (in words). Computed in the disassembly action and
+# exported as a constant address via the special `*[ram]` form so goto/call can
+# use it and Ghidra shows/follows the absolute target.
+rel16dest: reloc  is simm16  [ reloc = inst_start + simm16; ] { export *[ram]:4 reloc; }
+rel8dest:  reloc  is simm8   [ reloc = inst_start + simm8;  ] { export *[ram]:4 reloc; }
+
+# =============================================================================
+# Conditional branches
+# =============================================================================
+# B 16bitOffset,COND   1111 1111 1110 COND : CCCC CCCC CCCC CCCC
+:B rel16dest,CC  is op_hi8=0xFF & op_lo_hi4=0b1110 & cond4 & CC; simm16 & rel16dest {
+    if (CC) goto rel16dest;
+}
+
+# SB 8bitOffset,COND   0110 COND CCCC CCCC   (single word, 8-bit signed offset).
+# COND is in bits 8..11 here, so use the parallel CC8 subtable keyed on cond4hi.
+:SB rel8dest,CC8  is sb_grp=0b0110 & cond4hi & CC8 & rel8dest & simm8 {
+    if (CC8) goto rel8dest;
+}
+
+# BANZ 16bitOffset,ARn--   0000 0000 0000 1nnn : CCCC CCCC CCCC CCCC
+# Branch if AR(n) != 0, then post-decrement AR(n).  Bits 7..3 of low byte = 00001.
+:BANZ rel16dest,banz_n^"--"  is op_hi8=0x00 & op_lo_hi5=0b00001 & banz_n; simm16 & rel16dest {
+    local taken:1 = (banz_n != 0);
+    banz_n = banz_n - 1;
+    if (taken) goto rel16dest;
+}
+
+# =============================================================================
+# Long / indirect calls and returns
+# =============================================================================
+# LCR #22bit          0111 0110 01CC CCCC : CCCC CCCC CCCC CCCC  (call using RPC)
+:LCR rel16dest  is op_hi8=0x76 & op_lo_76=0b01; simm16 & rel16dest {
+    # push return addr into RPC chain; model as a call.
+    RPC = inst_next;
+    call rel16dest;
+}
+
+# LCR *XARn           0011 1110 0110 0RRR  (indirect call using RPC)
+:LCR "*"loc_areg  is op_hi8=0x3E & op_lo_35=0b01100 & loc_areg {
+    RPC = inst_next;
+    call [loc_areg];
+}
+
+# LRETR               0000 0000 0000 0110   (long return using RPC)
+:LRETR  is op16=0x0006 {
+    return [RPC];
+}
+
+# LRET                0111 0110 0001 0100
+:LRET   is op16=0x7614 {
+    # 22-bit return address was pushed as two words; pop the 32-bit value off SP.
+    SP = SP - 2;
+    local addr:4 = zext(SP);
+    local t:4 = *[ram]:4 addr;
+    return [t];
+}
+
+# IRET                0111 0110 0000 0010   (interrupt return)
+:IRET   is op16=0x7602 {
+    SP = SP - 2;
+    local addr:4 = zext(SP);
+    local t:4 = *[ram]:4 addr;
+    return [t];
+}

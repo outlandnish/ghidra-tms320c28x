@@ -1,0 +1,61 @@
+# C28x FPU (F2837x) instructions -- DECODE-ONLY.
+# Included by tms320c28x.sinc. Encodings verified against docs/c28x/fpu_instructions.txt
+# (spruhs1c ch.1). Confirmed used in DIR (~281 ext-ISA words).
+#
+# SCOPE: decode-only. These disassemble (so the linear sweep doesn't dead-end in
+# FP-heavy code) but carry NO floating-point semantics -- modeling IEEE-754 math in
+# p-code adds nothing for CAN RE and risks wrong decompilation. Register-register
+# forms get a trivial assignment so Ghidra tracks the dest as written; memory forms
+# are pure decode.
+#
+# FPU instructions are 32-bit: LSW (low word, lower address) + MSW. The LSW is the
+# opcode; for reg-reg forms the MSW holds the register fields aaa/bbb/ccc.
+
+# --- MSW register fields (second 16-bit word) --------------------------------
+define token fpu_msw (16)
+    f_ra   = (0,2)     # aaa  destination RaH
+    f_rb   = (3,5)     # bbb  source RbH
+    f_rc   = (6,8)     # ccc  source RcH
+    f_msw_hi = (9,15)
+;
+attach variables [ f_ra f_rb f_rc ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
+
+# =============================================================================
+# Register-register 3-operand FP ops:  LSW fixed, MSW = 0000 000c ccbb baaa
+# Decode-only: mark dest as written (so data flow shows) without real FP math.
+# =============================================================================
+:ADDF32 f_ra, f_rb, f_rc  is op16=0xE710; f_rc & f_rb & f_ra { f_ra = f_rb; }
+:SUBF32 f_ra, f_rb, f_rc  is op16=0xE720; f_rc & f_rb & f_ra { f_ra = f_rb; }
+:MPYF32 f_ra, f_rb, f_rc  is op16=0xE700; f_rc & f_rb & f_ra { f_ra = f_rb; }
+
+# =============================================================================
+# Register-register 2-operand ops:  MSW = 0000 0000 00bb baaa
+# =============================================================================
+:ABSF32 f_ra, f_rb     is op16=0xE695; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb; }
+:CMPF32 f_ra, f_rb     is op16=0xE694; f_rb & f_ra & f_msw_hi=0 { }
+:MAXF32 f_ra, f_rb     is op16=0xE696; f_rb & f_ra & f_msw_hi=0 { }
+:MINF32 f_ra, f_rb     is op16=0xE697; f_rb & f_ra & f_msw_hi=0 { }
+:EINVF32 f_ra, f_rb    is op16=0xE693; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb; }
+:EISQRTF32 f_ra, f_rb  is op16=0xE692; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb; }
+:FRACF32 f_ra, f_rb    is op16=0xE6F1; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb; }
+
+# Conversions (reg-reg).  LSW fixed; MSW reg fields.
+:F32TOI32 f_ra, f_rb   is op16=0xE688; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb; }
+:F32TOUI32 f_ra, f_rb  is op16=0xE68A; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb; }
+:I32TOF32 f_ra, f_rb   is op16=0xE689; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb; }
+:UI32TOF32 f_ra, f_rb  is op16=0xE68B; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb; }
+:I16TOF32 f_ra, f_rb   is op16=0xE68D; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb; }
+:UI16TOF32 f_ra, f_rb  is op16=0xE68F; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb; }
+
+# NOTE: register<->memory FP moves (MOV32 RaH,mem32 etc., LSW 1110 0010 ....) encode
+# the FP register inside the LSW and use the loc32 addressing field. Deferred -- they
+# need dedicated LSW register-field analysis; the reg-reg ops above cover the bulk of
+# the verified-present FPU usage. (TODO when extending FPU coverage.)
+
+# =============================================================================
+# Stack / control
+# =============================================================================
+:PUSH "RB"   is op16=0xFFF0 { }
+:POP "RB"    is op16=0xFFF1 { }
+:RESTORE     is op16=0xE562 { }
+:ZEROA       is op16=0xE563 { R0H=0; R1H=0; R2H=0; R3H=0; R4H=0; R5H=0; R6H=0; R7H=0; }

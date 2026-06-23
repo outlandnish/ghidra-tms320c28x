@@ -1,0 +1,681 @@
+www.ti.com                                                                                                                     Register Set
+
+                                       Table 5-4. 28x CPU Register Summary
+ Register             C28x CPU     C28x+FPU        C28x+VCU          C28x+FPU+VCU          Description
+ ACC                     Yes         Yes                Yes                 Yes            Fixed-point accumulator
+ AH                      Yes         Yes                Yes                 Yes            High half of ACC
+ AL                      Yes         Yes                Yes                 Yes            Low half of ACC
+ XAR0 - XAR7             Yes         Yes                Yes                 Yes            Auxiliary register 0 - 7
+ AR0 - AR7               Yes         Yes                Yes                 Yes            Low half of XAR0 - XAR7
+ DP                      Yes         Yes                Yes                 Yes            Data-page pointer
+ IFR                     Yes         Yes                Yes                 Yes            Interrupt flag register
+ IER                     Yes         Yes                Yes                 Yes            Interrupt enable register
+ DBGIER                  Yes         Yes                Yes                 Yes            Debug interrupt enable register
+ P                       Yes         Yes                Yes                 Yes            Fixed-point product register
+ PH                      Yes         Yes                Yes                 Yes            High half of P
+ PL                      Yes         Yes                Yes                 Yes            Low half of P
+ PC                      Yes         Yes                Yes                 Yes            Program counter
+ RPC                     Yes         Yes                Yes                 Yes            Return program counter
+ SP                      Yes         Yes                Yes                 Yes            Stack pointer
+ ST0                     Yes         Yes                Yes                 Yes            Status register 0
+ ST1                     Yes         Yes                Yes                 Yes            Status register 1
+ XT                      Yes         Yes                Yes                 Yes            Fixed-point multiplicand register
+ T                       Yes         Yes                Yes                 Yes            High half of XT
+ TL                      Yes         Yes                Yes                 Yes            Low half of XT
+ ROH - R7H               No          Yes                No                  Yes            Floating-point Unit result registers
+ STF                     No          Yes                No                  Yes            Floating-point Uint status register
+ RB                      No          Yes                Yes                 Yes            Repeat block register
+ VR0 - VR8               No           No                Yes                 Yes            VCU general purpose registers
+ VT0, VT1                No           No                Yes                 Yes            VCU transition bit register 0 and 1
+ VSTATUS                 No           No                Yes                 Yes            VCU status and configuration
+ VCRC                    No           No                Yes                 Yes            CRC result register
+ VSM0-VSM63              No           No              Yes (1)              Yes (1)         Viterbi State Metric Registers
+                                                            (1)                  (1)
+ VRx.By                  No           No              Yes                  Yes             Aliased address space for each byte of the
+ x=0–7                                                                                     VRx registers, left-shifted by one
+ y=0–3
+(1)
+      Present on Type-2 VCU only
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                            C28 Viterbi, Complex Math and CRC Unit-II (VCU-II)           515
+Submit Documentation Feedback
+                                       Copyright © 2014–2019, Texas Instruments Incorporated
+Register Set                                                                                                                                         www.ti.com
+
+5.3.2 VCU Status Register (VSTATUS)
+             The VCU status register (VSTATUS) register is described in Figure 5-3. There is no single instruction to
+             directly transfer the VSTATUS register to a C28x register. To transfer the contents:
+             1. Store VSTATUS into memory using VMOV32 mem32, VSTATUS instruction
+             2. Load the value from memory into a main C28x CPU register.
+             Configuration bits within the VSTATUS registers are set or cleared using VCU instructions.
+
+                                                          Figure 5-3. VCU Status Register (VSTATUS)
+            31                     30    29                 27       26                  24       23                                                        16
+      CRCMSGFLIP               DIVE                K                       GFORDER                                          GFPOLY
+        R/W-0                R/W-0               R/W-7                       R/W-7
+
+      15          14               13    12       11        10        9                                      5        4                                      0
+ OPACK        CPACK            OVRI     OVFR     RND       SAT                        SHIFTL                                          SHIFTR
+  R/W-0          R/W-0       R/W-0      R/W-0    R/W-0    R/W-0                        R/W-0                                           R/W-0
+ LEGEND: R/W = Read/Write; R = Read only; -n = value after reset
+
+
+                                               Table 5-5. VCU Status (VSTATUS) Register Field Descriptions
+      Bits              Field           Value                                                      Description
+       31         CRCMSGFL                        CRC Message Flip
+                     IP (1)                       This bit affects the order in which the bits in the message are taken for CRC calculation by all the CRC
+                                                  instructions.
+                                          0       Message bits are taken starting from most-significant to least-significant for CRC computation. In this
+                                                  case, bytes loaded from memory are fed directly for CRC computation.
+                                          1       Message bits are taken starting from least-significant to most-significant for CRC computation. In this
+                                                  case, bytes loaded from memory are “flipped” and then fed for CRC computation.
+       30              DIVE (1)                   Divide-by-zero Error
+                                          0       Indicates whether a “divide by zero” occurred during a VMOD32 computation. This bit is cleared by
+                                                  executing the VCLRDIVE instruction
+                                          1
+                             (1)
+      29-27              K                        Constraint Length for Viterbi Decoding
+                                         0x7      This field sets the constraint length for the Viterbi decoding algorithm. It accepts values of 4 to 7.
+                                                  Values outside this range will be treated as 7 by the hardware.
+                                          1
+      26-24        GFORDER (                      Galois Field Polynomial Order
+                          1)
+                                         0x7      This field holds the Order of the polynomial for all the Galois Field instructions. This field is initialized
+                                                  by the VGFINIT mem16 instruction. The actual order of the polynomial is GFORDER+1
+
+      23-16        GFPOLY (1)                     Galois Field Polynomial
+                                          0       This field holds the Polynomial for all the Galois Field instructions. This field is initialized by the
+                                                  VGFINIT mem16 instruction.
+                                          1
+       15          OPACK (1)                      Viterbi Traceback Packing Order
+                                                  This bit affects the packing order of the traceback output bits (using the VTRACE instructions)
+                                          0       Big-endian (compatible with VCU Type-0 output packing order)
+                                          1       Little-endian (VCU Type-2 mode)
+       14          CPACK (1)                      Complex Packing Order
+                                                  This bit affects the packing order of the 16-bit real and 16-bit imaginary part of a complex numbers
+                                                  inside the 32-bit general purpose VRx register.
+                                          0       VRx[31:16] holds Real part, VRx[15:0] holds Imaginary part (VCU-I compatible mode)
+                                          1       VRx[31:16] holds Imaginary part; VRx[15:0] holds Real part
+
+
+
+
+(1)
+       Present on Type-2 VCU only.
+
+516          C28 Viterbi, Complex Math and CRC Unit-II (VCU-II)                                        SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                                        Submit Documentation Feedback
+                                                          Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                                                                                                   Register Set
+
+                            Table 5-5. VCU Status (VSTATUS) Register Field Descriptions (continued)
+   Bits             Field        Value                                                        Description
+   13               OVRI                      Overflow or Underflow Flag: Imaginary Part
+                                    0         No overflow or underflow has been detected.
+                                    1         Indicates an overflow or underflow has occurred during the computation of the imaginary part of
+                                              operations shown in Table 10-6 . This bit will be set regardless of the value of the VSTATUS[SAT]
+                                              bit.OVRI bit will remain set until it is cleared by executing the VCLROVFI instruction.
+   12               OVFR                      Overflow or Underflow Flag: Real Part
+                                    0         No overflow or underflow has been detected.
+                                    1         Indicates overflow or underflow has occurred during a real number calculation for operations shown in
+                                              Table 5-6. This bit will be set regardless of the value of the VSTATUS[SAT] bit. This bit will remain set
+                                              until it is cleared by executing the VCLROVFR instruction.
+   11               RND                       Rounding
+                                              When a right-shift operation is performed the lower bits of the value will be lost. The RND bit
+                                              determines if the shifted value is rounded or if the shifted-out bits are simply truncated. This is
+                                              described in Section 5.3.2. Operations which use right-shift and rounding are shown in Table 5-6.
+                                              The RND bit is set by the VRNDON instruction and cleared by the VRNDOFF instruction.
+                                    0         Rounding is not performed. Bits shifted out right are truncated.
+                                    1         Rounding is performed. Refer to the instruction descriptions for information on how the operation is
+                                              affected by the RND bit.
+   10               SAT                       Saturation
+                                              This bit determines whether saturation will be performed for operations shown in Table 5-6.
+                                              The SAT bit is set by the VSATON instruction and is cleared by the VSATOFF instruction.
+                                    0         No saturation is performed.
+                                    1         Saturation is performed.
+   9-5            SHIFTL                      Left Shift
+                                              Operations which use left-shift are shown in Table 5-6
+                                              The shift SHIFTL field can be set or cleared by the VSETSHL instruction.
+                                    0         No left shift.
+                                0x01 -        Refer to the instruction description for information on how the operation is affected by the shift value.
+                                 0x1F         During the left-shift, the lower bits are filled with 0's.
+   4-0            SHIFTR                      Right Shift
+                                              Operations which use right-shift and rounding are shown in Table 5-6.
+                                              The shift SHIFTR field can be set or cleared by the VSETSHR instruction.
+                                    0         No right shift.
+                                0x01 -        Refer to the instruction descriptions for information on how the operation is affected by the shift value.
+                                 0x1F         During the right-shift, the lower bits are lost, and the shifted value is sign extended. If rounding is
+                                              enabled (VSTATUS[RND] == 1) , then the value will be rounded instead of truncated.
+
+          Table 5-6 shows a summary of the operations that are affected by or modify bits in the VSTATUS register.
+
+                                                 Table 5-6. Operation Interaction With VSTATUS Bits
+           Operation (1)                Description            OVFI   OVFR        RND        SAT       SHIFTL    SHIFTR    CPACK      OPACK       DIVE
+           VITDLADDSUB          Viterbi Add and Subtract        -        Y          -          Y          -        -          -          -          -
+                                Low
+           VITDHADDSUB          Viterbi Add and Subtract        -        Y          -          Y          -        -          -          -          -
+                                High
+           VITDLSUBADD          Viterbi Subtract and Add        -        Y          -          Y          -        -          -          -          -
+                                Low
+           VITDHSUBADD          Viterbi Subtract and Add        -        Y          -          Y          -        -          -          -          -
+                                High
+           VITBM2               Viterbi Branch Metric CR        -        Y          -          Y          -        -          -          -          -
+                                1/2
+           VITBM3               Viterbi Branch Metric CR        -        Y          -          Y          -        -          -          -          -
+                                1/3
+           VTRACE (2)           Viterbi Trace-back              -        -          -          -          -        -          -          Y          -
+
+          (1)
+                Some parallel instructions also include these operations. In this case, the operation will also modify, or be affected by, VSTATUS
+                bits as when used as part of a parallel instruction.
+          (2)
+                Present on Type-2 VCU only.
+
+SPRUHS1C – October 2014 – Revised November 2019                                                C28 Viterbi, Complex Math and CRC Unit-II (VCU-II) 517
+Submit Documentation Feedback
+                                                       Copyright © 2014–2019, Texas Instruments Incorporated
+Register Set                                                                                                                         www.ti.com
+
+
+                                Table 5-6. Operation Interaction With VSTATUS Bits (continued)
+                    (1)
+       Operation                 Description             OVFI      OVFR        RND        SAT       SHIFTL   SHIFTR   CPACK   OPACK      DIVE
+       VITSTAGE (2)       Viterbi Compute 32               -         Y           -          Y          -       -        -        -        -
+                          Butterfly
+       VCADD              Complex 32 + 32 = 32            Y          Y          Y           Y          -       Y        -        -        -
+       VCDADD16           Complex 16 + 32 = 32            Y          Y          Y           Y          Y       Y        -        -        -
+       VCDSUB16           Complex 16 - 32 = 32            Y          Y          Y           Y          Y       Y        -        -        -
+       VCMAC              Complex 32 + 32 = 32,           Y          Y          Y           Y          -       Y        -        -        -
+                          16 x 16 = 32
+       VCCMAC (2)         Complex Conjugate 32 +          Y          Y          Y           Y          -       Y        Y        -        -
+                          32 = 32,
+                          16 x 16 = 32
+       VCMPY              Complex 16 x 16 = 32            Y          Y           -          Y          -       -        Y        -        -
+       VCCMPY (2)         Complex Conjugate 16 x          Y          Y           -          Y          -       -        Y        -        -
+                          16 = 32
+       VCSUB              Complex 32 - 32 = 32            Y          Y          Y           Y          -       Y        -        -        -
+       VCCON (2)          Complex Conjugate               Y           -          -          Y          -       -        Y        -        -
+       VCSHL16 (2)        Complex Shift Left              Y          Y           -          Y          -       -        Y        -        -
+       VCHR16 (2)         Complex Shift Right              -          -         Y           -          -       -        -        -        -
+       VCMAG (2)          Complex Number                   -         Y          Y           Y          -       -        -        -        -
+                          Magnitude
+       VNEG               Two’s Complement                 -         Y           -          Y          -       -        -        -        -
+                          Negation
+       VASHR32 (2)        Arithmetic Shift Right           -          -         Y           -          -       -        -        -        -
+       VASHL32 (2)        Arithmetic Shift Left            -         Y           -          Y          -       -        -        -        -
+       VMPYADD (2)        Arithmetic Multiply Add          -         Y          Y           Y          -       Y        -        -        -
+                          16 + ((16 x 16) >> SHR)
+                          = 16
+       VCFFTx (2)         Complex FFT calculation         Y          Y          Y           Y          -       Y        -        -        -
+                          step
+                          (x = 1 – 10)
+       VMOD32             Modulo 32 % 16 = 16              -          -          -          -          -       -        -        -        Y
+
+
+
+
+518    C28 Viterbi, Complex Math and CRC Unit-II (VCU-II)                                       SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                                 Submit Documentation Feedback
+                                                    Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                                                                                        Register Set
+
+5.3.3 Repeat Block Register (RB)
+          The repeat block instruction (RPTB) applies to devices with the C28x+FPU and the C28x+VCU. This
+          instruction allows you to repeat a block of code as shown in Example 5-1.
+
+Example 5-1. The Repeat Block (RPTB) Instruction uses the RB Register
+
+ ; find the largest element and put its address in XAR6
+ ;
+ ; This example makes use of floating-point (C28x + FPU) instructions
+ ;
+ ;
+     MOV32 R0H, *XAR0++;
+     .align 2                 ; Aligns the next instruction to an even address
+     NOP                      ; Makes RPTB odd aligned - required for a block size of 8
+     RPTB VECTOR_MAX_END, AR7 ; RA is set to 1
+     MOVL ACC,XAR0
+     MOV32 R1H,*XAR0++        ; RSIZE reflects the size of the RPTB block
+     MAXF32 R0H,R1H           ; in this case the block size is 8
+     MOVST0 NF,ZF
+     MOVL XAR6,ACC,LT
+ VECTOR_MAX_END:              ; RE indicates the end address. RA is cleared
+
+
+          The C28x FPU or VCU automatically populates the RB register based on the execution of a RPTB
+          instruction. This register is not normally read by the application and does not accept debugger writes.
+
+                                                   Figure 5-4. Repeat Block Register (RB)
+  31        30          29                                                   23       22                                                    16
+ RAS        RA                                 RSIZE                                                           RE
+  R-0       R-0                                 R-0                                                            R-0
+
+  15                                                                                                                                        0
+                                                                       RC
+                                                                       R-0
+LEGEND: R = Read only; -n = value after reset
+
+
+                                      Table 5-7. Repeat Block (RB) Register Field Descriptions
+   Bits           Field       Value                                                   Description
+   31             RAS                  Repeat Block Active Shadow Bit
+                                       When an interrupt occurs the repeat active, RA, bit is copied to the RAS bit and the RA bit is cleared.
+                                       When an interrupt return instruction occurs, the RAS bit is copied to the RA bit and RAS is cleared.
+                                0      A repeat block was not active when the interrupt was taken.
+                                1      A repeat block was active when the interrupt was taken.
+   30              RA                  Repeat Block Active Bit
+                                0      This bit is cleared when the repeat counter, RC, reaches zero.
+                                       When an interrupt occurs the RA bit is copied to the repeat active shadow, RAS, bit and RA is cleared.
+                                       When an interrupt return, IRET, instruction is executed, the RAS bit is copied to the RA bit and RAS is
+                                       cleared.
+                                1      This bit is set when the RPTB instruction is executed to indicate that a RPTB is currently active.
+  29-23           RSIZE                Repeat Block Size
+                                       This 7-bit value specifies the number of 16-bit words within the repeat block. This field is initialized
+                                       when the RPTB instruction is executed. The value is calculated by the assembler and inserted into the
+                                       RPTB instruction's RSIZE opcode field.
+                               0-7     Illegal block size.
+                             8/9-0x7F A RPTB block that starts at an even address must include at least 9 16-bit words and a block that
+                                      starts at an odd address must include at least 8 16-bit words. The maximum block size is 127 16-bit
+                                      words. The codegen assembler will check for proper block size and alignment.
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                    C28 Viterbi, Complex Math and CRC Unit-II (VCU-II)           519
+Submit Documentation Feedback
+                                               Copyright © 2014–2019, Texas Instruments Incorporated
+Register Set                                                                                                                         www.ti.com
+
+
+                         Table 5-7. Repeat Block (RB) Register Field Descriptions (continued)
+   Bits          Field       Value                                                   Description
+  22-16           RE                  Repeat Block End Address
+                                      This 7-bit value specifies the end address location of the repeat block. The RE value is calculated by
+                                      hardware based on the RSIZE field and the PC value when the RPTB instruction is executed.
+                                      RE = lower 7 bits of (PC + 1 + RSIZE)
+  15-0            RC                  Repeat Count
+                               0      The block will not be repeated; it will be executed only once. In this case the repeat active, RA, bit will
+                                      not be set.
+                              1-      This 16-bit value determines how many times the block will repeat. The counter is initialized when the
+                            0xFFFF    RPTB instruction is executed and is decremented when the PC reaches the end of the block. When
+                                      the counter reaches zero, the repeat active bit is cleared and the block will be executed one more
+                                      time. Therefore the total number of times the block is executed is RC+1.
+
+
+
+
+520       C28 Viterbi, Complex Math and CRC Unit-II (VCU-II)                              SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                           Submit Documentation Feedback
+                                              Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                                                                                      Pipeline
+
+5.4    Pipeline
+       This section describes the VCU pipeline stages and presents cases where pipeline alignment must be
+       considered.
+
+5.4.1 Pipeline Overview
+       The C28x VCU pipeline is identical to the C28x pipeline for all standard C28x instructions. In the decode2
+       stage (D2), it is determined if an instruction is a C28x instruction, a FPU instruction, or a VCU instruction.
+       The pipeline flow is shown in Figure 5-5.
+       Notice that stalls due to normal C28x pipeline stalls (D2) and memory waitstates (R2 and W) will also stall
+       any C28x VCU instruction. Most C28x VCU instructions are single cycle and will complete in the VCU E1
+       or W stage which aligns to the C28x pipeline. Some instructions will take an additional execute cycle (E2).
+       For these instructions you must wait a cycle for the result from the instruction to be available. The rest of
+       this section will describe when delay cycles are required. Keep in mind that the assembly tools for the
+       C28x+VCU will issue an error if a delay slot has not been handled correctly.
+
+                                       Figure 5-5. C28x + FCU + VCU Pipeline
+                                   Fetch                     Decode                    Read            Exe        Write
+             C28x pipeline    F1            F2          D1            D2          R1           R2        E          W
+
+
+
+
+                                                 FPU instruction                                                   E2
+                                                                                  D            R        E1
+                                                                                                                   W
+
+
+
+
+                                                 VCU instruction                                                   E2
+                                                                                  D            R        E1
+                                                                                                                   W
+
+                                                                                  Load
+                                                                                  Store
+                                                 Complex ADD/SUB Viterbi ADDSUB/SUBADD
+                                                           FPU ADD/SUB/MPY, Complex MPY
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                                C28 Viterbi, Complex Math and CRC Unit-II (VCU-II)   521
+Submit Documentation Feedback
+                                           Copyright © 2014–2019, Texas Instruments Incorporated
+Pipeline                                                                                                                           www.ti.com
+
+5.4.2 General Guidelines for VCU Pipeline Alignment
+        The majority of the VCU instructions do not require any special pipeline considerations. This section lists
+        the few operations that do require special consideration.
+        While the C28x+VCU assembler will issue errors for pipeline conflicts, you may still find it useful to
+        understand when software delays are required. This section describes three guidelines you can follow
+        when writing C28x+VCU assembly code.
+        VCU instructions that require delay slots have a 'p' after their cycle count. For example '2p' stands for 2
+        pipelined cycles. This means that an instruction can be started every cycle, but the result of the instruction
+        will only be valid one instruction later.
+        Table 5-8 outlines the instructions that need delay slots.
+
+                                             Table 5-8. Operations Requiring a Delay Slot(s)
+                                     (1)
+                         Operation                                     Description                                    Cycles
+                            VITBM3                     Viterbi Branch Metric CR 1/3                                   2p/2 (2)
+                            VCMAC                      Complex 32 + 32 = 32,                                            2p
+                                                       16 x 16 = 32
+                          VCCMAC (3)                   Complex Conjugate 32 + 32 = 32,                                  2p
+                                                       16 x 16 = 32
+                            VCMPY                      Complex 16 x 16 = 32                                             2p
+                          VCCMPY (3)                   Complex Conjugate 16 x 16 = 32                                   2p
+                                   (3)
+                           VCMAG                       Complex Number Magnitude                                          2
+                          VCFFTx (3)                   Complex FFT calculation step (x = 1 – 10)                      2p/2 (2)
+                           VMOD32                      Modulo 32 % 16 = 16                                              9p
+                         VMPYADD (3)                   Arithmetic Multiply Add                                          2p
+                                                       16 + ((16 x 16) >> SHR) = 16
+        (1)
+              Some parallel instructions also include these operations. In this case, the operation will also modify, or be affected by, VSTATUS
+              bits as when used as part of a parallel instruction.
+        (2)
+              Variations of the instruction execute differently. In these cases, the user is referred to the description Example 5-2 of the
+              instruction(s) in Section 5.5.
+        (3)
+              Present on Type-2 VCU only.
+
+        An example of the complex multiply instruction is shown in Example 5-2. VCMPY is a 2p instruction and
+        therefore requires one delay slot. The destination registers for the operation, VR2 and VR3, will be
+        updated one cycle after the instruction for a total of two cycles. Therefore, a NOP or instruction that does
+        not use VR2 or VR3 must follow this instruction.
+        Any memory stall or pipeline stall will also stall the VCU. This keeps the VCU aligned with the C28x
+        pipeline and there is no need to change the code based on the waitstates of a memory block.
+
+Example 5-2. 2p Instruction Pipeline Alignment
+
+
+ VCMPY VR3, VR2, VR1, VR0                     ; 2 pipeline cycles (2p)
+    NOP                                       ; 1 cycle delay or non-conflicting instruction
+                                              ; <-- VCMPY completes, VR2 and VR3 updated
+      NOP                                     ; Any instruction
+
+
+
+
+522     C28 Viterbi, Complex Math and CRC Unit-II (VCU-II)                                 SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                            Submit Documentation Feedback
+                                               Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                                                                                    Pipeline
+
+5.4.3 Parallel Instructions
+       Parallel instructions are single opcodes that perform two operations in parallel. The guidelines provided in
+       Section 5.4.2 apply to parallel instructions as well. In this case the cycle count will be given for both
+       operations. For example, a branch metric calculation for code rate of 1/3 with a parallel load takes 2p/1
+       cycles. This means the branch metric portion of the operation takes two pipelined cycles while the move
+       portion of the operation is single cycle. NOPs or other non conflicting instructions must be inserted to align
+       the branch metric calculation portion of the operation as shown in Example 5-4.
+
+Example 5-3. Branch Metric CR 1/2 Calculation with Parallel Load
+
+
+ ;   VITBM2 || VMOV32 instruction: branch metrics calculation with parallel load
+ ;   VBITM2 is a 1 cycle operation (code rate = 1/2)
+ ;   VMOV32 is a 1 cycle operation
+ ;
+    VITBM2     VR0                     ; Load VR0 with the 2 branch metrics
+ || VMOV32     VR2,     @Val           ; VR2 gets the contents of Val
+                                       ; <-- VMOV32 completes here (VR2 is valid)
+                                       ; <-- VITBM2 completes here (VR0 is valid)
+     <instruction 2>                   ; Any instruction, can use VR2 and/or VR0
+
+
+
+Example 5-4. Branch Metric CR 1/3 Calculation with Parallel Load
+
+
+ ;   VITBM3 || VMOV32 instruction: branch metrics calculation with parallel load
+ ;   VBITM3 is a 2p cycle operation (code rate = 1/3)
+ ;   VMOV32 is a 1 cycle operation
+ ;
+    VITBM3     VR0, VR1, VR2           ; Load VR0 and VR1 with the 4 branch metrics
+ || VMOV32     VR2, @Val               ; VR2 gets the contents of Val
+                                       ; <-- VMOV32 completes here (VR2 is valid)
+     <instruciton 2>                   ; Must not use VR0 or VR1. Can use VR2.
+                                       ; <-- VITBM3 completes here (VR0, VR1 are valid)
+     <instruction 3>                   ; Any instruction, can use VR2 and/or VR0
+
+
+
+
+5.4.4 Invalid Delay Instructions
+       All VCU, FPU and fixed-point instructions can be used in VCU instruction delay slots as long as source
+       and destination register conflicts are avoided. The C28x+VCU assembler will issue an error anytime you
+       use an conflicting instruction within a delay slot. The following guidelines can be used to avoid these
+       conflicts.
+
+          NOTE:       Destination register conflicts in delay slots:
+                   Any operation used for pipeline alignment delay must not use the same destination register
+                   as the instruction requiring the delay. See Example 5-5.
+
+       In Example 5-5 the VCMPY instruction uses VR2 and VR3 as its destination registers. The next instruction
+       should not use VR2 or VR3 as a destination. Since the VMOV32 instruction uses the VR3 register a
+       pipeline conflict will be issued by the assembler. This conflict can be resolved by using a register other
+       than VR2 for the VMOV32 instruction as shown in Example 5-6.
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                              C28 Viterbi, Complex Math and CRC Unit-II (VCU-II)   523
+Submit Documentation Feedback
+                                         Copyright © 2014–2019, Texas Instruments Incorporated
+Pipeline                                                                                                                  www.ti.com
+
+
+Example 5-5. Destination Register Conflict
+
+ ; Invalid delay instruction.
+ ; Both instructions use the same destination register (VR3)
+ ;
+    VCMPY VR3, VR2, VR1, VR0     ; 2p instruction
+    VMOV32 VR3, mem32            ; Invalid delay instruction
+                                 ; <-- VCMPY completes, VR3, VR2 are valid
+
+
+
+Example 5-6. Destination Register Conflict Resolved
+
+ ; Valid delay instruction
+ ;
+    VCMPY VR3, VR2, VR1, VR0             ; 2p instruction
+    VMOV32 VR7, mem32                    ; Valid delay instruction
+
+
+
+           NOTE:     Instructions in delay slots cannot use the instruction's destination register as a
+                    source register.
+                    Any operation used for pipeline alignment delay must not use the destination register of the
+                    instruction requiring the delay as a source register as shown in Example 5-7. For parallel
+                    instructions, the current value of a register can be used in the parallel operation before it is
+                    overwritten as shown in Example 5-9.
+
+       In Example 5-7 the VCMPY instruction again uses VR3 and VR2 as its destination registers. The next
+       instruction should not use VR3 or VR2 as its source since the VCMPY will take an additional cycle to
+       complete. Since the VCADD instruction uses the VR2 as a source register a pipeline conflict will be issued
+       by the assembler. The use of VR3 will also cause a pipeline conflict. This conflict can be resolved by using
+       a register other than VR2 or VR3 or by inserting a non-conflicting instruction between the VCMPY and
+       VCADD instructions. Since the VNEG does not use VR2 or VR3 this instruction can be moved before the
+       VCADD as shown in Example 5-8.
+
+Example 5-7. Destination/Source Register Conflict
+
+ ; Invalid delay instruction.
+ ; VCADD should not use VR2 or VR3 as a source operand
+ ;
+    VCMPY VR3, VR2, VR1, VR0     ; 2p instruction
+    VCADD VR5, VR4, VR3, VR2     ; Invalid delay instruction
+    VNEG VR0                     ; <- VCMPY completes, VR3, VR2 valid
+
+
+
+Example 5-8. Destination/Source Register Conflict Resolved
+
+ ; Valid delay instruction.
+ ;
+    VCMPY VR3, VR2, VR1, VR0             ; 2p instruction
+    VNEG VR0                             ; Non conflicting instruction or NOP
+    VCADD VR5, VR4, VR3, VR2             ; <- VCMPY completes, VR3, VR2 valid
+
+
+
+
+524    C28 Viterbi, Complex Math and CRC Unit-II (VCU-II)                             SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                       Submit Documentation Feedback
+                                          Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                                                                                   Pipeline
+
+       It should be noted that a source register for the second operation within a parallel instruction can be the
+       same as the destination register of the first operation. This is because the two operations are started at
+       the same time. The second operation is not in the delay slot of the first operation. Consider Example 5-9
+       where the VCMPY uses VR3 and VR2 as its destination registers. The VMOV32 is the second operation
+       in the instruction and can freely use VR3 or VR2 as a source register. In the example, the contents of VR3
+       before the multiply will be used by MOV32.
+
+Example 5-9. Parallel Instruction Destination/Source Exception
+
+ ; Valid parallel operation.
+ ;
+    VCMPY VR3,    VR2, VR1, VR0        ; 2p/1 instruction
+ || VMOV32 mem32, VR3                  ; <-- Uses VR3 before the VCMPY update
+                                       ; <-- mem32 updated
+    NOP                                ; <-- Delay for VCMPY
+                                       ; <-- VR2, VR3 updated
+
+
+       Likewise, the source register for the second operation within a parallel instruction can be the same as one
+       of the source registers of the first operation. The VCMPY operation in Example 5-10 uses the VR0 register
+       as one of its sources. This register is also updated by the VMOV32 instruction. The multiplication
+       operation will use the value in VR0 before the VMOV32 updates it.
+
+Example 5-10. Parallel Instruction Destination/Source Exception
+
+ ; Valid parallel operation.
+    VCMPY VR3, VR2, VR1, VR0        ; 2p/1 instruction
+ || VMOV32 VR0, mem32                 ; <-- Uses VR3 before the VCMPY update
+                                      ; <-- mem32 updated
+    NOP                               ; <-- Delay for VCMPY
+                                      ; <-- VR2, VR3 updated
+
+
+
+          NOTE:     Operations within parallel instructions cannot use the same destination register.
+                   When two parallel operations have the same destination register, the result is invalid.
+                   For example, see Example 5-11.
+
+       If both operations within a parallel instruction try to update the same destination register as shown in
+       Example 5-11 the assembler will issue an error.
+
+Example 5-11. Invalid Destination Within a Parallel Instruction
+
+ ; Invalid parallel instruction. Both operations use VR3 as a destination register
+ ;
+    VCMPY VR3, VR2, VR1, VR0     ; 2p/1 instruction
+ || VMOV32 VR3, mem32            ; <-- Invalid
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                             C28 Viterbi, Complex Math and CRC Unit-II (VCU-II)   525
+Submit Documentation Feedback
+                                        Copyright © 2014–2019, Texas Instruments Incorporated
+Instruction Set                                                                                                                  www.ti.com
+
+5.5    Instruction Set
+       This section describes the assembly language instructions of the VCU. Also described are parallel
+       operations, conditional operations, resource constraints, and addressing modes. The instructions listed
+       here are independent from C28x and C28x+FPU instruction sets.
+
+5.5.1 Instruction Descriptions
+       This section gives detailed information on the instruction set. Each instruction may present the following
+       information:
+       • Operands
+       • Opcode
+       • Description
+       • Exceptions
+       • Pipeline
+       • Examples
+       • See also
+       The example INSTRUCTION is shown to familiarize you with the way each instruction is described. The
+       example describes the kind of information you will find in each part of the individual instruction description
+       and where to obtain more information. VCU instructions follow the same format as the C28x; the source
+       operand(s) are always on the right and the destination operand(s) are on the left.
+       The explanations for the syntax of the operands used in the instruction descriptions for the C28x VCU are
+       given in Table 5-9.
+
+                                                  Table 5-9. Operand Nomenclature
+        Symbol               Description
+        #16FHi               16-bit immediate (hex or float) value that represents the upper 16-bits of an IEEE 32-bit floating-point value.
+                             Lower 16-bits of the mantissa are assumed to be zero.
+        #16FHiHex            16-bit immediate hex value that represents the upper 16-bits of an IEEE 32-bit floating-point value.
+                             Lower 16-bits of the mantissa are assumed to be zero.
+        #16FLoHex            A 16-bit immediate hex value that represents the lower 16-bits of an IEEE 32-bit floating-point value
+        #32Fhex              32-bit immediate value that represents an IEEE 32-bit floating-point value
+        #32F                 Immediate float value represented in floating-point representation
+        #0.0                 Immediate zero
+        #5-bit               5-bit immediate unsigned value
+        addr                 Opcode field indicating the addressing mode
+        Im(X), Im(Y)         Imaginary part of the input X or input Y
+        Im(Z)                Imaginary part of the output Z
+        Re(X), Re(Y)         Real part of the input X or input Y
+        Re(Z)                Real part of the output Z
+        mem16                Pointer (using any of the direct or indirect addressing modes) to a 16-bit memory location
+        mem32                Pointer (using any of the direct or indirect addressing modes) to a 32-bit memory location
+        VRa                  VR0 - VR8 registers. Some instructions exclude VR8. Refer to the instruction description for details.
+        VR0H,                VR0 - VR7 registers, high half.
+        VR1H...VR7H
+        VR0L, VR1L....VR7L VR0 - VR7 registers, low half.
+        VT0, VT1             Transition bit register VT0 or VT1.
+        VSMn+1: VSMn         Pair of State Metric Registers (n = 0 : 62, n is even)
+        VRx.By               32 bit Aliased address space for each byte of the VRx registers (x=0:7,y =0:3)
+
+
+       Each instruction has a table that gives a list of the operands and a short description. Instructions always
+       have their destination operand(s) first followed by the source operand(s).
+
+
+526    C28 Viterbi, Complex Math and CRC Unit-II (VCU-II)                              SPRUHS1C – October 2014 – Revised November 2019
+                                                                                                        Submit Documentation Feedback
+                                           Copyright © 2014–2019, Texas Instruments Incorporated
+www.ti.com                                                                                                                   Instruction Set
+
+                         Table 5-10. INSTRUCTION dest, source1, source2 Short Description
+                           Description
+        dest1              Description for the 1st operand for the instruction
+        source1            Description for the 2nd operand for the instruction
+        source2            Description for the 3rd operand for the instruction
+        Opcode             This section shows the opcode for the instruction
+        Description        Detailed description of the instruction execution is described. Any constraints on the operands imposed by
+                           the processor or the assembler are discussed.
+        Restrictions       Any constraints on the operands or use of the instruction imposed by the processor are discussed.
+        Pipeline           This section describes the instruction in terms of pipeline cycles as described in Section 5.4.
+        Example            Examples of instruction execution. If applicable, register and memory values are given before and after
+                           instruction execution. Some examples are code fragments while other examples are full tasks that assume
+                           the VCU is correctly configured and the main CPU has passed it data.
+        Operands           Each instruction has a table that gives a list of the operands and a short description. Instructions always
+                           have their destination operand(s) first followed by the source operand(s).
+
+
+
+
+SPRUHS1C – October 2014 – Revised November 2019                              C28 Viterbi, Complex Math and CRC Unit-II (VCU-II)          527
+Submit Documentation Feedback
+                                         Copyright © 2014–2019, Texas Instruments Incorporated
+

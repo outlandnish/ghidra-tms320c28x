@@ -1,0 +1,1474 @@
+www.ti.com                                                                                        Addressing Modes Select Bit (AMODE)
+
+5.2    Addressing Modes Select Bit (AMODE)
+       To accommodate various types of addressing modes, an addressing mode bit (AMODE) selects the
+       decoding of the 8-bit field (loc16/loc32). This bit is found in Status Register 1 (ST1). The addressing
+       modes have been broadly classified as follows:
+       • AMODE = 0
+          This is the default mode on reset and is the mode used by the C28x C/C++ compiler. This mode is not
+          fully compatible to the C2xLP CPU addressing modes. The data page pointer offset is 6-bits (it is 7-bits
+          on the C2xLP) and not all of the indirect addressing modes are supported.
+       • AMODE = 1
+          This mode contains addressing modes that are fully compatible to the C2xLP device. The data page
+          pointer offset is increased to 7-bits and all of the indirect addressing modes available on the C2xLP are
+          supported.
+       The available addressing modes, for the ”loc16” or ”loc32” field, are summarized in Table 5-1.
+
+                                     Table 5-1. Addressing Modes for “loc16” or “loc32”
+                                AMODE = 0                                                            AMODE = 1
+                8-Bit Decode                  ”loc16/loc32” Syntax                 8-Bit Decode               ”loc16/loc32” Syntax
+        Direct Addressing Modes (DP):
+        0 0 III III                    @6bit                             0 I III III                       @@7bit
+        Stack Addressing Modes (SP):
+        0 1 III III                    *−SP[6bit]
+        1 0 111 101                    *SP++                             1 0 111 101                       *SP++
+        1 0 111 110                    *−−SP                             1 0 111 110                       *−−SP
+        C28x Indirect Addressing Modes (XAR0 to XAR7):
+        1 0 000 AAA                    *XARn++                           1 0 000 AAA                       *XARn++
+        1 0 001 AAA                    *−−XARn                           1 0 001 AAA                       *−−XARn
+        1 0 010 AAA                    *+XARn[AR0]                       1 0 010 AAA                       *+XARn[AR0]
+        1 0 011 AAA                    *+XARn[AR1]                       1 0 011 AAA                       *+XARn[AR1]
+        1 1 III AAA                    *+XARn[3bit]
+        C2xLP Indirect Addressing Modes (ARP, XAR0 to XAR7):
+        1 0 111 000                    *                                 1 0 111 000                       *
+        1 0 111 001                    *++                               1 0 111 001                       *++
+        1 0 111 010                    *−−                               1 0 111 010                       *−−
+        1 0 111 011                    *0++                              1 0 111 011                       *0++
+        1 0 111 100                    *0−−                              1 0 111 100                       *0−−
+        1 0 101 110                    *BR0++                            1 0 101 110                       *BR0++
+        1 0 101 111                    *BR0−−                            1 0 101 111                       *BR0−−
+        1 0 110 RRR                    *,ARPn                            1 0 110 RRR                       *,ARPn
+                                                                         1 1 000 RRR                       *++,ARPn
+                                                                         1 1 001 RRR                       *−−,ARPn
+                                                                         1 1 010 RRR                       *0++,ARPn
+                                                                         1 1 011 RRR                       *0−−,ARPn
+                                                                         1 1 100 RRR                       *BR0++,ARPn
+                                                                         1 1 101 RRR                       *BR0−−,ARPn
+        Circular Indirect Addressing Modes (XAR6, XAR1):
+        1 0 111 111                    *AR6%++                           1 0 111 111                       *+XAR6[AR1%++]
+        32-Bit Register Addressing Modes (XAR0 to XAR7, ACC, P, XT):
+        1 0 100 AAA                    @XARn                             1 0 100 AAA                       @XARn
+        1 0 101 001                    @ACC                              1 0 101 001                       @ACC
+        1 0 101 011                    @P                                1 0 101 011                       @P
+        1 0 101 100                    @XT                               1 0 101 100                       @XT
+        16-Bit Register Addressing Modes (AR0 to AR7, AH, AL, PH, PL, TH, SP):
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                                  C28x Addressing Modes   81
+Submit Documentation Feedback
+                                          Copyright © 2001–2015, Texas Instruments Incorporated
+Addressing Modes Select Bit (AMODE)                                                                                      www.ti.com
+
+
+                             Table 5-1. Addressing Modes for “loc16” or “loc32” (continued)
+                               AMODE = 0                                                        AMODE = 1
+              8-Bit Decode             ”loc16/loc32” Syntax                    8-Bit Decode                ”loc16/loc32” Syntax
+       1 0 100 AAA                  @ARn                             1 0 100 AAA                       @ARn
+       1 0 101 000                  @AH                              1 0 101 000                       @AH
+       1 0 101 001                  @AL                              1 0 101 001                       @AL
+       1 0 101 010                  @PH                              1 0 101 010                       @PH
+       1 0 101 011                  @PL                              1 0 101 011                       @PL
+       1 0 101 100                  @TH                              1 0 101 100                       @TH
+       1 0 101 101                  @SP                              1 0 101 101                       @SP
+
+
+      In the ”C28x Indirect” addressing modes, the auxiliary register pointer used in the addressing mode is
+      implicitly specified. In the ”C2xLP Indirect” addressing modes, a 3-bit pointer called the auxiliary register
+      pointer (ARP) is used to s lect which of the auxiliary registers is currently used and which pointer is used
+      in the next operation.
+      The examples below illustrate the differences between the ”C28x Indirect” and ”C2xLP Indirect”
+      addressing modes:
+      • ADD — AL,*XAR4++
+         Read the contents of 16-bit memory location pointed to by register XAR4, add the contents to AL
+         register. Post-increment the contents of XAR4 by 1.
+      • ADD — AL,*++
+         Assume ARP pointer in ST1 contains the value 4. Read the contents of 16-bit memory location pointed
+         to by register XAR4, add the contents to AL register. Post-increment the contents of XAR4 by 1.
+      • ADD — AL,*++,ARP5
+         Assume ARP pointer in ST1 contains the value 4. Read the contents of 16-bit memory location pointed
+         to by register XAR4, add the contents to AL register. Post-increment the contents of XAR4 by 1. Set
+         the ARP pointer to 5. Now it points to XAR5.
+      On the C28x instruction syntax, the destination operand is always on the left and the source operands are
+      always on the right.
+
+
+
+
+82    C28x Addressing Modes                                                               SPRU430F – August 2001 – Revised April 2015
+                                                                                                     Submit Documentation Feedback
+                                      Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                Assembler/Compiler Tracking of AMODE Bit
+
+5.3    Assembler/Compiler Tracking of AMODE Bit
+       The compiler will always assume the addressing mode is set to AMODE = 0 and therefore will only use
+       addressing modes that are valid for AMODE = 0. The assembler can be instructed, via the command line
+       options, to default to either AMODE = 0 or AMODE = 1. The command line options are:
+
+        –v28               Assumes AMODE = 0 (C28x addressing modes).
+        −v28 −m20          Assumes AMODE = 1 (full C2xLP compatible addressing modes.
+
+       Additionally, the assembler allows directives to be embedded within a file to instruct the assembler to
+       override the default mode and change syntax checking to the new address mode setting:
+
+        .c28_amode          Tells assembler that any code that follows assumes AMODE = 0 (C28x addressing
+                            modes).
+        .lp_amode           Tells assembler that any code that follows assumes AMODE = 1 (full C2xLP compatible
+                            addressing modes)
+
+       The above directives cannot be nested. The above directives can be used as follows within an assembly
+       program:
+       ; File assembled using "−v28" option (assume AMODE = 0):
+          .           ; This section of code can only use AMODE = 0
+                      ; addressing modes
+
+          .
+          .
+          .
+          .
+       SETC AMODE        ; Change to AMODE = 1
+       .lp_amode         ; Tell assembler to check for AMODE = 1 syntax
+          .              ; This section of code can only use AMODE = 1
+                         ; addressing modes
+           .
+           .
+           .
+           .
+
+       CLRC AMODE         ; Revert back to AMODE = 0
+       .c28_amode         ; Tell assembler to check for AMODE = 1 syntax
+          .               ; This section of code can only use AMODE = 0
+                          ; addressing modes
+          .
+          .
+          .
+          .
+       ; End of file.
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                            C28x Addressing Modes    83
+Submit Documentation Feedback
+                                          Copyright © 2001–2015, Texas Instruments Incorporated
+Direct Addressing Modes (DP)                                                                                                  www.ti.com
+
+5.4   Direct Addressing Modes (DP)
+
+       AMODE          ”loc16/loc32” Syntax      Description
+          0      @6bit                          32bitDataAddr(31:22) = 0
+                                                32bitDataAddr(21:6) = DP(15:0)
+                                                32bitDataAddr(5:0) = 6bit
+                                                Note: The 6-bit offset value is concatenated with the 16-bit DP register. The offset
+                                                value enables 0 to 63 words to be addressed relative to the current DP register value.
+
+
+       Example (s):
+               MOVW       DP,#VarA            ; Load DP pointer with page value containing VarA
+               ADD        AL,@VarA            ; Add memory location VarA to register AL
+               MOV        @VarB,AL            ; Store AL into memory location VarB
+                                              ; VarB is located in the same 64−word page as VarA
+               MOVW       DP,#VarC            ; Load DP pointer with page value containing VarC
+               SUB        AL,@VarC            ; Subtract memory location VarC from register AL
+               MOV        @VarD,AL            ; Store AL into memory location VarD
+                                              ; VarC is located in the same 64−word page as VarD
+                                              ; VarC & D are in different pages than VarA & B
+
+
+       AMODE          ”loc16/loc32” Syntax      Description
+          0      @@7bit                         32bitDataAddr(31:22) = 0
+                                                32bitDataAddr(21:7) = DP(15:1)
+                                                32bitDataAddr(6:0) = 7bit
+                                                Note: The 7-bit offset value is concatenated with the 15-bit DP register. Bit 0 of DP
+                                                register is ignored and is not affected by the operation. The offset value enables 0 to
+                                                127 words to be addressed relative to the current DP register value.
+
+
+       Example (s):
+               SETC AMODE                      ; Make sure AMODE = 1
+               .lp_amode                       ; Tell assembler that AMODE = 1
+               MOVW       DP,#VarA             ; Load DP pointer with page value containing VarA
+               ADD        AL,@@VarA            ; Add memory location VarA to register AL
+               MOV        @@VarB,AL            ; Store AL into memory location VarB
+                                               ; VarB is located in the same 128−word page as VarA
+               MOVW       DP,#VarC             ; Load DP pointer with page value containing VarC
+               SUB        AL,@@VarC            ; Subtract memory location VarC from register AL
+               MOV        @@VarD,AL            ; Store AL into memory location VarD
+                                               ; VarC is located in the same 128−word page as VarD
+                                               ; VarC & D are in different pages than VarA & B
+       Note: The direct addressing mode can access only the lower 4M of data address space on the C28x device.
+
+
+
+
+84    C28x Addressing Modes                                                                  SPRU430F – August 2001 – Revised April 2015
+                                                                                                        Submit Documentation Feedback
+                                         Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                  Stack Addressing Modes (SP)
+
+5.5    Stack Addressing Modes (SP)
+
+         AMODE           ”loc16/loc32” Syntax        Description
+             0         *-SP [6bit]                   32bitDataAddr(31:16) = 0x0000
+                                                     32bitDataAddr(15:0) = SP - 6bit
+                                                     Note: The 6-bit offset value is subtracted from the current 16-bit SP register value. The
+                                                     offset value enables 0 to 63 words to be addressed relative to the current SP register
+                                                     value.
+
+
+        Example (s):
+                  ADD          AL,*-SP[5]         ; Add 16-bit contents from stack location
+                                                  ; -5 words from top of stack to AL register
+                  MOV          *-SP[8],AL         ; Store 16-bit AL register to stack location
+                                                  ; -8 words from top of stack
+                  ADDL         ACC,*-SP[12]       ; Add 32-bit contents from stack location
+                                                  ; −12 words from top of stack to ACC register.
+                  MOVL         *-Sp[34],ACC       ; Store 32-bit ACC register to stack location
+                                                  ; -34 words from top of stack
+
+
+         AMODE           ”loc16/loc32” Syntax       Description
+             X         *SP++                        32bitDataAddr(31:16) = 0x0000
+                                                    32bitDataAddr(15:0) = SP
+                                                    if(loc16), SP = SP + 1
+                                                    if(loc32), SP = SP + 2
+
+
+        Example (s):
+                  MOV       *SP++,AL             ; Push contents of 16-bit AL register onto top
+                                                 ; of stack
+                  MOVL      *Sp++,P              ; Push contents of 32-bit P register onto top
+                                                 ; of stack
+
+
+         AMODE           ”loc16/loc32” Syntax       Description
+             X         *--SP                        if(loc16), SP = SP - 1
+                                                    if(loc32), SP = SP - 2
+                                                    32bitDataAddr(31:16) = 0x0000
+                                                    32bitDataAddr(15:0) = SP
+
+
+        Example (s):
+                 ADD           AL, *--SP          ; Pop contents from top of stack and add to 16-bit
+                                                  ; Al register
+                 MOVL          ACC, *--Sp         ; Pop contents from top of stack and store in
+                                                  ; 32-bit ACC register
+        Note: This addressing mode can only access the lower 64K of data address space on the C28x device.
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                                  C28x Addressing Modes          85
+Submit Documentation Feedback
+                                              Copyright © 2001–2015, Texas Instruments Incorporated
+Indirect Addressing Modes                                                                                                    www.ti.com
+
+5.6     Indirect Addressing Modes
+        This section includes indirect addressing modes for the 28x and 2xLP devices. It also includes circular
+        indirect addressing modes.
+
+5.6.1 C28x Indirect Addressing Modes (XAR0 to XAR7)
+
+          AMODE          ”loc16/loc32”    Description
+                            Syntax
+             X         *XARn++            ARP = n
+                                          32bitDataAddr(31:0) = XARn
+                                          if(loc16), XARn = XARn + 1
+                                          if(loc32), XARn = XARn + 2
+
+
+         Example (s):
+                 MOVL     XAR2, #Array1      ; Load XAR2 with start address of Array1
+                 MOVL     XAR3, #Array2      ; Load XAR3 with start address of Array2
+                 MOV      @AR0, #N-1         ; Load AR0 with loop count N
+         Loop:
+                 MOVL     ACC,*XAR2++        ; Load ACC with location pointed to by XAR2,
+                                             ; post−increment XAR2
+                 MOVL     *XAR3++,ACC        ; Store ACC into location pointed to by XAR3,
+                                             ; post−increment XAR3
+                 BANZ     Loop,AR0−−         ; Loop until AR0 == 0, post−decrement AR0
+
+
+          AMODE           ”loc16/loc32”    Description
+                             Syntax
+             X          *--XARn            ARP = n
+                                           if(loc16), XARn = XARn + 1
+                                           if(loc32), XARn = XARn + 2
+                                           32bitDataAddr(31:0) = XARn
+
+
+         Example (s):
+                 MOVL    XAR2,#Array1+N*2    ; Load XAR2 with start address of Array1
+                 MOVL    XAR3,#Array2+N*2    ; Load XAR3 with start address of Array2
+                 MOV     @AR0, #N-1          ; Load AR0 with loop count N
+         Loop:
+                 MOVL    ACC,*--XAR2         ; Pre-decrement XAR2,
+                                             ; load ACC with location pointed to by XAR2
+                 MOVL    *--XAR3,ACC         ; Pre-decrement XAR3,
+                                             ; store ACC into location pointed to by XAR3,
+                 BANZ    Loop,AR0−−          ; Loop until AR0 == 0, post−decrement AR0
+
+
+
+
+86    C28x Addressing Modes                                                                   SPRU430F – August 2001 – Revised April 2015
+                                                                                                         Submit Documentation Feedback
+                                          Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                   Indirect Addressing Modes
+  AMODE          ”loc16/loc32” Syntax     Description
+     X       *+XARn[AR0]                  ARP = n
+                                          32bitDataAddr(31:0) = XARn + AR0
+                                          Note: The lower 16-bits of XAR0 are added to the selected 32-bit register. Upper 16-bits of
+                                          XAR0 are ignored. AR0 is treated as an unsigned 16-bit value. Overflow into the upper 16-bits
+                                          of XARn can occur.
+
+
+         Example (s):
+                 MOVW    DP,#Array1Ptr        ; Point to Array1 Pointer location
+                 MOVL    XAR2,@Array1Ptr      ; Load XAR2 with pointer to Array1
+                 MOVB    XAR0,#16             ; AR0 = 16, AR0H = 0
+                 MOVB    XAR1,#68             ; AR1 = 68, AR1H = 0
+                 MOVL    ACC,*+XAR2[AR0]      ; ; Swap contents of location Array1[16]
+                 MOVL    P,*+XAR2[AR1]        ; ; with the contents of location Array1[68]
+                 MOVL    *+XAR2[AR1],ACC      ; ;
+                 MOVL    *+XAR2[AR0],P        ; ;
+
+
+         AMODE          ”loc16/loc32”   Description
+                           Syntax
+             X      *+XARn[AR1]         ARP = n
+                                        32bitDataAddr(31:0) = XARn + AR1
+                                        Note: The lower 16-bits of XAR0 are added to the selected 32-bit register. Upper 16-bits of XAR0
+                                        are ignored. AR0 is treated as an unsigned 16-bit value. Overflow into the upper 16-bits of XARn
+                                        can occur.
+
+
+         Example (s):
+                 MOVW    DP,#Array1Ptr        ; Point to Array1 Pointer location
+                 MOVL    XAR2,@Array1Ptr      ; Load XAR2 with pointer to Array1
+                 MOVB    XAR0,#16             ; AR0 = 16, AR0H = 0
+                 MOVB    XAR1,#68             ; AR1 = 68, AR1H = 0
+                 MOVL    ACC,*+XAR2[AR0]      ; ; Swap contents of location Array1[16]
+                 MOVL    P,*+XAR2[AR1]        ; ; with the contents of location Array1[68]
+                 MOVL    *+XAR2[AR1],ACC      ; ;
+                 MOVL    *+XAR2[AR0],P        ; ;
+
+
+         AMODE          ”loc16/loc32”   Description
+                           Syntax
+             X      *+XARn[3bit]        ARP = n
+                                        32bitDataAddr(31:0) = XARn +3bit
+                                        Note: The immediate value is treated as an unsigned 3-bit value.
+
+
+         Example (s):
+                 MOVW    DP,#Array1Ptr        ; Point to Array1 Pointer location
+                 MOVL    XAR2,@Array1Ptr      ; Load XAR2 with pointer to Array1
+                 MOVL    ACC,*+XAR2[2]        ; ; Swap contents of location Array1[2]
+                 MOVL    P,*+XAR2[5]          ; ; with the contents of location Array1[5]
+                 MOVL    *+XAR2[5],ACC        ; ;
+                 MOVL    *+XAR2[2],P          ; ;
+
+         Note: The assembler also accepts ”*XARn” as an addressing mode. This is the same encoding as the ”*+XARn[0]” mode.
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                                C28x Addressing Modes          87
+Submit Documentation Feedback
+                                           Copyright © 2001–2015, Texas Instruments Incorporated
+Indirect Addressing Modes                                                                                                    www.ti.com
+
+5.6.2 C2xLP Indirect Addressing Modes (ARP, XAR0 to XAR7)
+
+        AMODE          ”loc16/loc32”   Description
+                          Syntax
+           X     *                     32bitDataAddr(31:0) = XAR(ARP)
+                                       Note: The XARn register used is the register pointed to by the current value in the ARP pointer.
+                                       ARP = 0, points to XAR0, ARP = 1, points to XAR1 and so on.
+
+
+        Example (s):
+               MOVZ     DP,#RegAPtr          ; Load DP with page address containing RegAPtr
+               MOVZ     AR2,@RegAPtr         ; Load AR2 with contents of RegAPtr, AR2H = 0
+               MOVZ     AR3,@RegAPtr         ; Load AR3 with contents of RegBPtr, AR3H = 0
+                                             ; RegAPtr and RegBPtr are located in the same 128 word data page,
+                                             ; Both are located in the low 64K of data memory space.
+               NOP      *,ARP2               ; Set ARP pointer to point to XAR2
+               MOV      *,#0x0404            ; Store 0x0404 into location pointed by XAR2
+               NOP      *,ARP3               ; Set ARP pointer to point to XAR3
+               MOV      *,#0x8000            ; Store 0x8000 into location pointed by XAR3,
+
+
+        AMODE          ”loc16/loc32”   Description
+                          Syntax
+           X     *,XARn                32bitDataAddr(31:0) = XAR(ARP)
+                                       ARP = n
+
+
+        Example (s):
+               MOVZ     DP,#RegAPtr          ; Load DP with page address containing RegAPtr
+               MOVZ     AR2,@RegAPtr         ; Load AR2 with contents of RegAPtr, AR2H = 0
+               MOVZ     AR3,@RegAPtr         ; Load AR3 with contents of RegBPtr, AR3H = 0
+                                             ; RegAPtr and RegBPtr are located in the same 128 word data page,
+                                             ; Both are located in the low 64K of data memory space.
+               NOP      *,ARP2               ; Set ARP pointer to point to XAR2
+               MOV      *,#0x0404,ARP3       ; Store 0x0404 into location pointed by XAR2
+                                             ; Set ARP pointer to point to XAR3
+               MOV      *,#0x8000            ; Store 0x8000 into location pointed by XAR3,
+
+
+
+
+88   C28x Addressing Modes                                                                    SPRU430F – August 2001 – Revised April 2015
+                                                                                                         Submit Documentation Feedback
+                                          Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                              Indirect Addressing Modes
+ AMODE           ”loc16/loc32” Syntax     Description
+    X      *++                            32bitDataAddr(31:0) = XARn (ARP)
+                                          if(loc16), XAR(ARP) = XAR(ARP) + 1
+                                          if(loc32), XAR(ARP) = XAR(ARP) + 2
+
+
+        Example (s):
+                  MOVL      XAR2, #Array1         ; Load XAR2 with start address of Array1
+                  MOVL      XAR3, #Array2         ; Load XA32 with start address of Array2
+                  MOV       @AR0,#N-1             ; ALoad AR0 with loop count N
+        Loop:
+                  NOP       *,ARP2                ; Set ARP pointer to point to XAR2
+                  MOVL      ACC,*++               ; Load ACC with location pointed to by XAR2,
+                                                  ; post-increment XAR2
+                  NOP       *,ARP3                ; Set ARP pointer to point to XAR3
+                  MOVL      *++,ACC               ; Store ACC into location pointed to by XAR3,
+                                                  ; post-increment XAR3
+                  NOP       *,ARP0                ; Set ARP pointer to point to XAR0
+                  XBANZ     Loop,*--              ; Loop until AR0 == 0, post-decrement AR0
+
+
+        AMODE            ”loc16/loc32” Syntax    Description
+             X       *++,ARPn                    32bitDataAddr(31:0) = XARn + AR1
+                                                 if(loc16), XAR(ARP) = XAR(ARP) + 1
+                                                 if(loc32), XAR(ARP) = XAR(ARP) + 2
+
+
+        Example (s):
+                  MOVL      XAR2,#Array1          ; Load XAR2 with start address of Array1
+                  MOVL      XAR2,#Array2          ; Load XAR3 with start address of Array2
+                  MOV       @AR0,#N-1             ; Load AR0 with loop count N
+                  NOP       *,ARP2                ; Set ARP pointer to point to XAR2
+                  SETC      AMODE                 ; Make sure AMODE = 1
+                  .lp_amode                       ; Tell assembler that AMODE = 1
+        Loop:
+                  MOVL      ACC,*++,ARP3          ; Load ACC with location pointed to by XAR2
+                                                  ; post−increment XAR2, set ARP to point to XAR3
+                  MOVL      *++,ACC,ARP0          ; Store ACC into location pointed to by XAR3,
+                                                  ; post−increment XAR3, set ARP to point to XAR0
+                  XBANZ     Loop, *--,ARP2        ; Loop until AR0 == 0, post−decrement AR0,
+                                                  ; set ARP pointer to point to XAR2
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                             C28x Addressing Modes   89
+Submit Documentation Feedback
+                                                Copyright © 2001–2015, Texas Instruments Incorporated
+Indirect Addressing Modes                                                                                                      www.ti.com
+
+ AMODE          ”loc16/loc32” Syntax     Description
+     X     *--                           32bitDataAddr(31:0) = XAR(ARp)
+                                         if(loc16), XAR(ARP) = XAR(ARP) + 1
+                                         if(loc32), XAR(ARP) = XAR(ARP) + 2
+
+
+         Example (s):
+                 MOVL     XAR2,#Array1+(n-1)*2          ; Load XAR2 with ends address of Array1
+                 MOVL     XAR3,#Array2+(n-1)*2          ; Load XAR3 with end address of Array2
+                 MOV      @AR0,#N-1                     ; Load AR0 with loop count N
+         Loop:
+                 NOP      *,ARP2                        ; Set ARP pointer to point to XAR2
+                 MOVL     ACC,*--                       ; Load ACC with location pointed to by XAR2
+                                                        ; post−increment XAR2
+                 NOP      *,ARP3                        ; Set ARP pointer to point to XAR3
+                 MOVL     *--,ACC                       ; Store ACC into location pointed to by XAR3,
+                                                        ; post−increment XAR3
+                 NOP      *,ARP0                        ; Set ARP pointer to point to XAR0
+                 XBANZ    Loop, *--                     ; Loop until AR0 == 0, post−decrement AR0
+
+
+         AMODE           ”loc16/loc32” Syntax   Description
+            1          *--,ARPn                 32bitDataAddr(31:0) = XAR(ARp)
+                                                if(loc16), XAR(ARP) = XAR(ARP) + 1
+                                                if(loc32), XAR(ARP) = XAR(ARP) + 2
+                                                ARP=n
+
+
+         Example (s):
+                 MOVL     XAR2,#Array1+(n-1)*2         ; Load XAR2 with ends address of Array1
+                 MOVL     XAR3,#Array2+(n-1)*2         ; Load XAR3 with end address of Array2
+                 MOV      @AR0,#N-1                    ; Load AR0 with loop count N
+                 NOP      *,ARP2                       ; Set ARP pointer to point to XAR2
+                 SETC     AMODE                        ; Make sure AMODE = 1
+                 .lp_amode                             ; Tell assembler that AMODE = 1
+         Loop:
+                 MOVL     ACC,*--,ARP3                 ; Load ACC with location pointed to by XAR2
+                                                       ; post−increment XAR2, set ARP to point to XAR3
+                 MOVL     *--,ACC,ARP0                 ; Store ACC into location pointed to by XAR3,
+                                                       ; post−increment XAR3, set ARP to point to XAR0
+                 XBANZ    Loop, *--,ARP2               ; Loop until AR0 == 0, post−decrement AR0
+                                                       ; set ARP pointer to point to XAR2
+
+
+
+
+90   C28x Addressing Modes                                                                      SPRU430F – August 2001 – Revised April 2015
+                                                                                                           Submit Documentation Feedback
+                                            Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                       Indirect Addressing Modes
+  AMODE          ”loc16/loc32” Syntax       Description
+     X       *++                            32bitDataAddr(31:0) = XAR(ARP)
+                                            XAR(ARP)=XAR(ARP)+AR0
+                                            Note: The lower 16-bits of XAR0 are added to the selected 32-bit register. Upper 16-bits of
+                                            XAR0 ignored. AR0 is treated as an unsigned 16-bit value. Overflow into the upper 16-bits of
+                                            XAR(ARP) can occur.
+
+
+         Example (s):
+                 MOVL     XAR2,#Array1               ; Load XAR2 with end address of Array1
+                 MOVL     XAR3,#Array2               ; Load XAR3 with end address of Array2
+                 MOV      @AR0,#4                    ; Load AR0 to copy every fourth value from Array1 to Array2
+                 MOV      @AR1m #N-1                 ; Load AR1 with loop count N
+         Loop:
+                 NOP      *,ARP2                     ; Set ARP pointer to point to XAR2
+                 MOVL     ACC,*0++                   ; Load ACC with location pointed to by XAR2,
+                                                     ; post-increment XAR2 by AR0
+                 NOP      *,ARP3                     ; Set ARP pointer to point to XAR3
+                 MOVL     *++,ACC                    ; Store ACC with location pointed to by XAR3, post−increment XAR3
+                 NOP      *,ARP1                     ; Set ARP pointer to point to XAR1
+                 XBANZ    Loop, *--                  ; Loop until AR0 == 0, post−decrement AR1
+
+
+         AMODE           ”loc16/loc32” Syntax      Description
+             1         *++,ARPn                    32bitDataAddr(31:0) = XAR(ARP)
+                                                   XAR(ARP)=XAR(ARP)+AR0
+                                                   ARP=n
+                                                   Note: The lower 16-bits of XAR0 are added to the selected 32-bit register. Upper 16-bits of
+                                                   XAR0 ignored. AR0 is treated as an unsigned 16-bit value. Overflow into the upper 16-bits
+                                                   of XAR(ARP) can occur.
+
+
+         Example (s):
+                 MOVL     XAR2,#Array1               ; Load XAR2 with end address of Array1
+                 MOVL     XAR3,#Array2               ; Load XAR3 with end address of Array2
+                 MOV      @AR0,#4                    ; Set AR0 to copy every fourth value from Array1 to Array2
+                 MOV      @AR1n #N-1                 ; Load AR1 with loop count N
+                 NOP      *,ARP2                     ; Set ARP pointer to point to XAR2
+                 SETC     AMODE                      ; Make sure AMODE = 1
+                 .lp_amode                           ; Tell assembler that AMODE = 1
+         Loop:
+                 MOVL     ACC,*0++,ARP3              ; Load ACC with location pointed to by XAR2,
+                                                     ; post-increment XAR2 by AR0, set ARP pointer
+                 MOVL     *++,ACC,ARP1               ; Store ACC with location pointed to by XAR3,
+                                                     ; post−increment XAR3, set ARP pointer to point tp XAR1
+                 XBANZ    Loop, *--,ARP2             ; Loop until AR0 == 0, post−decrement AR1,
+                                                     ; set ARP to point to XAR2
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                                      C28x Addressing Modes      91
+Submit Documentation Feedback
+                                                Copyright © 2001–2015, Texas Instruments Incorporated
+Indirect Addressing Modes                                                                                                      www.ti.com
+
+ AMODE           ”loc16/loc32” Syntax    Description
+     X      *0--                         32bitDataAddr(31:0) = XAR(ARP)
+                                         XAR(ARP)=XAR(ARP)+AR0
+                                         Note: The lower 16-bits of XAR0 are added to the selected 32-bit register. Upper 16-bits of
+                                         XAR0 ignored. AR0 is treated as an unsigned 16-bit value. Overflow into the upper 16-bits of
+                                         XAR(ARP) can occur.
+
+
+         Example (s):
+                 MOVL    XAR2,#Array1+(N-1)*8           ; Load XAR2 with end address of Array1
+                 MOVL    XAR3,#Array2+(N-1)*2           ; Load XAR3 with end address of Array2
+                 MOV     @AR0,#4                        ; Set AR0 to copy every fourth value from Array1 to Array2
+                 MOV     @AR1n #N-1                     ; Load AR1 with loop count N
+         Loop:
+                 NOP     *,ARP2                         ; Set ARP pointer to point to XAR2
+                 MOVL    ACC,*0--                       ; Load ACC with location pointed to by XAR2,
+                                                        ; post-increment XAR2 by AR0
+                 NOP     *,ARP3                         ; Set ARP pointer to point to XAR3
+                 MOVL    *--,ACC                        ; Store ACC with location pointed to by XAR3,
+                                                        ; post−increment XAR3
+                 NOP     *,ARP1                         ; Set ARP pointer to point to XAR1
+                 XBANZ   Loop, *--                      ; Loop until AR1 == 0, post−decrement AR1
+
+
+         AMODE            ”loc16/loc32” Syntax         Description
+             1         *0--,ARPn                       32bitDataAddr(31:0) = XAR(ARP)
+                                                       XAR(ARP)=XAR(ARP)+AR0
+                                                       ARP=n
+                                                       Note: The lower 16-bits of XAR0 are added to the selected 32-bit register. Upper
+                                                       16-bits of XAR0 ignored. AR0 is treated as an unsigned 16-bit value. Overflow into
+                                                       the upper 16-bits of XAR(ARP) can occur.
+
+
+         Example (s):
+                 MOVL    XAR2,#Array1+(N-1)*8           ; Load XAR2 with end address of Array1
+                 MOVL    XAR3,#Array2+(N-1)*2           ; Load XAR3 with end address of Array2
+                 MOV     @AR0,#4                        ; Set AR0 to copy every fourth value from Array1 to Array2
+                 MOV     @AR1n #N-1                     ; Load AR1 with loop count N
+                 NOP     *,ARP2                         ; Set ARP pointer to point to XAR2
+                 SETC    AMODE                          ; Make sure AMODE = 1
+                 .lp_amode                              ; Tell assembler that AMODE = 1
+         Loop:
+                 MOVL    ACC,*0--,ARP3                  ; Load ACC with location pointed to by XAR2,
+                                                        ; post-increment XAR2 by AR0, set ARP pointer to XAR3
+                 MOVL    *++,ACC,ARP1                   ; Store ACC with location pointed to by XAR3,
+                                                        ; post−increment XAR3, set ARP pointer to point tp XAR1
+                 XBANZ   Loop, *--,ARP2                 ; Loop until AR0 == 0, post−decrement AR1,
+                                                        ; set ARP to point to XAR2
+
+
+
+
+92   C28x Addressing Modes                                                                     SPRU430F – August 2001 – Revised April 2015
+                                                                                                          Submit Documentation Feedback
+                                           Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                 Indirect Addressing Modes
+  AMODE          ”loc16/loc32” Syntax   Description
+     X       *BR0++                     32bitDataAddr(31:0) = XAR(ARP)
+                                        XAR(ARP)(15:0)= AR(ARP)rcadd AR0
+                                        XAR(ARP)(31:16) = unchanged
+                                        Note: The lower 16-bits of XAR0 are reverse carry added (rcadd) to the lower 16-bits of the
+                                        selected register. Upper 16-bits of XAR0 ignored. Upper 16-bits of the selected register
+                                        unchanged by the operation.
+
+
+         Example (s):
+         ; Transfer contents of Array1 to Array2 in bit reverse order:
+                 MOVL    XAR2,#Array1                 ; Load XAR2 with end address of Array1
+                 MOVL    XAR3,#Array2                 ; Load XAR3 with end address of Array2
+                 MOV     @AR0,#N                      ; Load AR0 with size of array,
+                                                      ; N must be a multiple of 2 (2, 4, 8, 16, ...)
+                 MOV     @AR1 #N-1                    ; Load AR1 with loop count N
+         Loop:
+                 NOP     *,ARP2                       ; Set ARP pointer to point to XAR2
+                 MOVL    ACC,*0++                     ; Load ACC with location pointed to by XAR2, post-
+                                                        increment XAR2
+                 NOP     *,ARP3                       ; Set ARP pointer to point to XAR3
+                 MOVL    *BR0++,ACC                   ; Store ACC with location pointed to by XAR3,
+                                                      ; post−increment XAR3 with AR0 reverse carry add
+                 NOP     *,ARP1                       ; Set ARP pointer to point to XAR1
+                 XBANZ   Loop, *--                    ; Loop until AR1 == 0, post−decrement AR1
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                                 C28x Addressing Modes     93
+Submit Documentation Feedback
+                                          Copyright © 2001–2015, Texas Instruments Incorporated
+Indirect Addressing Modes                                                                                                     www.ti.com
+
+ AMODE           ”loc16/loc32” Syntax   Description
+     1      *BR0++,ARPn                 32bitDataAddr(31:0) = XAR(ARP)
+                                        XAR(ARP)(15:0)= AR(ARP) rcadd AR0
+                                        XAR(ARP)(31:16) =          unchanged
+                                        ARP=n
+                                        Note: The lower 16-bits of XAR0 are reverse carry added (rcadd) to the lower 16-bits of the
+                                        selected register. Upper 16-bits of XAR0 ignored. Upper 16-bits of the selected register
+                                        unchanged by the operation.
+
+
+         Example (s):
+         ; Transfer contents of Array1 to Array2 in bit reverse order:
+                 MOVL    XAR2,#Array1                 ; Load XAR2 with start address of Array1
+                 MOVL    XAR3,#Array2                 ; Load XAR3 with start address of Array2
+                 MOV     @AR0 #N                      ; Load AR0 with size of array,
+                                                      ; N must be a multiple of 2 (2, 4, 8, 16,...)
+                 MOV     @AR1, #N-1                   ; Load AR1 with loop count N
+                 NOP     *,ARP2                       ; Set ARP pointer to point to XAR2
+                 SETC    AMODE                        ; Make sure AMODE = 1
+                 .lp_amode                            ; Tell assembler that AMODE = 1
+         Loop:
+                 MOVL    ACC,*++,ARP3                 ; Load ACC with location pointed to by XAR2,
+                                                      ; post-increment XAR2 by AR0, set ARP pointer to XAR3
+                 MOVL    *++,ACC,ARP1                 ; Store ACC with location pointed to by XAR3,
+                                                      ; post−increment XAR3, set ARP pointer to point tp XAR1
+                 MOVL    *BR0++,ACC,ARP1              ; Store ACC with location pointed to by XAR3,
+                                                      ; post−increment XAR3 with AR0 reverse carry
+                                                      ; add, set ARP pointer to point to XAR1
+                 XBANZ   Loop, *--,ARP2               ; Loop until AR1 == 0, post−decrement AR1,
+                                                      ; set ARP to point to XAR2
+
+
+
+
+94   C28x Addressing Modes                                                                     SPRU430F – August 2001 – Revised April 2015
+                                                                                                          Submit Documentation Feedback
+                                           Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                 Indirect Addressing Modes
+  AMODE          ”loc16/loc32” Syntax   Description
+     X        *BR0--                    Address Generation:
+                                        32bitDataAddr(31:0)=XAR(ARP)
+                                        XAR(ARP)(15:0)= AR(ARP)rbsub AR0 {see note [1]}
+                                        XAR(ARP)(31:16) = unchanged
+                                        Note: The lower 16-bits of XAR0 are reverse carry added (rbsub) from the lower 16-bits of the
+                                        selected register. Upper 16-bits of XAR0 ignored. Upper 16-bits of the selected register
+                                        unchanged by the operation.
+
+
+         Example (s):
+         ; Transfer contents of Array1 to Array2 in bit reverse order:
+                 MOVL    XAR2,#Array1+(N-1)*2         ; Load XAR2 with end address of Array1
+                 MOVL    XAR3,#Array2+(N-1)*2         ; Load XAR3 with end address of Array2
+                 MOV     @AR0,#N                      ; Load AR0 with size of array,
+                                                      ; N must be a multiple of 2 (2, 4, 8, 16,...)
+                 MOV     @AR1 #N-1                    ; Load AR1 with loop count N
+         Loop:
+                 NOP     *,ARP2                       ; Set ARP pointer to point to XAR2
+                 MOVL    ACC,*0--                     ; Load ACC with location pointed to by XAR2,
+                                                      ; post-increment XAR2
+                 NOP     *,ARP3                       ; Set ARP pointer to point to XAR3
+                 MOVL    *BR0--,ACC                   ; Store ACC with location pointed to by XAR3,
+                                                      ; post−increment XAR3 with AR0 reverse carry add
+                 NOP     *,ARP1                       ; Set ARP pointer to point to XAR1
+                 XBANZ   Loop, *--                    ; Loop until AR1 == 0, post−decrement AR1
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                                C28x Addressing Modes        95
+Submit Documentation Feedback
+                                          Copyright © 2001–2015, Texas Instruments Incorporated
+Indirect Addressing Modes                                                                                                       www.ti.com
+
+     AMODE          ”loc16/loc32” Syntax   Description
+       1        *BR0--,ARPn                32bitDataAddr(31:0) = XAR(ARP)
+                                           XAR(ARP)(15:0)= AR(ARP) rbsub AR0
+                                           XAR(ARP)(31:16) =          unchanged
+                                           ARP=n
+                                           Note: The lower 16-bits of XAR0 are reverse carry added (rbsub) from the lower 16-bits of the
+                                           selected register. Upper 16-bits of XAR0 ignored. Upper 16-bits of the selected register
+                                           unchanged by the operation.
+
+
+           Example (s):
+           ; Transfer contents of Array1 to Array2 in bit reverse order:
+                   MOVL    XAR2,#Array1+(N-1)*2        ; Load XAR2 with start address of Array1
+                   MOVL    XAR3,#Array2+(N-1)*2        ; Load XAR3 with start address of Array2
+                   MOV     @AR0 #N                     ; Load AR0 with size of array,
+                                                       ; N must be a multiple of 2 (2, 4, 8, 16,...)
+                   MOV     @AR1, #N-1                  ; Load AR1 with loop count N
+                   NOP     *,ARP2                      ; Set ARP pointer to point to XAR2
+                   SETC    AMODE                       ; Make sure AMODE = 1
+                   .lp_amode                           ; Tell assembler that AMODE = 1
+           Loop:
+                   MOVL    ACC,*--,ARP3                ; Load ACC with location pointed to by XAR2,
+                                                       ; post-increment XAR2, set ARP pointer to point to XAR3
+                   MOVL    *++,ACC,ARP1                ; Store ACC with location pointed to by XAR3,
+                                                       ; post−increment XAR3, set ARP pointer to point tp XAR1
+                   MOVL    *BR0--,ACC,ARP1             ; Store ACC with location pointed to by XAR3,
+                                                       ; post−increment XAR3 with AR0 reverse borrow substract,
+                                                       ; set ARP pointer to point to XAR1
+                   XBANZ   Loop, *--,ARP2              ; Loop until AR1 == 0, post−decrement AR1,
+                                                       ; set ARP to point to XAR2
+
+
+           Reverse carry addition or reverse carry subtraction is used to implement bit-reversed addressing as used
+           in the re−ordering of data elements in FFT algorithms. Typically, AR0 is initialized with the (FFT size) /2.
+           The value of AR0 is then added or subtracted, with reverse carry addition or subtraction, to generate the
+           bit reversed address
+           Reverse Carry Addition Example Is Shown Below (FFT size = 16):
+           XAR(ARP)(15:0) = 0000 0000 0000 0000
+           + AR0          = 0000 0000 0000 1000
+           −−−−−−−−−−−−−    −−−−−−−−−−−−−−−−−−−
+           XAR(ARP)(15:0) = 0000 0000 0000 1000
+           + AR0          = 0000 0000 0000 1000
+           −−−−−−−−−−−−−    −−−−−−−−−−−−−−−−−−−
+           XAR(ARP)(15:0) = 0000 0000 0000 0100
+           + AR0          = 0000 0000 0000 1000
+           −−−−−−−−−−−−−    −−−−−−−−−−−−−−−−−−−
+           XAR(ARP)(15:0) = 0000 0000 0000 1100
+           + AR0          = 0000 0000 0000 1000
+           −−−−−−−−−−−−−    −−−−−−−−−−−−−−−−−−−
+           XAR(ARP)(15:0) = 0000 0000 0000 0010
+           + AR0          = 0000 0000 0000 1000
+           −−−−−−−−−−−−−    −−−−−−−−−−−−−−−−−−−
+           XAR(ARP)(15:0) = 0000 0000 0000 1010
+           ......
+
+
+
+
+96         C28x Addressing Modes                                                                 SPRU430F – August 2001 – Revised April 2015
+                                                                                                            Submit Documentation Feedback
+                                             Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                            Indirect Addressing Modes
+
+       Reverse Borrow Subtraction Example Is Shown Below (FFT size = 16):
+       XAR(ARP)(15:0) = 0000 0000 0000 0000
+       - AR0          = 0000 0000 0000 1000
+       −−−−−−−−−−−−−    −−−−−−−−−−−−−−−−−−−
+       XAR(ARP)(15:0) = 0000 0000 0000 1111
+       - AR0          = 0000 0000 0000 1000
+       −−−−−−−−−−−−−    −−−−−−−−−−−−−−−−−−−
+       XAR(ARP)(15:0) = 0000 0000 0000 0111
+       - AR0          = 0000 0000 0000 1000
+       −−−−−−−−−−−−−    −−−−−−−−−−−−−−−−−−−
+       XAR(ARP)(15:0) = 0000 0000 0000 1011
+       - AR0          = 0000 0000 0000 1000
+       −−−−−−−−−−−−−    −−−−−−−−−−−−−−−−−−−
+       XAR(ARP)(15:0) = 0000 0000 0000 0011
+       - AR0          = 0000 0000 0000 1000
+       −−−−−−−−−−−−−    −−−−−−−−−−−−−−−−−−−
+       XAR(ARP)(15:0) = 0000 0000 0000 1101
+       ......
+
+       On the C28x, the bit reversed addressing is restricted to block size < 64K. This is OK since most FFT
+       implementations are much less than this.
+
+5.6.3 Circular Indirect Addressing Modes (XAR6, XAR1)
+
+         AMODE        ”loc16/loc32”     Description
+                         Syntax
+             0     *AR6%++              32bitDataAddr(31:0) = XAR6
+                                        if( XAR6(7:0) == XAR1(7:0) )
+                                        {
+                                              XAR6(7:0) = 0x00
+                                              XAR6(15:8) = unchanged
+                                        }
+                                        else
+                                        {
+                                              if(16-bit data), XAR6(15:0) =+ 1
+                                              if(32-bit data), XAR6(15:0) =+ 2
+                                        }
+                                        XAR6(31:16) = unchanged
+                                        ARP = 6
+
+
+       As seen in Figure 5-1, buffer size is determined by the 8 LSBs of AR1 or AR1[7:0]. Specifically, the buffer
+       size is AR1[7:0] +1. When AR1[7:0] is 255, then the buffer size is at its maximum size of 256 words.
+       XAR6 points to the current address in the buffer. The top of the buffer must be at an address where the 8
+       LSBs are all 0s.
+       If one of the instructions accessing the circular buffer performs a 32-bit opera- tion, make sure XAR6 and
+       AR1 are both even before the buffer is accessed.
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                         C28x Addressing Modes   97
+Submit Documentation Feedback
+                                            Copyright © 2001–2015, Texas Instruments Incorporated
+Indirect Addressing Modes                                                                                                                   www.ti.com
+
+
+                                                                      15                   8 7                            0
+                                                                AR1            X       X         0                8
+
+
+                                                                                             Buffer size = 8 + 1 = 9
+
+
+                                                                      31                         8 7                  0
+                                      Top of buffer           XAR6         X   X X     X X     X     0            0
+
+
+                                                                                                     Must be zero
+
+
+                                                               XAR6[7:0] is incremented until it matches AR1[7:0]
+
+
+
+
+                                                                      31                         8 7                  0
+                                    Bottom of buffer          XAR6         X   X   X   X   X   X         0            8
+
+
+                                                                                                   Matches AR1[7:0]
+
+                                        Figure 5-1. Circular Buffer with AMODE = 0
+
+       Example (s):
+       ; Calculate FIR filter (X[N] = data array, C[N] = coefficient array):
+            MOVW    DP,#Xpointer                                ; Load DP with page address of Xpointer
+            MOVL    XAR6,@Xpointer                              ; Load XAR6 with current X pointer
+            MOVL    XAR7,#C                                     ; Load XAR7 with start address of C array
+            MOV     @AR1,#N                                     ; Load AR1 with size of data array N,
+            SPM     −4                                          ; Set product shift mode to ">> 4","
+            ZAPA                                                ; Zero ACC, P, OVC
+            RPT     #N−1                                        ; Repeat next instruction N timeses
+          ||QMACL P,*AR6%++,*XAR7++                             ; ACC = ACC + P >> 4,
+                                                                ; P = (*AR6%++ * *XAR7++) >> 32
+               ADDL      ACC,P << PM                            ; Final accumulate
+               MOVL      @Xpointer,XAR6                         ; Store XAR6 into current X pointer
+               MOVL      @Sum,ACC                               ; Store result into sum
+
+        AMODE         ”loc16/loc32” Syntax   Description
+           1          *+XAR6[AR1%++]         32bitDataAddr(31:0) = XAR6 + AR1
+                                             if( XAR1(15:0) == XAR1(31:16) )
+                                             {
+                                                 XAR1(15:0) = 0x0000
+                                                 XAR6(15:8) = unchanged
+                                             }
+                                             else
+                                             {
+                                                 if(16-bit data), XAR1(15:0) =+ 1
+                                                 if(32-bit data), XAR1(15:0) =+ 2
+                                             }
+                                             XAR1(31:16) = unchanged
+                                             ARP = 6
+                                             Note: With this addressing mode, there is no circular buffer alignment requirements.
+
+
+
+
+98     C28x Addressing Modes                                                                                 SPRU430F – August 2001 – Revised April 2015
+                                                                                                                        Submit Documentation Feedback
+                                             Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                                 Indirect Addressing Modes
+
+       As seen in Figure 5-2, buffer size is determined by the upper 16 bits of XAR1 or XAR1[31:16]. Specifically,
+       the size is XAR1[31:16] + 1.
+       XAR6 points to the top of the buffer.
+       The current address in the buffer is pointed to by XAR6 with an offset of XAR1[15:0].
+       If the instructions that access the circular buffer perform 32-bit operations, make sure XAR6 and
+       XAR1[31:16] are even.
+                                                                 31                       16 15                      0
+                                                          XAR1        0      0    0       9   0      0   0       0
+
+
+                                                                          Buffer size =           Buffer index
+                                                                           9 + 1 = 10
+
+                                                                 31                                                  0
+                                                          XAR6                        003F8010
+
+
+
+                                        Top of buffer            XAR6 + XAR1[15:0] = 3F8010h
+
+                                                                                 0x0000
+
+
+
+                                                                 XAR1[15:0] increments until
+                                                                 it matches XAR1[31:16]
+
+
+
+
+                                      Bottom of buffer           XAR6 + XAR1[15:0] = 3F8010h + 0009h
+
+                                                                              Matches
+                                                                             XAR1[31:16]
+
+                                      Figure 5-2. Circular Buffer with AMODE = 1
+
+       Example (s):
+       ; Calculate FIR filter (X[N] = data array, C[N] = coefficient array):
+             MOVW    DP,#Xindex                                               ; Load DP with page address of Xindex
+             MOVL    XAR6,#X                                                  ; Load XAR6 with start address of X array
+             MOV     @AH,#N                                                   ; Load AH with size of data array X (N)
+             MOV    AL,@Xindex                                                ; Load AL with current circular index
+             MOVL    XAR1,@ACC                                                ; Load parameters into XAR1
+             MOVL    XAR7,#C                                                  ; Load XAR7 with start address of C array
+             SPM     −4                                                       ; Set product shift mode to ">> 4","
+             ZAPA                                                             ; Zero ACC, P, OVC
+             RPT     #N−1                                                     ; Repeat next instruction N timeses
+           ||QMACL P,*XAR6[AR1%++],*XAR7++                                    ; ACC = ACC + P >> 4,
+                                                                              ; P = (*AR6%++ * *XAR7++) >> 32
+              ADDL     ACC,P << PM                                            ; Final accumulate
+              MOV     @Xindex,XAR1                                            ; Store XAR6 into current X index
+              MOVL     @Sum,ACC                                               ; Store result into sum
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                                              C28x Addressing Modes   99
+Submit Documentation Feedback
+                                          Copyright © 2001–2015, Texas Instruments Incorporated
+Register Addressing Modes                                                                                                    www.ti.com
+
+5.7   Register Addressing Modes
+      This section includes register addressing modes for 32-bit and 16-bit registers.
+
+5.7.1 32-Bit Register Addressing Modes
+
+        AMODE            ”loc32” Syntax          Description
+          X      @ACC                            Access contents of 32-bit ACC register.
+                                                 When the ”@ACC” register is the destination operand, this may affect the Z,N,V,C,OVC
+                                                 flags.
+
+
+       Example (s):
+                MOVL     XAR6,@ACC            ; Load XAR6 with contents of ACC
+                MOVL     @ACC,XT              ; Load ACC with contents of XT register
+                ADDL     ACC,@ACC             ; ACC = ACC + ACC
+
+
+        AMODE            ”loc32” Syntax          Description
+          X      @P                              Access contents of 32-bit ACC register.
+
+
+
+       Example (s):
+                MOVL     XAR6,@AP             ; Load XAR6 with contents of P
+                MOVL     @P,XT                ; Load P with contents of XT register
+                ADDL     ACC,@AP              ; P = ACC + P
+
+
+        AMODE            ”loc32” Syntax          Description
+          X      @XT                             Access contents of 32-bit XT register.
+
+
+
+       Example (s):
+                MOVL     XAR6,@XT             ; Load XAR6 with contents of XT
+                MOVL     @P,XT                ; Load P with contents of XT register
+                ADDL     ACC,@XT              ; ACC = ACC + XT
+
+
+        AMODE            ”loc32” Syntax          Description
+          X      @XARn                           Access contents of 32-bit XARn registers.
+
+
+
+       Example (s):
+                MOVL     XAR6,@XR2            ; Load XAR6 with contents of XAR2
+                MOVL     P,@XAR2              ; Load P with contents of XAR2 register
+                ADDL     ACC,@XAR2            ; ACC = ACC + XAR2
+
+
+      Note: When writing assembly code, the “@” symbol in front of the register is optional. For example:
+      “MOVL ACC,@P” or “MOVL ACC,P”. The disassembler will use the @ to indicate operands that are
+      “loc16” or “loc32”. For example, MOVL ACC, @P is the MOVL ACC, loc32 instruction and MOVL @ACC,
+      P is the MOVL loc32, P instruction.
+
+
+
+
+100   C28x Addressing Modes                                                                   SPRU430F – August 2001 – Revised April 2015
+                                                                                                         Submit Documentation Feedback
+                                          Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                               Register Addressing Modes
+
+5.7.2 16-Bit Register Addressing Modes
+
+         AMODE            ”loc16” Syntax          Description
+             X     @AL                            Access contents of 16-bit AL register.
+                                                  AH register contents are un-affected.
+                                                  When the ”@AL” register is the destination operand, this may affect the Z,N,V,C,OVC
+                                                  flags.
+
+
+        Example (s):
+                 MOV     PH,@AL                ; Load PH with contents of AL
+                 ADD     AH,@AL                ; AH = AH + AL
+                 MOV     T,@AL                 ; Load P with contents of AL
+
+
+         AMODE            ”loc16” Syntax          Description
+             X     @AH                            Access contents of 16-bit Ah register.
+                                                  Al register contents are unaffected.
+                                                  When the ”@AH” register is the destination operand, this may affect the Z,N,V,C,OVC
+                                                  flags.
+
+
+        Example (s):
+                 MOV     PH,@AH                ; Load PH with contents of AH
+                 ADD     AL,@AH                ; Al = Al + Ah
+                 MOV     T,@AH                 ; Load t with contents of AH
+
+
+         AMODE            ”loc16” Syntax          Description
+             X     @PL                            Access contents of 16-bit PL register.
+                                                  PH register contents are unaffected.
+
+
+        Example (s):
+                 MOV     PH,@AL                ; Load PH with contents of PL
+                 ADD     AH,@AL                ; AL = AL + PL
+                 MOV     T,@AL                 ; Load T with contents of PL
+
+
+         AMODE            ”loc16” Syntax          Description
+             X     @PH                            Access contents of 16-bit PH register.
+                                                  PL register contents are unaffected.
+
+
+        Example (s):
+                 MOV     PL,@PH                ; Load PL with contents of PH
+                 ADD     AL,@PH                ; AL = AL + PH
+                 MOV     T,@PH                 ; Load T with contents of PH
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                                C28x Addressing Modes 101
+Submit Documentation Feedback
+                                           Copyright © 2001–2015, Texas Instruments Incorporated
+Register Addressing Modes                                                                                                       www.ti.com
+
+ AMODE                ”loc16” Syntax          Description
+      X       @TH                             Access contents of 16-bit TH register.
+                                              TL register contents are unaffected.
+
+
+          Example (s):
+                    MOV     PL,@T                ; Load PL with contents of T
+                    ADD     AL,@T                ; AL = AL + TH
+                    MOVZ    AR4,@T               ; Load AR4 with contents of T, AR4H = 0
+
+
+           AMODE            ”loc16” Syntax          Description
+              X      @TH                            Access contents of 16-bit SP register
+
+
+
+          Example (s):
+                    MOVZ    AR4,@SP              ; Load AR4 with contents of SP, AR4H = 0
+                    MOV     AL,@SP               ; Load AL with contents of SP
+                    MOV     @SP,AH               ; Load SP with contents of AH
+
+
+           AMODE            ”loc16” Syntax          Description
+              X      @ARn                           Access contents of 16-bit AR0 to AR7 registerS.
+                                                    AR0H to AR7H register contents are unaffected.
+
+
+          Example (s):
+                    MOVZ    AR4,@AR2             ; Load AR4 with contents of AR2, AR4H = 0
+                    MOV     AL,@AR3              ; Load AL with contents of AR3
+                    MOV     @AR5,AH              ; Load AR5 with contents of AH, AR5H = unchanged
+
+
+
+
+102       C28x Addressing Modes                                                                  SPRU430F – August 2001 – Revised April 2015
+                                                                                                            Submit Documentation Feedback
+                                             Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                     Data/Program/IO Space Immediate Addressing Modes
+
+5.8    Data/Program/IO Space Immediate Addressing Modes
+
+               Syntax       Description
+              *(0:16bit)    32BitDataAddr(31:16) = 0
+                            32BitDataAddr(15:0) = 16−bit immediate value
+                            Note: If instruction is repeated, the address is post−incremented on each iteration. This addressing mode can
+                            only access the low 64K of data space.
+
+
+        Instructions that use this addressing mode:
+        MOV                 loc16,*(0:16bit)          ; [loc16] = [0:16bit]
+        MOV                 *(0:16bit),loc16          ; [loc16] = [0:16bit]
+
+
+               Syntax       Description
+                *(PA)       32BitDataAddr(31:16) = 0
+                            32BitDataAddr(15:0) = PA 16−bit immediate value
+                            Note: If instruction is repeated, the address is post−incremented on each iteration. The I/O strobe signal is
+                            toggled when accessing I/O space with this addressing mode. The data space address lines are used for
+                            accessing I/O space.
+
+
+        Instructions that use this addressing mode:
+        OUT                 (PA),*loc16              ; IOspace[0:pa]= [loc16]
+        UOUT                *(0:16bit),loc16         ; IOspace[0:pa]= [loc16](unprotected)
+        IN                  loc16,*(PA)              ; [loc16] = IOspace[0:PA]
+
+
+               Syntax       Description
+               0:pma        22BitProgAddr(21:16) = 0
+                            22BitProgAddr(15:0) = pma 16−bit immediate value
+                            Note: If instruction is repeated, the address is post−incremented on each iteration. This addressing mode can
+                            only access the low 64K of program space.
+
+
+        Instructions that use this addressing mode:
+        MAC                 p,loc16,0:pma           ; ACC = ACC + P << PM,
+                                                    ; P = [loc16] * ProgSpace[0:pma]
+
+
+               Syntax       Description
+              *(0:16bit)    22BitProgAddr(21:16) = 0x3F
+                            22BitProgAddr(15:0) = pma 16−bit immediate value
+                            Note: If instruction is repeated, the address is post−incremented on each iteration. This addressing mode can
+                            only access the upper 64K of program space.
+
+
+        Instructions that use this addressing mode:
+        XPREAD              loc16, *(pma)            ; [loc16] = ProgSpace [0x3f:pma]
+        XMAC                P,loc16*(pma)            ; ACC = ACC + P << PM,
+                                                     ; P = [loc16] * ProgSpace[0x3F:pma]
+        XMACD               P,loc16*(pma)            ; ACC = ACC + P << PM,
+                                                     ; P = [loc16] * ProgSpace[0x3F:pma]
+                                                     ; [loc16+1] = [loc16]
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                                C28x Addressing Modes            103
+Submit Documentation Feedback
+                                           Copyright © 2001–2015, Texas Instruments Incorporated
+Program Space Indirect Addressing Modes                                                                                     www.ti.com
+
+5.9   Program Space Indirect Addressing Modes
+
+             Syntax   Description
+              *AL     22BitProgAddr(21:16) = 0x3F
+                      22BitProgAddr(15:0) = AL
+                      Note: If instruction is repeated, the address in AL is copied to a shadow register and the value post−incremented
+                      on each iteration. The AL register is not modified. This addressing mode can only access the upper 64K of
+                      program space.
+
+
+       Instructions that use this addressing mode:
+       XPREAD         loc16,*AL                     ; [loc16] = ProgSpace [0x3F:AL]
+       XPWRITE        *AL,loc16                     ; ProgSpace [0x3F:AL] = [loc16]
+
+
+             Syntax   Description
+             *XAR7    22BitProgAddr(21:0) = XAR7
+                      Note: If instruction is repeated, only in the XPREAD and XPWRITE instructions, is the address contained in XAR7
+                      copied to a shadow register and the value post−incremented on each iteration. The XAR7 register is not modified.
+                      For all other instructions, the address is not incremented even when repeated.
+
+
+       Instructions that use this addressing mode:
+       MAC            P,loc16,*XAR7                 ; ACC = ACC + P << PM,
+                                                    ; P = [loc16] * ProgSpace[*XAR7]
+       DMAC           ACC:P,loc32,*XAR7             ; ACC = ([loc32].MSW * ProgSpace[*XAR7].MSW) >> PM,
+                                                    ; P = ([loc32].LSW * ProgSpace[*XAR7].MSW) >> PM
+       QMACL          P,loc32,*XAR7                 ; ACC = ACC + P >> PM,
+                                                    ; P = ([loc32] * ProgSpace[*XAR7] >> 32
+       IMACL          P,loc32,*XAR7                 ; ACC = ACC + P,
+                                                    ; P = ([loc32] * ProgSpace[*XAR7] << PM
+       PREAD          loc16,*XAR7                   ; [loc16] = ProgSpace[*XAR7]
+       PWRITE         *XAR7,loc16                   ; ProgSpace[*XAR7] = [loc16]
+
+
+             Syntax   Description
+         *XAR7++      22BitProgAddr(21:0) = XAR7,
+                      if(16−bit operation) XAR7 = XAR7 + 1,
+                      if(32−bit operation) XAR7 = XAR7 + 2
+                      Note: If instruction is repeated, the address is post−incremented as normal.
+
+
+       Instructions that use this addressing mode:
+       MAC            P,loc16,*XAR7++               ; ACC = ACC + P << PM,
+                                                    ; P = [loc16] * ProgSpace[*XAR7++]
+       DMAC           ACC:P,loc32,*XAR7++           ; ACC = ([loc32].MSW * ProgSpace[*XAR7++].MSW) >> PM,
+                                                    ; P = ([loc32].LSW * ProgSpace[*XAR7].MSW) >> PM
+       QMACL          P,loc32,*XAR7++               ; ACC = ACC + P >> PM,
+                                                    ; P = ([loc32] * ProgSpace[*XAR7++] >> 32
+       IMACL          P,loc32,*XAR7++               ; ACC = ACC + P,
+                                                    ; P = ([loc32] * ProgSpace[*XAR7++] << PM
+
+
+
+
+104   C28x Addressing Modes                                                                  SPRU430F – August 2001 – Revised April 2015
+                                                                                                        Submit Documentation Feedback
+                                         Copyright © 2001–2015, Texas Instruments Incorporated
+www.ti.com                                                                                                     Byte Addressing Modes
+
+5.10 Byte Addressing Modes
+
+             Syntax      Description
+          *+XARn[AR0]    32BitDataAddr(31:0) = XARn + Offset (Offset = AR0/AR1/3bit)
+          *+XARn[AR1]
+          *+XARn[3bit]   if(offset == Even Value)
+                            Access LSByte Of 16−bit Memory Location;
+                            Leave      MSByte untouched;
+                         if( Offset == Odd Value )
+                            Access MSByte Of 16−bit Memory Location;
+                            Leave      LSByte untouched;
+                         Note: For all other addressing modes, only the LSByte of the addressed location is accessed, the MSByte is left
+                         untouched.
+
+       Instructions that use this addressing mode:
+       MOVB    AX.LSB,loc16    ; if( address mode == *+XARn[AR0/AR1/3bit] )
+       ;    if( offset == even )
+       ;    AX.LSB = [loc16].LSB;
+       ;    AX.MSB = 0x00;
+       ;    if( offset == odd )
+       ;    AX.LSB = [loc16].MSB;
+       ;    AX.MSB = 0x00;
+       ; else
+       ;    AX.LSB = [loc16].LSB;
+       ;    AX.MSB = 0x00;
+       MOVB    AX.MSB,loc16    ; if( address mode == *+XARn[AR0/AR1/3bit] )
+       ;    if( offset == even )
+       ;    AX.LSB = untouched;
+       ;    AX.MSB = [loc16].LSB;
+       ;    if( offset == odd )
+       ;    AX.LSB = untouched;
+       ;    AX.MSB = [loc16].MSB;
+       ; else
+       ;    AX.LSB = untouched;
+       ;    AX.MSB = [loc16].LSB;
+       MOVB    loc16,AX.LSB    ; if( address mode == *+XARn[AR0/AR1/3bit] )
+       ;    if( offset == even )
+       ;    [loc16].LSB = AX.LSB
+       ;    [loc16].MSB = untouched;
+       ;    if( offset == odd )
+       ;    [loc16].LSB = untouched;
+       ;    [loc16].MSB = AX.LSB;
+       ; else
+       ;    [loc16].LSB = AX.LSB;
+       ;    [loc16].MSB = untouched;
+       MOVB    loc16,AX.MSB    ; if( address mode == *+XARn[AR0/AR1/3bit] )
+       ;    if( offset == even )
+       ;    [loc16].LSB = AX.MSB
+       ;    [loc16].MSB = untouched;
+       ;    if( offset == odd )
+       ;    [loc16].LSB = untouched;
+       ;    [loc16].MSB = AX.MSB;
+       ; else
+       ;    [loc16].LSB = AX.MSB;
+       ;    [loc16].MSB = untouched;
+
+
+
+
+SPRU430F – August 2001 – Revised April 2015                                                             C28x Addressing Modes        105
+Submit Documentation Feedback
+                                          Copyright © 2001–2015, Texas Instruments Incorporated
+Alignment of 32-Bit Operations                                                                                          www.ti.com
+
+5.11 Alignment of 32-Bit Operations
+       All 32-bit reads and writes to memory are aligned at the memory interface to an even address boundary
+       with the least significant word of the 32-bit data aligned to the even address. The output of the address
+       generation unit does not force alignment, hence pointer values retain their values.
+       For example:
+             MOVB     AR0,#5 ; AR0 = 5
+             MOVL     *AR0,ACC    ; AL −> address 0x000004
+                      ; AH −> address 0x000005
+                      ; AR0 = 5
+
+       The programmer must take the above into account when generating addresses that are not aligned to an
+       even boundary.
+       The 32-bit operands are stored in the following order; low order bits, 0 to 15, followed by the high order
+       bits, 16 to 31, on the next highest 16-bit address increment (little-endian format).
+
+
+
+
+106    C28x Addressing Modes                                                             SPRU430F – August 2001 – Revised April 2015
+                                                                                                    Submit Documentation Feedback
+                                     Copyright © 2001–2015, Texas Instruments Incorporated
+                                                                                                                                     Chapter 6
+                                                                                                SPRU430F – August 2001 – Revised April 2015
+
+
+
+                                                    C28x Assembly Language Instructions
+
+         This chapter presents summaries of the instruction set, defines special symbols and notations used, and
+         describes each instruction in detail in alphabetical order.
+
+6.1      Summary of Instructions
+
+         The instructions are listed alphabetically, preceded by a summary.
+                                         Table 6-1. Summary of Instructions
+Title   ......................................................................................................................................   Page
+
+ ABORTI — Abort Interrupt ............................................................................................................           124
+ ABS ACC — Absolute Value of Accumulator .......................................................................................                 125
+ ABSTC ACC — Absolute Value of Accumulator and Load TC ...................................................................                       126
+ ADD ACC,#16bit<<#0..15 — Add Value to Accumulator ..........................................................................                    128
+ ADD ACC,loc16 <<T — Add Value to Accumulator ................................................................................                   129
+ ADD ACC,loc16 << #0..16 — Add Value to Accumulator .........................................................................                    130
+ ADD AX, loc16 — Add Value to AX ..................................................................................................              131
+ ADD loc16, AX — Add AX to Specified Location ...................................................................................                132
+ ADDB SP, #7bit — Add 7-bit Constant to Stack Pointer ..........................................................................                 136
+ ADDB XARn, #7bit — Add 7-bit Constant to Auxiliary Register ..................................................................                  137
+ ADDCL ACC,loc32 — Add 32-bit Value Plus Carry to Accumulator .............................................................                      138
+ ADDCU ACC,loc16 — Add Unsigned Value Plus Carry to Accumulator ........................................................                         139
+ ADDL ACC,loc32 — Add 32-bit Value to Accumulator ............................................................................                   140
+ ADDL ACC,P << PM — Add Shifted P to Accumulator ............................................................................                    141
+ ADDL loc32,ACC — Add Accumulator to Specified Location.....................................................................                     142
+ ADDU ACC,loc16 — Add Unsigned Value to Accumulator .......................................................................                      143
+ ADDUL P,loc32 — Add 32-bit Unsigned Value to P ...............................................................................                  144
+ ADDUL ACC, loc32 — Add 32-bit Unsigned Value to Accumulator .............................................................                       145
+ ADRK #8bit — Add to Current Auxiliary Register ..................................................................................               146
+ AND ACC,#16bit << #0..16 — Description ..........................................................................................               147
+ AND ACC, loc16 — Bitwise AND .....................................................................................................              148
+ AND AX, loc16, #16bit — Bitwise AND ..............................................................................................              149
+ AND IER,#16bit — Bitwise AND to Disable Specified CPU Interrupts ...........................................................                    150
+ AND IFR,#16bit — Bitwise AND to Clear Pending CPU Interrupts...............................................................                     151
+ AND loc16, AX — Bitwise AND .......................................................................................................             152
+ AND AX, loc16 — Bitwise AND .......................................................................................................             153
+ AND loc16,#16bitSigned — Bitwise AND ...........................................................................................                154
+ ANDB AX, #8bit — Bitwise AND 8-bit Value ........................................................................................               155
+ ASP    — Align Stack Pointer ........................................................................................................           156
+ ASR AX,#1...16 — Arithmetic Shift Right ............................................................................................            157
+ ASR AX,T — Arithmetic Shift Right ...................................................................................................           158
+ ASR64 ACC:P,#1..16 — Arithmetic Shift Right of 64-bit Value ...................................................................                 159
+ ASR64 ACC:P,T — Arithmetic Shift Right of 64-bit Value .........................................................................                160
+ ASRL ACC,T — Arithmetic Shift Right of Accumulator ............................................................................                 161
+
+SPRU430F – August 2001 – Revised April 2015                                                          C28x Assembly Language Instructions          107
+Submit Documentation Feedback
+                                                 Copyright © 2001–2015, Texas Instruments Incorporated
+Summary of Instructions                                                                                                            www.ti.com
+
+
+                                       Table 6-1. Summary of Instructions (continued)
+ B 16bitOffset,COND — Branch .......................................................................................................       162
+ BANZ 16bitOffset,ARn− − — Branch if Auxiliary Register Not Equal to Zero..................................................                163
+ BAR 16bitOffset,ARn,ARm,EQ/NEQ — Branch on Auxiliary Register Comparison ..........................................                       164
+ BF 16bitOffset,COND — Branch Fast ...............................................................................................         165
+ C27MAP — Set the M0M1MAP Bit ..................................................................................................           166
+ C27OBJ — Clear the Objmode Bit ...................................................................................................        167
+ C28ADDR — Clear the AMODE Status Bit .........................................................................................            168
+ C28MAP — Set the M0M1MAP Bit ..................................................................................................           169
+ C28OBJ — Set the Objmode Bit .....................................................................................................        170
+ CLRC AMODE — Clear the AMODE Bit .............................................................................................            171
+ CLRC M0M1MAP — Clear the M0M1MAP Bit ......................................................................................               172
+ CLRC Objmode — Clear the Objmode Bit ..........................................................................................           173
+ CLRC OVC — Clear Overflow Counter ..............................................................................................          174
+ CLRC XF — Clear XF Status Bit ......................................................................................................      175
+ CLRC Mode — Clear Status Bits .....................................................................................................       176
+ CMP AX, loc16 — Compare ...........................................................................................................       177
+ CMP loc16,#16bitSigned — Compare...............................................................................................           178
+ CMP64 ACC:P — Compare 64-bit Value ............................................................................................           179
+ CMPB AX, #8bit — Compare 8-bit Value ............................................................................................         180
+ CMPL ACC,loc32 — Compare 32-bit Value .........................................................................................           181
+ CMPL ACC,P << PM — Compare 32-bit Value .....................................................................................             182
+ CMPR 0/1/2/3 — Compare Auxiliary Registers ......................................................................................         183
+ CSB ACC — Count Sign Bits ..........................................................................................................      184
+ DEC loc16 — Decrement by 1 ........................................................................................................       185
+ DINT     — Disable Maskable Interrupts (Set INTM Bit) ...........................................................................         186
+ DMAC ACC:P,loc32,*XAR7/++ — 16-Bit Dual Multiply and Accumulate .......................................................                   187
+ DMOV loc16 — Data Move Contents of 16-bit Location ...........................................................................            189
+ EALLOW — Enable Write Access to Protected Space............................................................................               190
+ EDIS     — Disable Write Access to Protected Registers .........................................................................          191
+ EINT     — Enable Maskable Interrupts (Clear INTM Bit) .........................................................................          192
+ ESTOP0 — Emulation Stop 0 .........................................................................................................       193
+ ESTOP1 — Emulation Stop 1 .........................................................................................................       194
+ FFC XAR7,22bit — Fast Function Call ...............................................................................................       195
+ FLIP AX — Flip Order of Bits in AX Register ........................................................................................      196
+ IACK #16bit — Interrupt Acknowledge ...............................................................................................       197
+ IDLE     — Put Processor in Idle Mode ..............................................................................................      198
+ IMACL P,loc32,*XAR7/++ — Signed 32 X 32-Bit Multiply and Accumulate (Lower Half) .....................................                    199
+ IMPYAL P,XT,loc32 — Signed 32-Bit Multiply (Lower Half) and Add Previous P ..............................................                 201
+ IMPYL ACC,XT,loc32 — Signed 32 X 32-Bit Multiply (Lower Half) ..............................................................              203
+ IMPYL P,XT,loc32 — Signed 32 X 32-Bit Multiply (Lower Half) ..................................................................            204
+ IMPYSL P,XT,loc32 — Signed 32-Bit Multiply (Low Half) and Subtract P ......................................................               205
+ IMPYXUL P,XT,loc32 — Signed 32 X Unsigned 32-Bit Multiply (Lower Half) ..................................................                 207
+ IN loc16,*(PA) — Input Data From Port ..............................................................................................      209
+ INC loc16 — Increment by 1...........................................................................................................     211
+ INTR     — Emulate Hardware Interrupt .............................................................................................       212
+ IRET     — Interrupt Return............................................................................................................   214
+ LB *XAR7 — Long Indirect Branch ...................................................................................................       216
+ LB 22bit — Long Branch ...............................................................................................................    217
+ LC *XAR7 — Long Indirect Call .......................................................................................................     218
+
+108    C28x Assembly Language Instructions                                                        SPRU430F – August 2001 – Revised April 2015
+                                                                                                             Submit Documentation Feedback
+                                              Copyright © 2001–2015, Texas Instruments Incorporated
+
