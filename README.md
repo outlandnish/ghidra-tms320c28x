@@ -6,6 +6,15 @@ targeting the **TMS320F28377D** (dual-core C28x + FPU, F2837xD family).
 There is no official Ghidra support for the TMS320C28x. This module fills that gap:
 it disassembles and decompiles C28x firmware, which Ghidra otherwise cannot do at all.
 
+> ⚠️ **WIP — expect bugs.** This is a work in progress, built rapidly ("vibe-coded")
+> with [Claude Code](https://claude.com/claude-code). It validates to 100% mnemonic
+> parity against TI's own `dis2000` on a sample of the `rts2800_fpu32` runtime (see
+> Status), but that sample doesn't exercise the full ISA, and decode-only families
+> (FPU/VCU) carry minimal/approximate p-code semantics. Several real
+> operand/semantics bugs have already been found and fixed by cross-checking against
+> the manual — assume more remain. **Verify against the SPRU430F/SPRUHS1C reference
+> before trusting any decode for critical work, and please file issues.**
+
 ## Goal
 
 A practical reverse-engineering processor module — decode-complete and decompilable,
@@ -66,7 +75,17 @@ each constructor; it is not bulk-extracted.
 
 ## Status
 
-Skeleton complete and **compiling clean** against Ghidra 12.1.2's SLEIGH compiler:
-word-addressable spaces, full register file with aliasing, and 6 verified fixed-opcode
-instructions (ABORTI, EALLOW, EDIS, IDLE, ESTOP0, NOP). Next: load-test in Ghidra, then
-the shared addressing sub-tables. See the roadmap in [docs/DESIGN.md](docs/DESIGN.md).
+Compiles clean against Ghidra 12.1.2's SLEIGH compiler and decompiles C28x code.
+The full instruction set across all families decodes, the shared `loc16`/`loc32`
+addressing sub-tables are implemented (AMODE=0), and the decompiler produces C output.
+
+**Validation:** disassembled three objects from TI's own `rts2800_fpu32.lib` runtime
+(real TI-compiled C28x code) and diffed mnemonics against TI's `dis2000`:
+**100% agreement, 0 wrong decodes** across 3,445 instructions (`k_expf` 135,
+`catrigf` 1926, `c99_complex` 1384). The harness is
+[tests/run_ti_parity.ps1](tests/run_ti_parity.ps1) +
+[ghidra_scripts/DumpParity.java](ghidra_scripts/DumpParity.java) — reuse it for any
+TI object. Note: mnemonic parity does **not** prove operand/semantics correctness
+(it only checks the first token); several such bugs were caught by cross-checking the
+manual, so keep auditing. See [docs/PICKUP-PLAN.md](docs/PICKUP-PLAN.md) for the audit
+status and known-bug classes.

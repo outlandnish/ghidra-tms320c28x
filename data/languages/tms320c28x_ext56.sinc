@@ -110,6 +110,14 @@
     loc32 = ACC;
 }
 
+# MOVB loc16,#8bit,COND  0101 0110 1011 COND : CCCC CCCC LLLL LLLL  (2-word).
+# COND is in word1's low nibble (cond4); word2 = 8-bit const (high byte) + loc16
+# (low byte). Decode-only conditional byte store; render COND + loc16.
+:MOVB loc16, "#8bit", CC  is op_hi8=0x56 & loc_hi4=0b1011 & cond4 & CC ; loc16 {
+    local take:1 = CC;
+    if (take == 0) goto inst_next;
+}
+
 # =============================================================================
 # C2xLP program read/write + branches (decode-only -- rare, exotic).
 # =============================================================================

@@ -29,7 +29,8 @@ define token instr16 (16)
     loc_full8 = (0,7)       # whole loc field (fixed encodings)
     # operand sub-fields that share the opcode word:
     ax_bit    = (8,8)       # 0 = AL, 1 = AH  (the 'A' bit in 1001 xxxA ....)
-    arsel3    = (8,10)      # 3-bit AR selector (the 'nnn' in 0111 1nnn ....)
+    arsel3    = (8,10)      # 3-bit AR selector (the 'nnn' in 0111 1nnn ....) -> AR view
+    arsel3x   = (8,10)      # same 3 bits attached to XARn (32-bit) for MOVZ zero-extend
     imm8      = (0,7)       # 8-bit immediate (CCCC CCCC, low byte)
     simm8     = (0,7) signed # 8-bit signed offset (SB)
     cond4     = (0,3)       # 4-bit condition code (COND), low nibble (B/BF)
@@ -47,8 +48,18 @@ define token instr16 (16)
     fimm_hi   = (4,7)       # MOVIZ/MOVXI: bits 7..4 (=0000)
     fimm_z    = (3,3)       # MOVIZ(0)/MOVXI(1) selector bit
     fimm_reg  = (0,2)       # FP register III for MOVIZ/MOVXI -> attached to R0H..R7H
-    op_lo7    = (0,6)       # low 7 bits (ASR/LSR AX: 1111 1111 0110 0xxA shift-by-T)
+    op_lo7    = (0,6)       # low 7 bits (sub-opcode where bit0 is NOT an operand)
+    op_lo71   = (1,7)       # bits 1..7 (ASR/LSR/LSL AX,T: 1111 1111 0110 0ssA, A=bit0)
+    ax_bit0   = (0,0)       # AX selector in bit 0 (the 'A' in ...0110 0ssA)
     sp7       = (0,6)       # 7-bit SP immediate (ADDB SP,#7bit)
+    xarn_hi3  = (8,10)      # XARn selector nnn (SUBB XARn,#: 1101 1nnn 1CCC CCCC)
+    fcndf     = (0,3)       # FPU CNDF condition (MOV32 RaH,RbH,CNDF etc.)
+    loc_hi4   = (4,7)       # high nibble of the low byte (MOV32 RaH,RbH: ...1100 CNDF)
+    shft4     = (0,3)       # 4-bit shift count SHFT (AX,#1..16: SHFT, 0->16)
+    ax_bit4   = (4,4)       # AX selector in bit 4 (the 'A' in 1111 1111 ssAS SHFT)
+    op_lo765  = (5,7)       # bits 5..7 of low byte (AX,#imm shift selector sss)
+    p_rf      = (1,3)       # fff  RfH for parallel MPYF32||MOV32 (LSW: 0000 fffe)
+    p_re_hi   = (0,0)       # e    high bit of ReH for that parallel form
 ;
 
 # --- trailing 16-bit immediate / extension word -------------------------------
@@ -94,6 +105,18 @@ PLreg:  "PL"  is epsilon { export PL;  }
 # AX register select: the 'A' bit (ax_bit) picks AL (0) or AH (1).
 AX: "AL"  is ax_bit=0 { export AL; }
 AX: "AH"  is ax_bit=1 { export AH; }
+
+# AX select where the 'A' bit lives in bit 0 of the word (e.g. ASR/LSR/LSL AX,T).
+AXb0: "AL"  is ax_bit0=0 { export AL; }
+AXb0: "AH"  is ax_bit0=1 { export AH; }
+
+# AX select where the 'A' bit lives in bit 4 (e.g. ASR/LSR/LSL AX,#1..16).
+AXb4: "AL"  is ax_bit4=0 { export AL; }
+AXb4: "AH"  is ax_bit4=1 { export AH; }
+
+# SHFT count for AX,#1..16.  The field encodes shift-1 (so SHFT=0 -> shift of 16);
+# disasm action computes the displayed/used count.
+shcount: cnt  is shft4  [ cnt = shft4 + 1; ]  { export *[const]:1 cnt; }
 
 # =============================================================================
 # Instruction families (encodings verified against ch6_instruction_detail.txt).

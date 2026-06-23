@@ -17,9 +17,14 @@ define token fpu_msw (16)
     f_rb   = (3,5)     # bbb  source RbH
     f_rc   = (6,8)     # ccc  source RcH
     f_msw_hi = (9,15)
+    # parallel "op || MOV32 mem" MSW layout: eedd daaa mem32
+    p_rd    = (11,13)  # ddd  MPYF32 dest RdH
+    p_ra    = (8,10)   # aaa  MOV32 dest RaH
+    p_re_lo = (14,15)  # ee   low 2 bits of ReH (high bit is in the LSW)
 ;
 attach variables [ f_ra f_rb f_rc ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 attach variables [ fimm_reg ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
+attach variables [ p_rd p_ra ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 
 # =============================================================================
 # Register-register 3-operand FP ops:  LSW fixed, MSW = 0000 000c ccbb baaa
@@ -71,12 +76,76 @@ attach variables [ fimm_reg ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 :MOVIZ fimm_reg, "#"imm16  is op_hi8=0xE8 & fimm_hi=0 & fimm_z=0 & fimm_reg ; imm16 { }
 :MOVXI fimm_reg, "#"imm16  is op_hi8=0xE8 & fimm_hi=0 & fimm_z=1 & fimm_reg ; imm16 { }
 
-# MOV32 reg<->P/ACC/mem via loc32 (the FP register is implicit in these forms here;
-# decode-only — these were the dominant FP UNDEFs in real code).
-:MOV32 loc32, "RaH"  is op_hi8=0xBF & loc32 { }   # store FP reg -> loc32 (P/ACC/mem)
-:MOV32 "RaH", loc32  is op_hi8=0xBD & loc32 { }   # load  FP reg <- loc32
-:MOV32 "mem32,RaH"   is op_hi8=0xE2 & op_lo8=0x03 { }
-:MOV32 "RaH,mem32"   is op_hi8=0xE2 & op_lo8=0xAF { }
+# MOV32 reg<->P/ACC/mem.  These are TWO-WORD instructions: LSW = opcode + loc32,
+# MSW = a 16-bit word selecting the FP register (RaH) plus sub-encoding bits.
+# They MUST consume both words or the linear sweep desyncs and mis-decodes the MSW
+# as a separate instruction (this was the dominant alignment break vs TI dis2000).
+# Decode-only: the exact MSW->RaH bit layout isn't cleanly documented, so we render
+# the FP operand generically as "RaH" rather than guess a wrong register; loc32 still
+# shows the C28x side (P / ACC / mem) for readable disassembly.
+#   MOV32 P,RaH / MOV32 ACC,RaH      LSW: 1011 1111 loc32 ; MSW: IIII IIII IIII IIII
+:MOV32 loc32, "RaH"  is op_hi8=0xBF & loc32 ; imm16 { }   # store FP reg -> P/ACC/mem
+#   MOV32 RaH,P / MOV32 RaH,ACC      LSW: 1011 1101 loc32 ; MSW: IIII IIII IIII IIII
+:MOV32 "RaH", loc32  is op_hi8=0xBD & loc32 ; imm16 { }   # load  FP reg <- P/ACC/mem
+#   MOV32 mem32,RaH  /  MOV32 RaH,mem32   LSW: 1110 0010 .... ; MSW: addressing + RaH
+:MOV32 "mem32, RaH"  is op_hi8=0xE2 & op_lo8=0x03 ; imm16 { }
+:MOV32 "RaH, mem32"  is op_hi8=0xE2 & op_lo8=0xAF ; imm16 { }
 
-# MOV32 RaH, RbH   LSW=1110 0110 1100 CNDF : MSW=0000 0000 00bb baaa  (reg-reg)
-:MOV32 f_ra, f_rb  is op16=0xE6C0; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb; }
+# CNDF condition codes (FPU), low nibble of the LSW. spruhs1c Table; reserved
+# encodings (6..9) are unused -> name them rsvd so the table is total.
+attach names [ fcndf ]
+  [ "NEQ" "EQ" "GT" "GEQ" "LT" "LEQ" "rsvd6" "rsvd7"
+    "rsvd8" "rsvd9" "TF" "NTF" "LU" "LV" "UNC" "UNCF" ];
+
+# MOV32 RaH, RbH {,CNDF}   LSW=1110 0110 1100 CNDF : MSW=0000 0000 00bb baaa  (reg-reg)
+# CNDF=1111 (UNCF) is the default/unconditional form (printed without a suffix to
+# match TI's bare "MOV32 RaH,RbH" for the common case is overkill; show the cond).
+:MOV32 f_ra, f_rb, fcndf  is op_hi8=0xE6 & loc_hi4=0b1100 & fcndf
+                          ; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb; }
+
+# Parallel "MPYF32 RdH,ReH,RfH || MOV32 RaH,mem32"  LSW: 1110 0011 0000 fffe ;
+# MSW: eedd daaa mem32.  RdH=ddd(MSW), RfH=fff(LSW), RaH=aaa(MSW). ReH is split
+# across both words (LSW bit0 + MSW bits14-15) — SLEIGH can't combine two-token
+# fields in one operand, so it's not rendered. Decode-only: mnemonic + the cleanly
+# decodable register operands; we mark the MPYF32 dest written.
+attach variables [ p_rf ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
+:MPYF32 p_rd, p_rf, "||MOV32", p_ra, "mem32"
+        is op_hi8=0xE3 & loc_hi4=0b0000 & p_rf
+        ; p_rd & p_ra { p_rd = p_rf; }
+
+# =============================================================================
+# Immediate-operand FP ops (2-word):  LSW = 1110 1000 ssII IIII ; MSW carries the
+# rest of the #16FHi immediate plus the register fields (..bbb aaa). ss (op_lo_76)
+# selects the op: 01=MPYF32, 10=ADDF32, 11=SUBF32.  Decode-only: render mnemonic +
+# RaH (MSW aaa); the f16 immediate is not reconstructed (split across both words).
+# (00 with III in low bits is the MOVIZ/MOVXI form, already handled above.)
+:MPYF32 f_ra, "#16FHi"  is op_hi8=0xE8 & op_lo_76=0b01 ; f_ra { }
+:ADDF32 f_ra, "#16FHi"  is op_hi8=0xE8 & op_lo_76=0b10 ; f_ra { }
+:SUBF32 f_ra, "#16FHi"  is op_hi8=0xE8 & op_lo_76=0b11 ; f_ra { }
+
+# CMPF32 RaH, #16FHi   LSW: 1110 1000 0001 0III ; MSW: IIII IIII IIII Iaaa  (2-word)
+:CMPF32 f_ra, "#16FHi"  is op_hi8=0xE8 & loc_mode5=0b00010 ; f_ra { }
+# CMPF32 RaH, #0.0     LSW: 1110 0101 1010 0aaa  (single word). fimm_reg = aaa.
+:CMPF32 fimm_reg, "#0.0"  is op_hi8=0xE5 & loc_mode5=0b10100 & fimm_reg { }
+# ZERO RaH             LSW: 1110 0101 1001 0aaa  (single word)
+:ZERO fimm_reg            is op_hi8=0xE5 & loc_mode5=0b10010 & fimm_reg { fimm_reg = 0; }
+# NEGF32 RaH,RbH{,CNDF} LSW: 1110 0110 1010 CNDF ; MSW: 0000 0000 00bb baaa
+:NEGF32 f_ra, f_rb, fcndf  is op_hi8=0xE6 & loc_hi4=0b1010 & fcndf
+                           ; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb; }
+# MOVST0 FLAG          LSW: 1010 1101 FFFF FFFF  (load selected STF flags into ST0)
+:MOVST0 "#"imm8        is op_hi8=0xAD & imm8 { }
+
+# MAXF32 RaH, #16FHi   LSW: 1110 1000 0010 0III ; MSW: IIII IIII IIII Iaaa  (2-word)
+:MAXF32 f_ra, "#16FHi"  is op_hi8=0xE8 & loc_mode5=0b00100 ; f_ra { }
+# SWAPF RaH,RbH{,CNDF}  LSW: 1110 0110 1110 CNDF ; MSW: 0000 0000 00bb baaa
+:SWAPF f_ra, f_rb, fcndf  is op_hi8=0xE6 & loc_hi4=0b1110 & fcndf
+                          ; f_rb & f_ra & f_msw_hi=0 { }
+# Parallel ADDF32/SUBF32 ||MOV32 forms (LSW 0xE0/0xE3 sub-ops) — 2-word, the register
+# fields are bit-packed across both words like MPYF32||MOV32. Decode-only: emit the
+# mnemonic + the cleanly decodable dest (p_rd in MSW); consume the MSW.
+#   ADDF32 RdH,ReH,RfH || MOV32 mem32,RaH   LSW: 1110 0000 0001 fffe
+:ADDF32 p_rd, "||MOV32"  is op_hi8=0xE0 & loc_hi4=0b0001 ; p_rd { }
+#   ADDF32 ... || MOV32 RaH,mem32  LSW: 1110 0011 0001 fffe
+:ADDF32 p_rd, "||MOV32"  is op_hi8=0xE3 & loc_hi4=0b0001 ; p_rd { }
+#   SUBF32 ... || MOV32 RaH,mem32  LSW: 1110 0011 0010 fffe
+:SUBF32 p_rd, "||MOV32"  is op_hi8=0xE3 & loc_hi4=0b0010 ; p_rd { }

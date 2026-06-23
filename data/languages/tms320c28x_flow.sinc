@@ -80,20 +80,41 @@ rel8dest:  reloc  is simm8   [ reloc = inst_start + simm8;  ] { export *[ram]:4 
     if (taken) goto rel16dest;
 }
 
+# BF 16bitOffset,COND   0101 0110 1100 COND : CCCC CCCC CCCC CCCC  (branch fast,
+# PC-relative like B). word1 = 0x56C0 | COND; word2 = signed offset. The COND lives
+# in the low nibble of word1 (cond4); the rel target uses word2 (simm16).
+:BF rel16dest,CC  is op_hi8=0x56 & loc_hi4=0b1100 & cond4 & CC; simm16 & rel16dest {
+    if (CC) goto rel16dest;
+}
+
 # =============================================================================
 # Long / indirect calls and returns
 # =============================================================================
 # LCR #22bit          0111 0110 01CC CCCC : CCCC CCCC CCCC CCCC  (call using RPC)
-:LCR rel16dest  is op_hi8=0x76 & op_lo_76=0b01; simm16 & rel16dest {
-    # push return addr into RPC chain; model as a call.
+# The target is an ABSOLUTE 22-bit address: word1 low 6 bits = addr[21:16],
+# word2 = addr[15:0]. (NOT pc-relative — the earlier rel16dest version computed
+# inst_start+simm16, so every LCR pointed back at itself; in unlinked .objs the
+# field is a 0 reloc placeholder, which made it look like a self-call.)
+:LCR abs22  is op_hi8=0x76 & op_lo_76=0b01 & loc_off6 ; imm16
+            [ abs22 = (loc_off6 << 16) | imm16; ] {
     RPC = inst_next;
-    call rel16dest;
+    local tgt:4 = abs22;
+    call [tgt];
 }
 
 # LCR *XARn           0011 1110 0110 0RRR  (indirect call using RPC)
 :LCR "*"loc_areg  is op_hi8=0x3E & op_lo_35=0b01100 & loc_areg {
     RPC = inst_next;
     call [loc_areg];
+}
+
+# FFC XAR7,#22bit     0000 0000 11CC CCCC : CCCC CCCC CCCC CCCC  (fast call; return
+# PC saved in XAR7, ABSOLUTE 22-bit target). word1 low 6 bits = addr[21:16].
+:FFC "XAR7,"abs22  is op_hi8=0x00 & op_lo_76=0b11 & loc_off6 ; imm16
+            [ abs22 = (loc_off6 << 16) | imm16; ] {
+    XAR7 = inst_next;
+    local tgt:4 = abs22;
+    call [tgt];
 }
 
 # LRETR               0000 0000 0000 0110   (long return using RPC)
