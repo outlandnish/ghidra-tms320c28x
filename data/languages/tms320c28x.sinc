@@ -44,6 +44,11 @@ define token instr16 (16)
     tbit_b    = (8,11)      # 4-bit bit index (TBIT)
     op_hi_6   = (10,15)     # top 6 bits (MOVZ DP: 1011 10CC ....)
     dp10      = (0,9)       # 10-bit DP immediate (MOVZ DP,#10bit)
+    fimm_hi   = (4,7)       # MOVIZ/MOVXI: bits 7..4 (=0000)
+    fimm_z    = (3,3)       # MOVIZ(0)/MOVXI(1) selector bit
+    fimm_reg  = (0,2)       # FP register III for MOVIZ/MOVXI -> attached to R0H..R7H
+    op_lo7    = (0,6)       # low 7 bits (ASR/LSR AX: 1111 1111 0110 0xxA shift-by-T)
+    sp7       = (0,6)       # 7-bit SP immediate (ADDB SP,#7bit)
 ;
 
 # --- trailing 16-bit immediate / extension word -------------------------------

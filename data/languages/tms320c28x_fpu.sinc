@@ -19,6 +19,7 @@ define token fpu_msw (16)
     f_msw_hi = (9,15)
 ;
 attach variables [ f_ra f_rb f_rc ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
+attach variables [ fimm_reg ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 
 # =============================================================================
 # Register-register 3-operand FP ops:  LSW fixed, MSW = 0000 000c ccbb baaa
@@ -59,3 +60,23 @@ attach variables [ f_ra f_rb f_rc ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 :POP "RB"    is op16=0xFFF1 { }
 :RESTORE     is op16=0xE562 { }
 :ZEROA       is op16=0xE563 { R0H=0; R1H=0; R2H=0; R3H=0; R4H=0; R5H=0; R6H=0; R7H=0; }
+
+# =============================================================================
+# FPU register moves found decoding real TI rts2800 code (validated vs dis2000).
+# These were the dominant UNDEFs; adding them lifts decode of FP-heavy code sharply.
+# =============================================================================
+# MOVIZ RaH,#imm  LSW=1110 1000 0000 0III ; MOVXI RaH,#imm  LSW=1110 1000 0000 1III
+# (load upper / lower 16 of an FP reg; immediate in the 2nd word). fimm_reg = III,
+# fimm_z = the z-bit distinguishing IZ(0) from XI(1). Both defined on instr16.
+:MOVIZ fimm_reg, "#"imm16  is op_hi8=0xE8 & fimm_hi=0 & fimm_z=0 & fimm_reg ; imm16 { }
+:MOVXI fimm_reg, "#"imm16  is op_hi8=0xE8 & fimm_hi=0 & fimm_z=1 & fimm_reg ; imm16 { }
+
+# MOV32 reg<->P/ACC/mem via loc32 (the FP register is implicit in these forms here;
+# decode-only — these were the dominant FP UNDEFs in real code).
+:MOV32 loc32, "RaH"  is op_hi8=0xBF & loc32 { }   # store FP reg -> loc32 (P/ACC/mem)
+:MOV32 "RaH", loc32  is op_hi8=0xBD & loc32 { }   # load  FP reg <- loc32
+:MOV32 "mem32,RaH"   is op_hi8=0xE2 & op_lo8=0x03 { }
+:MOV32 "RaH,mem32"   is op_hi8=0xE2 & op_lo8=0xAF { }
+
+# MOV32 RaH, RbH   LSW=1110 0110 1100 CNDF : MSW=0000 0000 00bb baaa  (reg-reg)
+:MOV32 f_ra, f_rb  is op16=0xE6C0; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb; }

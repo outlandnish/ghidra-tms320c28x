@@ -193,3 +193,15 @@ macro pop16(dst) { SP = SP - 1; local a:4 = zext(SP); dst = *[ram]:2 a; }
 :PUSH "DP"       is op16=0x760B { push16(DP); }
 :PUSH "ST0"      is op16=0x7618 { push16(ST0); }
 :PUSH "ST1"      is op16=0x7608 { push16(ST1); }
+
+# =============================================================================
+# Batch 5: AX shifts (0xFF-prefix), SP byte-add, MOVL ACC,P — from TI rts validation.
+# =============================================================================
+# ASR AX,T   1111 1111 0110 010A  (arithmetic shift right by T)
+:ASR AX, "T"  is op_hi8=0xFF & op_lo7=0b0110010 & AX  { AX = AX s>> (T & 0xf); }
+# LSR AX,T   1111 1111 0110 001A
+:LSR AX, "T"  is op_hi8=0xFF & op_lo7=0b0110001 & AX  { AX = AX >> (T & 0xf); }
+# ADDB SP,#7bit   1111 1110 0CCC CCCC  (stack adjust)
+:ADDB "SP", "#"sp7  is op_hi8=0xFE & sp7  { SP = SP + sp7; }
+# MOVL ACC,P   0001 0110 1010 1100  (move P to ACC)
+:MOVL ACCreg, "P"  is op16=0x16AC & ACCreg  { ACC = P; }

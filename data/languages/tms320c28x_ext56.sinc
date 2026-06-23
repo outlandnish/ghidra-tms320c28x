@@ -118,3 +118,8 @@
 :XB "*AL"              is op16=0x5614 { }
 :XCALL "*AL"           is op16=0x5634 { }
 :XRET                  is op16=0x56ff { return [RPC]; }
+
+# --- 0x56-prefix 64/long shifts (single-word, fixed sub-opcode) --------------
+:LSLL "ACC,T"   is op16=0x563b { local s:4 = zext(T) & 0x1f; ACC = ACC << s; }
+:LSRL "ACC,T"   is op16=0x5622 { local s:4 = zext(T) & 0x1f; ACC = ACC >> s; }
+:ASRL "ACC,T"   is op16=0x5610 { local s:4 = zext(T) & 0x1f; ACC = ACC s>> s; }
