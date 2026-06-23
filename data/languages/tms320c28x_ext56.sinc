@@ -128,10 +128,10 @@
 # =============================================================================
 # C2xLP program read/write + branches (decode-only -- rare, exotic).
 # =============================================================================
-:XPREAD loc16, "*AL"   is op16=0x563c ; loc16  { }   # program-memory read
-:XPWRITE "*A", loc16   is op16=0x563d ; loc16  { }   # program-memory write
-:XB "*AL"              is op16=0x5614 { }
-:XCALL "*AL"           is op16=0x5634 { }
+:XPREAD loc16, "*AL"   is op16=0x563c ; loc16  { local pma:4 = zext(AL); loc16 = *[ram]:2 pma; }
+:XPWRITE "*A", loc16   is op16=0x563d ; loc16  { local pma:4 = zext(AL); *[ram]:2 pma = loc16; }
+:XB "*AL"              is op16=0x5614 { local tgt:4 = zext(AL); goto [tgt]; }
+:XCALL "*AL"           is op16=0x5634 { local tgt:4 = zext(AL); RPC = inst_next; call [tgt]; }
 :XRET                  is op16=0x56ff { return [RPC]; }
 
 # =============================================================================

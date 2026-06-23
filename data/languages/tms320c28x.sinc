@@ -86,6 +86,17 @@ define token imm16w (16)
 :EDIS           is op16=0x761A  { }                 # Disable write access to protected space
 :IDLE           is op16=0x7621  { }                 # Put processor in idle mode
 :ESTOP0         is op16=0x7625  { }                 # Emulation stop 0
+:ESTOP1         is op16=0x7624  { }                 # Emulation stop 1 (halts only when emulator connected)
+
+# IER/IFR immediate forms (2-word: opcode word + imm16).  SPRU430F encodings:
+# OR  IER,#16bit  0111 0110 0010 0011 = 0x7623
+# OR  IFR,#16bit  0111 0110 0010 0111 = 0x7627
+# AND IER,#16bit  0111 0110 0010 0110 = 0x7626
+# AND IFR,#16bit  0111 0110 0010 1111 = 0x762F
+:OR  "IER", "#"imm16  is op16=0x7623 ; imm16  { IER = IER | imm16:2; }
+:OR  "IFR", "#"imm16  is op16=0x7627 ; imm16  { IFR = IFR | imm16:2; }
+:AND "IER", "#"imm16  is op16=0x7626 ; imm16  { IER = IER & imm16:2; }
+:AND "IFR", "#"imm16  is op16=0x762F ; imm16  { IFR = IFR & imm16:2; }
 
 # NOP {*ind}: 0111 0111 LLLL LLLL. The loc field optionally performs an indirect
 # address modify (e.g. NOP *XAR0++). Plain NOP is the loc=0 case. One constructor
