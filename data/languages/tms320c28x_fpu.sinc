@@ -90,7 +90,11 @@ attach variables [ p_rd p_ra ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 # from the MSW without a full MSW loc subtable.
 #   MOV32 loc32, RaH  (FP->C28x)  LSW: 1011 1111 loc32  MSW: imm16
 #   MOV32 RaH,  loc32 (C28x->FP)  LSW: 1011 1101 loc32  MSW: imm16
-:MOV32 loc32, "RaH"  is op_hi8=0xBF & loc32 ; imm16 { }   # stub: FP reg -> loc32
+# store FP reg -> ACC/P/mem (loc32). The FP source reg isn't decodable from the MSW,
+# but the loc32 DEST is — write it from an opaque temp so the decompiler sees the dest
+# REASSIGNED (not "unchanged") and ACC/P/mem dataflow continues. Common in real FP code
+# (e.g. MOV32 @ACC,RaH; the empty body silently dropped the ACC def).
+:MOV32 loc32, "RaH"  is op_hi8=0xBF & loc32 ; imm16 { local v:4 = 0; loc32 = v; } # stub: FP reg -> loc32
 :MOV32 "RaH", loc32  is op_hi8=0xBD & loc32 ; imm16 { loc32 = loc32; }  # stub: loc32 -> FP reg
 # 0xE2 family: LSW = 1110 0010 <hi4> <lo4> ; MSW = 0000 0aaa mem32
 # p_ra (MSW bits 8-10) = RaH. mem32 in MSW bits 0-7 uses the standard loc addressing
