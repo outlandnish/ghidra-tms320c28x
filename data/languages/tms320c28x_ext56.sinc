@@ -48,6 +48,13 @@
 :ADDUL ACCreg, loc32 is op16=0x5653 ; loc32 & ACCreg  { ACC = ACC + loc32; }
 # SUBUL ACC,loc32    0x5655
 :SUBUL ACCreg, loc32 is op16=0x5655 ; loc32 & ACCreg  { ACC = ACC - loc32; }
+# SUBBL ACC,loc32    0x5654  (subtract 32-bit plus inverse borrow: ACC = ACC - loc32 - ~C).
+# dis2000-confirmed (word 0x5654); the borrow-chain counterpart of SUBUL. Reached via a
+# branch shadow in FUN_0008e3d7 — the fall-through sweep missed it.
+:SUBBL ACCreg, loc32 is op16=0x5654 ; loc32 & ACCreg  {
+    local nborrow:4 = zext($(C) == 0);   # ~C as 0/1
+    ACC = ACC - loc32 - nborrow;
+}
 # ADDUL P,loc32      0x5657
 :ADDUL Preg, loc32   is op16=0x5657 ; loc32 & Preg  { P = P + loc32; }
 # SUBUL P,loc32      0x565d
@@ -184,6 +191,13 @@
 # CMP64 ACC:P  0101 0110 0101 1110  (compare 64-bit ACC:P vs 0; set N/Z, Z from both).
 :CMP64 "ACC:P"  is op16=0x565e  {
     local v:8 = (zext(ACC) << 32) | zext(P);
+    $(N) = (v s< 0); $(Z) = (v == 0);
+}
+# NEG64 ACC:P  0101 0110 0101 1000  (negate the 64-bit ACC:P pair). dis2000-confirmed;
+# reached only via a branch shadow (after SB ...,GEQ), so the fall-through sweep missed it.
+:NEG64 "ACC:P"  is op16=0x5658  {
+    local v:8 = (zext(ACC) << 32) | zext(P);
+    v = -v; ACC = v(4); P = v(0);
     $(N) = (v s< 0); $(Z) = (v == 0);
 }
 # LSR64 ACC:P,T  0101 0110 0101 1011  (64-bit logical shift right by T(5:0)).

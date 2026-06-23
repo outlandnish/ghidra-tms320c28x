@@ -18,6 +18,8 @@ define token fpu_msw (16)
     f_rb   = (3,5)     # bbb  source RbH
     f_rc   = (6,8)     # ccc  source RcH
     f_msw_hi = (9,15)
+    f_msw_mid = (9,14)  # MSW bits 9-14 (the reg-form's must-be-zero middle bits)
+    f_msw_rnd = (15,15) # MSW bit 15 = round-to-nearest variant selector (F32TO*16R)
     # parallel "op || MOV32 mem" MSW layout: eedd daaa mem32
     p_rd    = (11,13)  # ddd  MPYF32 dest RdH
     p_ra    = (8,10)   # aaa  MOV32 dest RaH
@@ -73,7 +75,11 @@ macro setFloatFlags(a, b) {
 :I32TOF32 f_ra, f_rb   is op16=0xE689; f_rb & f_ra & f_msw_hi=0 { f_ra = int2float(f_rb); }
 :UI32TOF32 f_ra, f_rb  is op16=0xE68B; f_rb & f_ra & f_msw_hi=0 { f_ra = int2float(f_rb); }
 :I16TOF32 f_ra, f_rb   is op16=0xE68D; f_rb & f_ra & f_msw_hi=0 { local v:2 = f_rb:2; f_ra = int2float(v); }
-:F32TOUI16 f_ra, f_rb  is op16=0xE68E; f_rb & f_ra & f_msw_hi=0 { local v:2 = trunc(f_rb); f_ra = zext(v); }  # float -> uint16 (truncate)
+:F32TOUI16 f_ra, f_rb  is op16=0xE68E; f_rb & f_ra & f_msw_mid=0 & f_msw_rnd=0 { local v:2 = trunc(f_rb); f_ra = zext(v); }  # float -> uint16 (truncate)
+# F32TOUI16R — same LSW, MSW bit15=1 selects round-to-nearest. dis2000 confirmed the
+# round variant at word 0xe68e:0x8000 (the f_msw_hi=0 form rejected it). Modeled as the
+# same convert (we don't track the rounding mode bit precisely).
+:F32TOUI16R f_ra, f_rb  is op16=0xE68E; f_rb & f_ra & f_msw_mid=0 & f_msw_rnd=1 { local v:2 = trunc(f_rb); f_ra = zext(v); }  # float -> uint16 (round)
 :UI16TOF32 f_ra, f_rb  is op16=0xE68F; f_rb & f_ra & f_msw_hi=0 { local v:2 = f_rb:2; f_ra = int2float(v); }
 
 # =============================================================================
