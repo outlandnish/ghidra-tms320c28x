@@ -19,24 +19,33 @@ import ghidra.program.model.symbol.SourceType;
 
 public class SetupF28377D extends GhidraScript {
 
-    // ── D_CAN (spruhm8k Table 22-8, word offsets = TRM byte offset / 2) ────────
+    // ── D_CAN (spruhm8k Table 22-8) — TRM BYTE offsets (NOT halved). The C28x accesses
+    //    these registers via the word-addressed space, but the firmware uses the raw TRM
+    //    byte offsets off the base pointer (e.g. base+0x100 = IF1CMD, base+0x108 = IF1ARB,
+    //    confirmed in CAN_config_RX/TX_mailbox). The D_CAN core registers are 32-bit; the
+    //    firmware touches their 16-bit halves (e.g. IF1MSK high half at +0x106, IF1ARB high
+    //    half at +0x10a). Offsets verified against firmware ground truth + SPRUHM8K. ──
     private static final Object[][] CAN_REGS = {
-        {0x0000L,"CTL"},{0x0002L,"ES"},{0x0004L,"ERRC"},{0x0006L,"BTR"},{0x0008L,"INT"},
-        {0x000AL,"TEST"},{0x000EL,"PERR"},
-        {0x0020L,"RAM_INIT"},
-        {0x0028L,"GLB_INT_EN"},{0x002AL,"GLB_INT_FLG"},{0x002CL,"GLB_INT_CLR"},
-        {0x0040L,"ABOTR"},
-        {0x0042L,"TXRQ_X"},{0x0044L,"TXRQ_21"},
-        {0x004CL,"NDAT_X"},{0x004EL,"NDAT_21"},
-        {0x0056L,"IPEN_X"},{0x0058L,"IPEN_21"},
-        {0x0060L,"MVAL_X"},{0x0062L,"MVAL_21"},
-        {0x006CL,"IP_MUX21"},
-        {0x0080L,"IF1CMD"},{0x0082L,"IF1MSK"},{0x0084L,"IF1ARB"},{0x0086L,"IF1MCTL"},
-        {0x0088L,"IF1DATA"},{0x008AL,"IF1DATB"},
-        {0x0090L,"IF2CMD"},{0x0092L,"IF2MSK"},{0x0094L,"IF2ARB"},{0x0096L,"IF2MCTL"},
-        {0x0098L,"IF2DATA"},{0x009AL,"IF2DATB"},
-        {0x00A0L,"IF3OBS"},{0x00A2L,"IF3MSK"},{0x00A4L,"IF3ARB"},{0x00A6L,"IF3MCTL"},
-        {0x00A8L,"IF3DATA"},{0x00AAL,"IF3DATB"},{0x00B0L,"IF3UPD"},
+        // ── Control / status block (0x000) ──
+        {0x0000L,"CTL"},{0x0004L,"ES"},{0x0008L,"ERRC"},{0x000CL,"BTR"},{0x0010L,"INT"},
+        {0x0014L,"TEST"},{0x001CL,"PERR"},
+        {0x0040L,"RAM_INIT"},
+        {0x0050L,"GLB_INT_EN"},{0x0054L,"GLB_INT_FLG"},{0x0058L,"GLB_INT_CLR"},
+        {0x0080L,"ABOTR"},
+        {0x0084L,"TXRQ_X"},{0x0088L,"TXRQ_12"},
+        {0x0098L,"NDAT_X"},{0x009CL,"NDAT_12"},
+        {0x00ACL,"IPEN_X"},{0x00B0L,"IPEN_12"},
+        {0x00C0L,"MVAL_X"},{0x00C4L,"MVAL_12"},
+        {0x00D8L,"IP_MUX12"},
+        // ── IF1 interface registers (32-bit each, 0x100 block) ──
+        {0x0100L,"IF1CMD"},{0x0104L,"IF1MSK"},{0x0108L,"IF1ARB"},{0x010CL,"IF1MCTL"},
+        {0x0110L,"IF1DATA"},{0x0114L,"IF1DATB"},
+        // ── IF2 interface registers (0x120 block) ──
+        {0x0120L,"IF2CMD"},{0x0124L,"IF2MSK"},{0x0128L,"IF2ARB"},{0x012CL,"IF2MCTL"},
+        {0x0130L,"IF2DATA"},{0x0134L,"IF2DATB"},
+        // ── IF3 interface registers (0x140 block) ──
+        {0x0140L,"IF3OBS"},{0x0144L,"IF3MSK"},{0x0148L,"IF3ARB"},{0x014CL,"IF3MCTL"},
+        {0x0150L,"IF3DATA"},{0x0154L,"IF3DATB"},{0x0160L,"IF3UPD"},
     };
 
     // ── ePWM (spruhm8k Table 15-20, shared across all 12 instances) ────────────
