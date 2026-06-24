@@ -282,6 +282,31 @@ public class SetupF28377D extends GhidraScript {
         {0x0028L,"GPFDAT"},{0x002AL,"GPFSET"},{0x002CL,"GPFCLEAR"},{0x002EL,"GPFTOGGLE"},
     };
 
+    // ── IPC registers (F2837xD_ipc.h — CPU1 and CPU2 views differ in SEND/RECV order) ──
+    // Common prefix: IPCACK–IPCCOUNTERH are identical in both views.
+    // Base = 0x050000 for both CPUs (F2837xD_Headers_nonBIOS_cpu{1,2}.cmd).
+    private static final Object[][] IPC_REGS_CPU1 = {
+        {0x0000L,"IPCACK"},{0x0001L,"IPCSTS"},{0x0002L,"IPCSET"},
+        {0x0003L,"IPCCLR"},{0x0004L,"IPCFLG"},
+        {0x0007L,"IPCCOUNTERL"},{0x0009L,"IPCCOUNTERH"},
+        {0x000BL,"IPCSENDCOM"},{0x000DL,"IPCSENDADDR"},{0x000FL,"IPCSENDDATA"},
+        {0x0011L,"IPCREMOTEREPLY"},
+        {0x0013L,"IPCRECVCOM"},{0x0015L,"IPCRECVADDR"},{0x0017L,"IPCRECVDATA"},
+        {0x0019L,"IPCLOCALREPLY"},
+        {0x001BL,"IPCBOOTSTS"},{0x001DL,"IPCBOOTMODE"},
+    };
+
+    private static final Object[][] IPC_REGS_CPU2 = {
+        {0x0000L,"IPCACK"},{0x0001L,"IPCSTS"},{0x0002L,"IPCSET"},
+        {0x0003L,"IPCCLR"},{0x0004L,"IPCFLG"},
+        {0x0007L,"IPCCOUNTERL"},{0x0009L,"IPCCOUNTERH"},
+        {0x000BL,"IPCRECVCOM"},{0x000DL,"IPCRECVADDR"},{0x000FL,"IPCRECVDATA"},
+        {0x0011L,"IPCLOCALREPLY"},
+        {0x0013L,"IPCSENDCOM"},{0x0015L,"IPCSENDADDR"},{0x0017L,"IPCSENDDATA"},
+        {0x0019L,"IPCREMOTEREPLY"},
+        {0x001BL,"IPCBOOTSTS"},{0x001DL,"IPCBOOTMODE"},
+    };
+
     // ── DMA global registers (spruhm8k Table 5-4) ─────────────────────────────
     private static final Object[][] DMA_GLOBAL_REGS = {
         {0x0000L,"DMACTRL"},{0x0001L,"DEBUGCTRL"},
@@ -367,6 +392,7 @@ public class SetupF28377D extends GhidraScript {
         {0x007500L, 0x080L, "ADCC"},        {0x007580L, 0x080L, "ADCD"},
         {0x007F00L, 0x030L, "GPIO_DATA"},
         {0x0005D200L, 0x032L, "CLK_CFG"},   {0x0005D300L, 0x082L, "CPU_SYS"},
+        {0x050000L, 0x024L, "IPC"},
     };
 
     // Peripheral frames accessible from CPU1 only.
@@ -534,6 +560,10 @@ public class SetupF28377D extends GhidraScript {
             try { labelRegs("DMA_CH" + ch, chBase, DMA_CH_REGS); }
             catch (Exception e) { println("skip DMA_CH" + ch + ": " + e.getMessage()); }
         }
+
+        // 14. IPC registers (SEND/RECV order differs between CPU1 and CPU2).
+        try { labelRegs("IPC", 0x050000L, isCPU1 ? IPC_REGS_CPU1 : IPC_REGS_CPU2); }
+        catch (Exception e) { println("skip IPC: " + e.getMessage()); }
 
         // 15. Reset vector label.
         try {
