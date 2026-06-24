@@ -109,6 +109,11 @@
 :QMPYUL Preg, XTreg, loc32   is op16=0x5647 ; loc32 & Preg & XTreg {
     local a:8 = zext(XT); local b:8 = zext(loc32); local r:8 = (a * b) >> 32; P = r:4;  # high 32 -> P
 }
+# QMPYXUL P,XT,loc32  0x5642  (SIGNED XT x UNSIGNED loc32, upper 32 -> P). dis2000-confirmed
+# (pmrbl image, word 0x858c4). Mixed-sign: sext(XT) * zext(loc32).
+:QMPYXUL Preg, XTreg, loc32  is op16=0x5642 ; loc32 & Preg & XTreg {
+    local a:8 = sext(XT); local b:8 = zext(loc32); local r:8 = (a * b) >> 32; P = r:4;  # high 32 -> P
+}
 
 # =============================================================================
 # Bit-test / square-accumulate (real-ish).
