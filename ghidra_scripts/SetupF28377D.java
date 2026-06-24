@@ -417,10 +417,10 @@ public class SetupF28377D extends GhidraScript {
     @Override
     public void run() throws Exception {
         // Prompt for CPU core — determines which peripheral frames are visible.
-        int cpuChoice = askChoice("CPU Core",
+        String cpuChoice = askChoice("CPU Core",
             "Which CPU core is this firmware for?",
             java.util.Arrays.asList("CPU1", "CPU2"), "CPU1");
-        boolean isCPU1 = cpuChoice == 0;
+        boolean isCPU1 = "CPU1".equals(cpuChoice);
         println("Setting up for " + (isCPU1 ? "CPU1" : "CPU2"));
 
         // 0. Map + label peripheral frames (common to both cores, plus CPU1-only).
