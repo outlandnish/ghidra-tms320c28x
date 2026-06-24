@@ -329,13 +329,23 @@ public class SetupF28377D extends GhidraScript {
     };
 
     // ─────────────────────────────────────────────────────────────────────────
+    // The C28x default address space is WORD-addressed (addressableUnitSize = 2), so
+    // toAddr(x) treats x as a byte offset and lands at WORD x/2. Our register tables use
+    // the TI memory-map constants, which on the C28x are the WORD addresses the firmware
+    // loads directly (e.g. CANA base const = 0x48000). To make a block/label land at the
+    // displayed WORD address W, we must pass W*2 to toAddr. Lengths stay in bytes (Ghidra
+    // renders end correctly: a 0x200-byte len at word 0x48000 spans 0x48000-0x480ff).
+    private Address wAddr(long word) {
+        return toAddr(word * 2);
+    }
+
     // Generic field-level labeler — generalisation of the original labelCan().
     private void labelRegs(String mod, long base, Object[][] regs) throws Exception {
         int n = 0;
         for (Object[] r : regs) {
             long off = (Long) r[0];
             String nm = mod + "_" + (String) r[1];
-            createLabel(toAddr(base + off), nm, true, SourceType.USER_DEFINED);
+            createLabel(wAddr(base + off), nm, true, SourceType.USER_DEFINED);
             n++;
         }
         println("labeled " + mod + " (" + n + " regs) @ 0x" + Long.toHexString(base));
@@ -344,7 +354,7 @@ public class SetupF28377D extends GhidraScript {
     // Create an uninitialized (MMIO) memory block if it isn't already mapped.
     private void ensureBlock(String name, long start, long len) throws Exception {
         Memory mem = currentProgram.getMemory();
-        Address a = toAddr(start);
+        Address a = wAddr(start);
         if (mem.getBlock(a) == null) {
             MemoryBlock b = mem.createUninitializedBlock(name, a, len, false);
             b.setRead(true); b.setWrite(true); b.setVolatile(true);
@@ -355,7 +365,7 @@ public class SetupF28377D extends GhidraScript {
     // Create an uninitialized RAM block (non-volatile) if not already mapped.
     private void ensureRam(String name, long start, long len) throws Exception {
         Memory mem = currentProgram.getMemory();
-        Address a = toAddr(start);
+        Address a = wAddr(start);
         if (mem.getBlock(a) == null) {
             MemoryBlock b = mem.createUninitializedBlock(name, a, len, false);
             b.setRead(true); b.setWrite(true); b.setVolatile(false);
@@ -430,7 +440,7 @@ public class SetupF28377D extends GhidraScript {
             String name = (String) p[2];
             try {
                 ensureBlock(name + "_REGS", base, size);
-                createLabel(toAddr(base), name, true, SourceType.USER_DEFINED);
+                createLabel(wAddr(base), name, true, SourceType.USER_DEFINED);
                 n++;
             } catch (Exception e) { println("skip " + name + ": " + e.getMessage()); }
         }
@@ -440,7 +450,7 @@ public class SetupF28377D extends GhidraScript {
                 String name = (String) p[2];
                 try {
                     ensureBlock(name + "_REGS", base, size);
-                    createLabel(toAddr(base), name, true, SourceType.USER_DEFINED);
+                    createLabel(wAddr(base), name, true, SourceType.USER_DEFINED);
                     n++;
                 } catch (Exception e) { println("skip " + name + ": " + e.getMessage()); }
             }
@@ -454,7 +464,7 @@ public class SetupF28377D extends GhidraScript {
             String name = (String) r[2];
             try {
                 ensureRam(name, base, size);
-                createLabel(toAddr(base), name, true, SourceType.USER_DEFINED); rn++;
+                createLabel(wAddr(base), name, true, SourceType.USER_DEFINED); rn++;
             } catch (Exception e) { println("skip RAM " + name + ": " + e.getMessage()); }
         }
         println("mapped " + rn + " RAM regions");
@@ -565,9 +575,9 @@ public class SetupF28377D extends GhidraScript {
         try { labelRegs("IPC", 0x050000L, isCPU1 ? IPC_REGS_CPU1 : IPC_REGS_CPU2); }
         catch (Exception e) { println("skip IPC: " + e.getMessage()); }
 
-        // 15. Reset vector label.
+        // 15. Reset vector label (word address → wAddr like every other constant).
         try {
-            Address resetVec = toAddr(0x3FFFC0L);
+            Address resetVec = wAddr(0x3FFFC0L);
             if (currentProgram.getMemory().contains(resetVec)) {
                 createLabel(resetVec, "RESET", true, SourceType.USER_DEFINED);
             }
