@@ -50,10 +50,12 @@ import java.util.*;
 public class SeedFunctions extends GhidraScript {
     long base, lo, hi;
     byte[] mem;
+    boolean[] initialized;   // per-byte init flag; uninitialized bytes are not real words
     AddressSpace space;
 
     int wordAt(long byteOff) {
         if (byteOff < 0 || byteOff + 1 >= mem.length) return -1;
+        if (initialized != null && (!initialized[(int)byteOff] || !initialized[(int)(byteOff+1)])) return -1;
         return (mem[(int)byteOff] & 0xff) | ((mem[(int)(byteOff+1)] & 0xff) << 8);
     }
 
@@ -71,12 +73,41 @@ public class SeedFunctions extends GhidraScript {
         boolean noDataFilter = Boolean.getBoolean("c28x.seed.noDataFilter");
 
         space = currentProgram.getAddressFactory().getDefaultAddressSpace();
-        MemoryBlock blk = currentProgram.getMemory().getBlocks()[0];
+
+        // Pick the loaded firmware block: the LARGEST INITIALIZED block. (getBlocks()[0] is
+        // unsafe — running SetupF28377D first adds uninitialized MMIO/RAM blocks, one of which
+        // may sort first or be only partially initialized, so a wholesale getBytes() throws
+        // "Attempted to read from uninitialized block".)
+        ghidra.program.model.mem.Memory memory = currentProgram.getMemory();
+        MemoryBlock blk = null;
+        long bestLen = -1;
+        for (MemoryBlock b : memory.getBlocks()) {
+            if (!b.isInitialized()) continue;
+            long len = b.getEnd().getOffset() - b.getStart().getOffset() + 1;
+            if (len > bestLen) { bestLen = len; blk = b; }
+        }
+        if (blk == null) { println("ERROR: no initialized memory block found — import the raw image first."); return; }
         Address start = blk.getStart(), end = blk.getEnd();
         base = start.getOffset() / 2;
         long nbytes = end.getOffset() - start.getOffset() + 1;
         mem = new byte[(int)nbytes];
-        blk.getBytes(start, mem);
+        // Read only the INITIALIZED sub-ranges of the chosen block; mark uninitialized gaps
+        // with a sentinel so wordAt() reports "no word" there instead of throwing. (A block
+        // can be partly initialized — e.g. an image smaller than the block it was mapped into.)
+        java.util.Arrays.fill(mem, (byte) 0);
+        initialized = new boolean[(int) nbytes];
+        ghidra.program.model.address.AddressSetView initSet =
+            memory.getLoadedAndInitializedAddressSet().intersect(
+                currentProgram.getAddressFactory().getAddressSet(start, end));
+        for (ghidra.program.model.address.AddressRange rng : initSet) {
+            long rs = rng.getMinAddress().getOffset(), re = rng.getMaxAddress().getOffset();
+            int off = (int) (rs - start.getOffset());
+            int len = (int) (re - rs + 1);
+            byte[] buf = new byte[len];
+            memory.getBytes(rng.getMinAddress(), buf);
+            System.arraycopy(buf, 0, mem, off, len);
+            for (int i = off; i < off + len; i++) initialized[i] = true;
+        }
         long nwords = nbytes / 2;
         lo = base; hi = base + nwords - 1;
 
