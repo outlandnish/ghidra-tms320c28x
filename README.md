@@ -3,7 +3,7 @@
 A Ghidra processor module (SLEIGH) for the Texas Instruments **TMS320C28x** DSP core,
 targeting the **TMS320F28377D** (dual-core C28x + FPU, F2837xD family)..
 
-> ⚠️ **WIP — expect bugs.** This is a work in progress and vibe-coded. **Verify against the SPRU430F/SPRUHS1C reference
+> **WIP / vibe-coded** **Verify against the SPRU430F/SPRUHS1C reference
 > before trusting any decode for critical work, and please file issues.**
 
 ## Architectural Quirks
