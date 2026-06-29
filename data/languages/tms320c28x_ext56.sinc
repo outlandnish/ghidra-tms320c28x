@@ -114,6 +114,12 @@
 :QMPYXUL Preg, XTreg, loc32  is op16=0x5642 ; loc32 & Preg & XTreg {
     local a:8 = sext(XT); local b:8 = zext(loc32); local r:8 = (a * b) >> 32; P = r:4;  # high 32 -> P
 }
+# IMPYXUL P,XT,loc32  0x5665  (SIGNED XT x UNSIGNED loc32, LOWER 32 -> P). dis2000-confirmed
+# (PCS411 image, word 0x95a43 — in a QMPYXUL/IMPYL extended-precision multiply). Mixed-sign,
+# low half: sext(XT) * zext(loc32).
+:IMPYXUL Preg, XTreg, loc32  is op16=0x5665 ; loc32 & Preg & XTreg {
+    local a:8 = sext(XT); local b:8 = zext(loc32); local r:8 = a * b; P = r:4;  # low 32 -> P
+}
 
 # =============================================================================
 # Bit-test / square-accumulate (real-ish).
