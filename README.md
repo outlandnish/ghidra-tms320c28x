@@ -59,16 +59,34 @@ when you import a raw `.bin`:
 > **byte** offset (= word × 2), while TI's `dis2000` prints **word** addresses. Divide by 2
 > when comparing the two — this trips up every script that walks the listing.
 
-### Seed functions in a headerless image
+### Analyzing a headerless raw image — recommended script workflow
 
 A raw firmware `.bin` has no symbols or entry points, so Ghidra's analyzer finds almost
-nothing to decompile. Run **`ghidra_scripts/SeedFunctions.java`** (Script Manager) after
-import + base-set: it recovers function entries from the bytes — absolute **call targets**
-(LCR/LC/FFC, always real) plus **prologue patterns** (SP-push/frame-setup runs) — and creates
-functions at them. A built-in **entropy/code-likeness filter** rejects candidates that land in
-data tables (string/calibration blobs) so you don't get bogus `halt_baddata` stubs on data.
-Tune via `-Dc28x.seed.*` properties (see the script header); `FindEntryPoints.java` is the
-read-only companion that just *ranks* candidates without creating anything.
+nothing. The bundled scripts (Script Manager, category **TMS320C28x**) recover the code and
+separate it from the embedded data tables. Run them in this order after **import + set base**:
+
+1. **`SeedFunctions.java`** — create functions from the bytes: absolute **call targets**
+   (LCR/LC/FFC, high-confidence — something calls them) plus **prologue patterns**
+   (SP-push/frame-setup runs). It also adds call-site→target references (so the call graph
+   is visible) and runs an **entropy/code-likeness filter** so prologue matches that land in
+   data don't become bogus functions. Reads only initialized memory. Tune via `-Dc28x.seed.*`
+   (see the script header). `FindEntryPoints.java` is the read-only companion that just
+   *ranks* candidates.
+2. **`MarkJumpTables.java`** — switch/case **pointer tables** (word-pairs forming in-image
+   code addresses) get mis-decoded as bogus instructions; this marks them as `pointer` data
+   with refs to their targets. Skips runs inside defined functions.
+3. **`MarkDataTables.java`** — **float-constant tables** (gain curves, LUTs, calibration)
+   likewise decode as garbage; this marks high-confidence (`≥90%` sane-float) runs as
+   `Float4` arrays and removes the 0-xref false-seeds they spawned. Conservative — it skips
+   any run overlapping a *referenced* function, so it won't clobber code.
+
+Both `Mark*` scripts support `-D...dryRun=true` to preview before changing anything. Together
+they turn a wall of red `halt_baddata` blocks into clean code + typed data tables.
+
+> Why the data scripts matter: C28x firmware interleaves large float/pointer tables with code.
+> A seed scan inevitably lands a few false functions in them (a float word can even look like a
+> call opcode), so marking the tables as data is what makes the result clean. See the
+> per-script headers for the exact heuristics and their limits.
 
 ### Optional: label the F2837xD peripherals
 
