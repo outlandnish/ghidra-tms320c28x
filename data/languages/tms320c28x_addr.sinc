@@ -113,7 +113,7 @@ loc16: "@SP"  is ctx_AMODE=0 & loc_full8=0b10101101 { export SP; }
 # circular buffer) or the named XARn (ARP target) — decode-faithful, semantics approximate.
 loc16: "*BR0++"  is ctx_AMODE=0 & loc_full8=0b10101110 { export *[ram]:2 XAR0; }   # +BR0
 loc16: "*BR0--"  is ctx_AMODE=0 & loc_full8=0b10101111 { export *[ram]:2 XAR0; }
-loc16: "*,ARP"loc_areg  is ctx_AMODE=0 & loc_mode5=0b10110 & loc_areg { export *[ram]:2 loc_areg; }
+loc16: "*,ARP"loc_arp  is ctx_AMODE=0 & loc_mode5=0b10110 & loc_areg & loc_arp { export *[ram]:2 loc_areg; }
 
 # =============================================================================
 # loc32 : 32-bit (2-word) memory/register operand.  AMODE = 0.
@@ -178,4 +178,4 @@ loc32: "@XT"   is ctx_AMODE=0 & loc_full8=0b10101100 { export XT;  }
 # --- circular (*BR0++/--) and ARP-pointer (*,ARPn) modes — 32-bit (see loc16 note) ---
 loc32: "*BR0++"  is ctx_AMODE=0 & loc_full8=0b10101110 { export *[ram]:4 XAR0; }
 loc32: "*BR0--"  is ctx_AMODE=0 & loc_full8=0b10101111 { export *[ram]:4 XAR0; }
-loc32: "*,ARP"loc_areg  is ctx_AMODE=0 & loc_mode5=0b10110 & loc_areg { export *[ram]:4 loc_areg; }
+loc32: "*,ARP"loc_arp  is ctx_AMODE=0 & loc_mode5=0b10110 & loc_areg & loc_arp { export *[ram]:4 loc_areg; }
