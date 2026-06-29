@@ -39,7 +39,7 @@
 }
 # MOV ACC,loc16<<#1..15   word1=0x5603 ; word2 = 0000 SHFT LLLL LLLL  (2-word; SHFT
 # in word2 bits 8-11, loc16 in the low byte). The dominant missing opcode in the
-# byte-swapped Tesla DIR firmware (~1443 sites).
+# byte-swapped F28377D production firmware (~1443 sites).
 :MOV ACCreg, loc16^"<<#"^shft_hi4  is op16=0x5603 ; shft_hi4 & loc16 & ACCreg {
     local sh:4 = zext(shft_hi4:1);
     ACC = sext(loc16) << sh;
@@ -201,8 +201,8 @@
 # =============================================================================
 # 64-bit ACC:P shifts by #1..16 (single word; SHFT in low nibble). ACC = high 32,
 # P = low 32. word1 = 0101 0110 10ss SHFT (ss: ASR64=00 0x568x, LSR64=01 0x569x,
-# LSL64=10 0x56Ax). 0x56a3 (LSL64 #3) was the top missing opcode in the Tesla DIR
-# firmware (~1434 sites) — the QMPYL→LSL64 32x32 Q-format multiply idiom.
+# LSL64=10 0x56Ax). 0x56a3 (LSL64 #3) was the top missing opcode in the F28377D
+# production firmware (~1434 sites) — the QMPYL→LSL64 32x32 Q-format multiply idiom.
 # shft_cnt = SHFT+1 (range 1..16), reuse the shcount subtable.
 :ASR64 "ACC:P,#"shcount  is op_hi8=0x56 & loc_hi4=0b1000 & shcount {
     local v:8 = (zext(ACC) << 32) | zext(P);

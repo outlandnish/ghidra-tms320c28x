@@ -1,6 +1,6 @@
 // Find probable function entry points in a HEADERLESS C28x image.
 //
-// Headerless firmware (e.g. Tesla DIR/PMR/RAMAPP) has no flow anchor: a linear sweep
+// Headerless firmware (raw flash/RAM-app images) has no flow anchor: a linear sweep
 // from offset 0 lands in data and desyncs. This script recovers candidate entries
 // from the bytes themselves, by two independent signals, and cross-scores them:
 //
