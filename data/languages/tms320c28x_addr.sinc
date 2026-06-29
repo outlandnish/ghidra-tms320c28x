@@ -107,6 +107,14 @@ loc16: "@PL"  is ctx_AMODE=0 & loc_full8=0b10101011 { export PL; }
 loc16: "@TH"  is ctx_AMODE=0 & loc_full8=0b10101100 { export T;  }   # @TH == high half of XT == T
 loc16: "@SP"  is ctx_AMODE=0 & loc_full8=0b10101101 { export SP; }
 
+# --- circular (*BR0++/--) and ARP-pointer (*,ARPn) modes (Table 5-1) -------------
+# These were MISSING and made every instruction using them (e.g. MOVL XT,*,ARP4 = 0x87b4)
+# fail to decode. ARP isn't tracked as state, so model the access through XAR0 (BR0 modes,
+# circular buffer) or the named XARn (ARP target) — decode-faithful, semantics approximate.
+loc16: "*BR0++"  is ctx_AMODE=0 & loc_full8=0b10101110 { export *[ram]:2 XAR0; }   # +BR0
+loc16: "*BR0--"  is ctx_AMODE=0 & loc_full8=0b10101111 { export *[ram]:2 XAR0; }
+loc16: "*,ARP"loc_areg  is ctx_AMODE=0 & loc_mode5=0b10110 & loc_areg { export *[ram]:2 loc_areg; }
+
 # =============================================================================
 # loc32 : 32-bit (2-word) memory/register operand.  AMODE = 0.
 # Each constructor exports a size-4 operand; pointer deltas are 2 words.
@@ -166,3 +174,8 @@ loc32: "@"loc_areg  is ctx_AMODE=0 & loc_mode5=0b10100 & loc_areg { export loc_a
 loc32: "@ACC"  is ctx_AMODE=0 & loc_full8=0b10101001 { export ACC; }
 loc32: "@P"    is ctx_AMODE=0 & loc_full8=0b10101011 { export P;   }
 loc32: "@XT"   is ctx_AMODE=0 & loc_full8=0b10101100 { export XT;  }
+
+# --- circular (*BR0++/--) and ARP-pointer (*,ARPn) modes — 32-bit (see loc16 note) ---
+loc32: "*BR0++"  is ctx_AMODE=0 & loc_full8=0b10101110 { export *[ram]:4 XAR0; }
+loc32: "*BR0--"  is ctx_AMODE=0 & loc_full8=0b10101111 { export *[ram]:4 XAR0; }
+loc32: "*,ARP"loc_areg  is ctx_AMODE=0 & loc_mode5=0b10110 & loc_areg { export *[ram]:4 loc_areg; }
