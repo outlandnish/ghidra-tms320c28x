@@ -72,6 +72,14 @@ rel8dest:  reloc  is simm8   [ reloc = inst_start + simm8;  ] { export *[ram]:4 
     if (CC8) goto rel8dest;
 }
 
+# UNCONDITIONAL branch forms — these MUST be a plain `goto`, not `if(UNC)goto`. The UNC row
+# of the CC/CC8 subtable exports a const-true guard, which SLEIGH compiles to a CBRANCH that
+# KEEPS a (dead) fall-through edge — the decompiler then prunes the fall-through-only blocks as
+# unreachable. A dedicated cond4=0xf / cond4hi=0xf constructor (more specific, so SLEIGH picks
+# it over the generic CC/CC8 form) emits a real BRANCH with no fall-through.
+:B  rel16dest,"UNC" is op_hi8=0xFF & op_lo_hi4=0b1110 & cond4=0xf ; simm16 & rel16dest { goto rel16dest; }
+:SB rel8dest,"UNC"  is sb_grp=0b0110 & cond4hi=0xf & rel8dest & simm8 { goto rel8dest; }
+
 # SBF 8bitOffset,EQ/NEQ/TC/NTC   1110 11SS CCCC CCCC  (Short Branch Fast, single word;
 # 8-bit signed word offset in the low byte). Four fixed condition encodings — EQ=0xEC
 # NEQ=0xED TC=0xEE NTC=0xEF. dis2000-confirmed (op_hi8=0xEE present in the DIR image).
