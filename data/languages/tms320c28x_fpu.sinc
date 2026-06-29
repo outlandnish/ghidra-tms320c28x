@@ -273,3 +273,7 @@ attach variables [ p_rf ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 #   Parallel multiply-add alias (confirmed via dis2000, word 0xe741). Flow-preserving
 #   (the MPYF32 dest p_rd is in the MSW; touch it so dataflow + flow continue).
 :MPYF32 p_rd, "||ADDF32"  is op_hi8=0xE7 & loc_hi4=0b0100 ; p_rd { p_rd = p_rd; }
+#   MPYF32 RdH,RaH,RbH || SUBF32 RdH,ReH,RfH  LSW: 1110 0111 0101 00ff ; MSW reg fields.
+#   The ||SUBF32 sibling (sub-nibble 0101 vs ||ADDF32's 0100). Surfaced in the PCS411 image
+#   (words 0xe751/0xe753 at 0x8837f / 0x94df6 / 0x94e19). Same flow-preserving p_rd touch.
+:MPYF32 p_rd, "||SUBF32"  is op_hi8=0xE7 & loc_hi4=0b0101 ; p_rd { p_rd = p_rd; }
