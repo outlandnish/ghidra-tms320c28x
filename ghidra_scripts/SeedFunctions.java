@@ -112,20 +112,28 @@ public class SeedFunctions extends GhidraScript {
         lo = base; hi = base + nwords - 1;
 
         // --- (A) call/branch targets (absolute 22-bit) --------------------------
+        // A CALL target (LCR/LC/FFC) is high-confidence real code — something calls it.
+        // We also remember (callSite -> target) so we can add the reference to Ghidra's
+        // xref DB: by scanning raw bytes we find the call before its site is disassembled,
+        // so the call graph would otherwise stay invisible until late in analysis.
         Set<Long> calledTargets = new TreeSet<>();
+        Map<Long,Long> callSiteToTarget = new HashMap<>();   // callSite word -> target word
         for (long wi = 0; wi < nwords - 1; wi++) {
             int w1 = wordAt(wi * 2);
+            if (w1 < 0) continue;
             int hi8 = (w1 >> 8) & 0xff, lo6 = w1 & 0x3f, b76 = (w1 >> 6) & 0x3;
             boolean isCall =
                 (hi8 == 0x76 && b76 == 0x1) ||   // LCR
                 (hi8 == 0x00 && b76 == 0x2) ||   // LC
-                (hi8 == 0x00 && b76 == 0x3) ||   // FFC
-                (hi8 == 0x00 && b76 == 0x1);     // LB
-            if (!isCall) continue;
+                (hi8 == 0x00 && b76 == 0x3);     // FFC
+            boolean isBranch = (hi8 == 0x00 && b76 == 0x1);  // LB (target is code, not nec. an entry)
+            if (!isCall && !isBranch) continue;
             int w2 = wordAt((wi + 1) * 2);
             if (w2 < 0) continue;
             long tgt = ((long)lo6 << 16) | (w2 & 0xffff);
-            if (tgt >= lo && tgt <= hi) calledTargets.add(tgt);
+            if (tgt < lo || tgt > hi) continue;
+            calledTargets.add(tgt);
+            if (isCall) callSiteToTarget.put(base + wi, tgt);   // record CALL sites for ref-adding
         }
 
         // --- (B) prologue addresses (with run length) ---------------------------
@@ -150,11 +158,32 @@ public class SeedFunctions extends GhidraScript {
         }
 
         // --- general DATA filter: reject high-entropy / non-code-like candidates ---
+        // CALL targets bypass the filter — something calls them, so they are real code even
+        // if they happen to start with table-like bytes. Only the weaker prologue-only
+        // candidates are gated (those are where false-seeds-on-data come from).
         Set<Long> seeds = new TreeSet<>();
         int rejectedData = 0;
         for (long a : raw) {
-            if (noDataFilter || looksLikeCode(a, window, maxEntropy, minCodeFrac)) seeds.add(a);
+            if (noDataFilter || calledTargets.contains(a)
+                    || looksLikeCode(a, window, maxEntropy, minCodeFrac)) seeds.add(a);
             else rejectedData++;
+        }
+
+        // --- add call-site -> target references ---------------------------------
+        // Make the byte-scanned call graph visible in Ghidra's xref DB (helps analysis and
+        // distinguishes real call targets from data false-seeds in later sweeps).
+        var refMgr = currentProgram.getReferenceManager();
+        int refsAdded = 0;
+        for (Map.Entry<Long,Long> e : callSiteToTarget.entrySet()) {
+            Address from = addr(e.getKey()), to = addr(e.getValue());
+            // only add if not already present (avoid duplicates on re-run)
+            boolean exists = false;
+            for (var r : refMgr.getReferencesFrom(from)) if (r.getToAddress().equals(to)) { exists = true; break; }
+            if (!exists) {
+                refMgr.addMemoryReference(from, to, ghidra.program.model.symbol.RefType.UNCONDITIONAL_CALL,
+                                          ghidra.program.model.symbol.SourceType.USER_DEFINED, 0);
+                refsAdded++;
+            }
         }
 
         // --- create functions ---------------------------------------------------
@@ -176,7 +205,8 @@ public class SeedFunctions extends GhidraScript {
         println(String.format("prologue addresses (run>0): %d", prologRun.size()));
         println(String.format("candidates: %d  ->  rejected as data (entropy/non-code): %d  ->  seeds: %d",
             raw.size(), rejectedData, seeds.size()));
-        println(String.format("created %d, already existed %d, failed %d", created, already, failed));
+        println(String.format("created %d, already existed %d, failed %d ; call-site refs added %d",
+            created, already, failed, refsAdded));
         if (!prologOnlyIfCalled && !includeLoneProlog)
             println("(default mode: call targets + prologue runs >= " + minRun +
                     " words, filtered by the data/entropy gate. Tune with -Dc28x.seed.* ;\n" +
