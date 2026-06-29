@@ -120,6 +120,18 @@
 :IMPYXUL Preg, XTreg, loc32  is op16=0x5665 ; loc32 & Preg & XTreg {
     local a:8 = sext(XT); local b:8 = zext(loc32); local r:8 = a * b; P = r:4;  # low 32 -> P
 }
+# Square-and-accumulate (MAC-style; 2-word, loc16 in word2). dis2000-confirmed.
+# SQRA: ACC += P (PM=0); T=[loc16]; P = T*T.  SQRS: ACC -= P; T=[loc16]; P = T*T.
+:SQRA loc16  is op16=0x5615 ; loc16 {
+    ACC = ACC + P; T = loc16; local t:4 = sext(T); P = t * t;
+}
+:SQRS loc16  is op16=0x5611 ; loc16 {
+    ACC = ACC - P; T = loc16; local t:4 = sext(T); P = t * t;
+}
+# ZALR ACC,loc16  0x5613 : loc16  -- AL = 0x8000 (round const), AH = [loc16]. dis2000-confirmed.
+:ZALR ACCreg, loc16  is op16=0x5613 ; loc16 & ACCreg {
+    AL = 0x8000; AH = loc16;
+}
 
 # =============================================================================
 # Bit-test / square-accumulate (real-ish).
@@ -149,6 +161,14 @@
 :CLRC "XF"      is op16=0x561b { }
 :CLRC "OVC"     is op16=0x565c { }                 # = ZAP OVC
 :ZAPA           is op16=0x5633 { ACC = 0; P = 0; }
+# More 0x56 mode/config bits (dis2000-confirmed; in the PCS reset/init routine at 0x947fc).
+:SETC "CNF"     is op16=0x5612 { }                 # map block B0 to program space (decode-only)
+:SETC "M0M1MAP" is op16=0x561a { }                 # = C28MAP (boot mode bit; decode-only)
+# CMPR n  0101 0110 0001 NN0N  (compare AR(ARP) with AR(n); set TC). dis2000: 1d=0 19=1 18=2 1c=3.
+:CMPR "0"       is op16=0x561d { }                 # decode-only (TC result not modeled)
+:CMPR "1"       is op16=0x5619 { }
+:CMPR "2"       is op16=0x5618 { }
+:CMPR "3"       is op16=0x561c { }
 
 # =============================================================================
 # Conditional store (MOVL loc32,ACC,COND) -- 0x5648, COND in word2.
