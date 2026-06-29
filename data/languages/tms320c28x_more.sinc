@@ -208,6 +208,9 @@ macro pop16(dst) { SP = SP - 1; local a:4 = zext(SP); dst = *[ram]:2 a; }
 :POP "AR1H:AR0H" is op16=0x0003 { SP = SP - 2; }               # decode-only (pair pop)
 :POP "RPC"       is op16=0x0007 { SP = SP - 2; local a:4 = zext(SP); RPC = *[ram]:4 a; }
 :PUSH "RPC"      is op16=0x0004 { local a:4 = zext(SP); *[ram]:4 a = RPC; SP = SP + 2; }
+# PUSH/POP P (32-bit product reg). 0x761d / 0x7611. dis2000-confirmed (PCS411 0x9167c).
+:PUSH "P"        is op16=0x761D { local a:4 = zext(SP); *[ram]:4 a = P; SP = SP + 2; }
+:POP "P"         is op16=0x7611 { SP = SP - 2; local a:4 = zext(SP); P = *[ram]:4 a; }
 :PUSH "AR1H:AR0H" is op16=0x0005 { SP = SP + 2; }              # decode-only (pair push)
 :POP "DP"        is op16=0x7603 { pop16(DP); }
 :POP "ST0"       is op16=0x7613 { pop16(ST0); }
