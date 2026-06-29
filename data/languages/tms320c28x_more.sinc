@@ -77,7 +77,11 @@
 # ADDB ACC, #8bit   0000 1001 CCCC CCCC
 :ADDB ACCreg, "#"imm8  is op_hi8=0x09 & ACCreg & imm8  { ACC = ACC + zext(imm8:1); }
 # ADDB AX, #8bit    1001 110A CCCC CCCC
-:ADDB AX, "#"imm8   is op_hi7=0x4E & AX & imm8  { AX = AX + zext(imm8:1); }
+:ADDB AX, "#"imm8   is op_hi7=0x4E & AX & imm8  {
+    local b:2 = zext(imm8:1);
+    $(C) = carry(AX, b); $(V) = scarry(AX, b);
+    AX = AX + b; setNZ16(AX);
+}
 # SUBCU ACC, loc16  0001 1111 LLLL LLLL   (conditional subtract, divide step) decode-only
 :SUBCU ACCreg, loc16  is op_hi8=0x1F & ACCreg & loc16  { }   # decode-only (divide primitive)
 
@@ -151,7 +155,7 @@
 # the truncation point in CAN_rxDispatch (0x9595c = 0xC092). N/Z set per SPRU430F.
 :AND loc16, AX    is op_hi7=0x60 & loc16 & AX  { loc16 = loc16 & AX; setNZ16(loc16); }
 # ANDB AX, #8bit   1001 000A CCCC CCCC
-:ANDB AX, "#"imm8  is op_hi7=0x48 & AX & imm8  { AX = AX & zext(imm8:1); }
+:ANDB AX, "#"imm8  is op_hi7=0x48 & AX & imm8  { AX = AX & zext(imm8:1); setNZ16(AX); }
 # PUSH loc16       0010 0010 LLLL LLLL  (push 16-bit value: *SP++ = loc16)
 :PUSH loc16  is op_hi8=0x22 & loc16  {
     local sp:4 = zext(SP); local v:2 = loc16; *[ram]:2 sp = v; SP = SP + 1;

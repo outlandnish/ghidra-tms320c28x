@@ -81,7 +81,7 @@
 # MOVB AX, #8bit    1001 101A CCCC CCCC   -- AL/AH = 8-bit constant
 # Top 7 bits = 1001101 = 0x4D.
 :MOVB AX, "#"imm8   is op_hi7=0x4D & AX & imm8  {
-    AX = zext(imm8:1);
+    AX = zext(imm8:1); setNZ16(AX);
 }
 
 # =============================================================================

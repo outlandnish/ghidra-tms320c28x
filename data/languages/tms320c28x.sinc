@@ -80,6 +80,18 @@ define token imm16w (16)
     simm16  = (0,15) signed
 ;
 
+# --- helper macros: set NZ for a 16-bit / 32-bit result ----------------------
+# Defined here (before all instruction includes) so every .sinc can use them — mov.sinc
+# is included before alu.sinc, so these can't live in alu.sinc.
+macro setNZ16(r) {
+    $(N) = (r s< 0);
+    $(Z) = (r == 0);
+}
+macro setNZ32(r) {
+    $(N) = (r s< 0);
+    $(Z) = (r == 0);
+}
+
 # --- shared loc16 / loc32 addressing sub-tables (Table 5-1) --------------------
 # The loc field is the low byte of the opcode word; the locfield token in the
 # addr include overlays op_lo8's bits. Included before the instructions that use it.

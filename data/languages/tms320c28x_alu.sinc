@@ -10,15 +10,8 @@
 # Scope: the single-word AX/ACC forms that dominate the firmware. The 2-word
 # 0x56-prefixed extended-shift forms (ADD ACC,loc16<<T etc.) are deferred.
 
-# --- helper macros: set NZ for a 16-bit / 32-bit result ----------------------
-macro setNZ16(r) {
-    $(N) = (r s< 0);
-    $(Z) = (r == 0);
-}
-macro setNZ32(r) {
-    $(N) = (r s< 0);
-    $(Z) = (r == 0);
-}
+# --- setNZ16/setNZ32 macros moved to tms320c28x.sinc (before the includes) so mov.sinc,
+#     which is included before this file, can use them too. ----------------------
 
 # =============================================================================
 # 16-bit ADD / SUB on AX (AL/AH), with full flags
