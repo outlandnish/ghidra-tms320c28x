@@ -24,6 +24,7 @@ define token instr16 (16)
     loc_mode5 = (3,7)       # mode selector for the 1 0 xxx group
     loc_areg  = (0,2)       # XARn selector (AAA) -> attached to XAR0..XAR7
     loc_areg16= (0,2)       # same bits, attached to AR0..AR7 (16-bit @ARn mode)
+    loc_arp   = (0,2)       # ARP number 0..7 for *,ARPn (plain, NOT attached to a reg)
     loc_off6  = (0,5)       # 6-bit offset (@6bit, *-SP[6bit])
     loc_imm3  = (3,5)       # 3-bit index III in *+XARn[3bit] (1 1 III AAA) — NOT bits
                             # 0-2 (those are the XARn selector AAA); was a real bug:
@@ -50,6 +51,8 @@ define token instr16 (16)
     fimm_hi   = (4,7)       # MOVIZ/MOVXI: bits 7..4 (=0000)
     fimm_z    = (3,3)       # MOVIZ(0)/MOVXI(1) selector bit
     fimm_reg  = (0,2)       # FP register III for MOVIZ/MOVXI -> attached to R0H..R7H
+    fimm_lo6  = (0,5)       # #16FHi immediate low 6 bits (LSW: 1110 1000 ssII IIII) ADD/SUB/MPY
+    fimm_lo3  = (0,2)       # #16FHi immediate low 3 bits (LSW: 1110 1000 mmmm 0III) CMP/MAX/MIN
     op_lo7    = (0,6)       # low 7 bits (sub-opcode where bit0 is NOT an operand)
     op_lo71   = (1,7)       # bits 1..7 (ASR/LSR/LSL AX,T: 1111 1111 0110 0ssA, A=bit0)
     ax_bit0   = (0,0)       # AX selector in bit 0 (the 'A' in ...0110 0ssA)

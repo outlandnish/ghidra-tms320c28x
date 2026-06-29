@@ -20,6 +20,8 @@ define token fpu_msw (16)
     f_msw_hi = (9,15)
     f_msw_mid = (9,14)  # MSW bits 9-14 (the reg-form's must-be-zero middle bits)
     f_msw_rnd = (15,15) # MSW bit 15 = round-to-nearest variant selector (F32TO*16R)
+    fimm_hi10 = (6,15)  # #16FHi immediate high 10 bits (MSW: IIII IIII IIbb baaa) ADD/SUB/MPY form
+    fimm_hi13 = (3,15)  # #16FHi immediate high 13 bits (MSW: IIII IIII IIII Iaaa) CMP/MAX/MIN form
     # parallel "op || MOV32 mem" MSW layout: eedd daaa mem32
     p_rd    = (11,13)  # ddd  MPYF32 dest RdH
     p_ra    = (8,10)   # aaa  MOV32 dest RaH
@@ -192,25 +194,33 @@ attach variables [ p_rf ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
         ; p_rd & p_ra { p_rd = p_rd f* p_rf; p_ra = p_ra; }   # mul + parallel load (load opaque -> identity)
 
 # =============================================================================
-# Immediate-operand FP ops (2-word):  LSW = 1110 1000 ssII IIII ; MSW carries the rest
-# of the #16FHi immediate + register fields. The immediate is split across both words
-# and not cleanly reconstructable as one field; model the OP against an opaque float
-# input (dataflow + dest def are what matter; exact constant is approximate). ss selects
-# the op: 01=MPYF32 10=ADDF32 11=SUBF32.
-# The #16FHi immediate is split across both words and not reconstructable as one field;
-# operate against an opaque float input (imm). Dest def + the op kind are what the
-# decompiler needs; the exact constant is not recovered.
-# The #16FHi immediate is split across both words and unrecoverable as one field; SLEIGH
-# forbids reading an uninitialized temp, so keep the dest defined via identity (the op
-# kind is shown in the mnemonic; the constant + exact result are not modeled).
-:MPYF32 f_ra, "#16FHi"  is op_hi8=0xE8 & op_lo_76=0b01 ; f_ra { f_ra = f_ra; }
-:ADDF32 f_ra, "#16FHi"  is op_hi8=0xE8 & op_lo_76=0b10 ; f_ra { f_ra = f_ra; }
-:SUBF32 f_ra, "#16FHi"  is op_hi8=0xE8 & op_lo_76=0b11 ; f_ra { f_ra = f_ra; }
+# Immediate-operand FP ops (2-word):  RaH = RbH {op} #16FHi
+#   LSW: 1110 1000 ssII IIII   (ss = 01 MPY / 10 ADD / 11 SUB)
+#   MSW: IIII IIII IIbb baaa   (aaa = dest RaH, bbb = SOURCE RbH)
+# CRITICAL: dest (aaa) and source (bbb) are SEPARATE fields and routinely differ, so
+# modeling this as `f_ra = f_ra` makes the result a self-reference — the decompiler then
+# constant-folds the downstream CMP/branch and prunes real blocks as "unreachable". Read
+# f_rb. The #16FHi constant is the HIGH 16 bits of the float (low mantissa = 0); it's split
+# across both words: imm16 = LSW[5:0] | (MSW[15:6] << 6), float operand = imm16 << 16.
+:MPYF32 f_ra, "#"^fimm_hi10, f_rb  is op_hi8=0xE8 & op_lo_76=0b01 & fimm_lo6 ; f_ra & f_rb & fimm_hi10 {
+    local imm:4 = (zext(fimm_hi10:4) << 6 | zext(fimm_lo6:4)) << 16;
+    f_ra = f_rb f* imm;
+}
+:ADDF32 f_ra, "#"^fimm_hi10, f_rb  is op_hi8=0xE8 & op_lo_76=0b10 & fimm_lo6 ; f_ra & f_rb & fimm_hi10 {
+    local imm:4 = (zext(fimm_hi10:4) << 6 | zext(fimm_lo6:4)) << 16;
+    f_ra = f_rb f+ imm;
+}
+:SUBF32 f_ra, "#"^fimm_hi10, f_rb  is op_hi8=0xE8 & op_lo_76=0b11 & fimm_lo6 ; f_ra & f_rb & fimm_hi10 {
+    local imm:4 = (zext(fimm_hi10:4) << 6 | zext(fimm_lo6:4)) << 16;
+    f_ra = f_rb f- imm;
+}
 
 # CMPF32 RaH, #16FHi   LSW: 1110 1000 0001 0III ; MSW: IIII IIII IIII Iaaa  (2-word)
-# Immediate unrecoverable; compare against 0.0 so the flags are SET (unblocks the branch)
-# rather than left undefined. Approximate but keeps the CMPF32->MOVST0->SB chain alive.
-:CMPF32 f_ra, "#16FHi"  is op_hi8=0xE8 & loc_mode5=0b00010 ; f_ra { local imm:4 = 0; setFloatFlags(f_ra, imm); }
+# imm split LSW[2:0] | MSW[15:3]<<3 (high 16 bits of the float, low mantissa = 0).
+:CMPF32 f_ra, "#"^fimm_hi13  is op_hi8=0xE8 & loc_mode5=0b00010 & fimm_lo3 ; f_ra & fimm_hi13 {
+    local imm:4 = (zext(fimm_hi13:4) << 3 | zext(fimm_lo3:4)) << 16;
+    setFloatFlags(f_ra, imm);
+}
 # CMPF32 RaH, #0.0     LSW: 1110 0101 1010 0aaa  (single word). fimm_reg = aaa.
 :CMPF32 fimm_reg, "#0.0"  is op_hi8=0xE5 & loc_mode5=0b10100 & fimm_reg { local z:4 = 0; setFloatFlags(fimm_reg, z); }
 # ZERO RaH             LSW: 1110 0101 1001 0aaa  (single word)
@@ -223,10 +233,18 @@ attach variables [ p_rf ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 :MOVST0 "#"imm8        is op_hi8=0xAD & imm8 { ST0 = STF:2; }
 
 # MAXF32 RaH, #16FHi   LSW: 1110 1000 0010 0III ; MSW: IIII IIII IIII Iaaa  (2-word)
-# #16FHi immediate unrecoverable; keep f_ra defined via identity (clamp value not modeled).
-:MAXF32 f_ra, "#16FHi"  is op_hi8=0xE8 & loc_mode5=0b00100 ; f_ra { f_ra = f_ra; }
+# RaH = max(RaH, imm). imm split LSW[2:0] | MSW[15:3]<<3.
+:MAXF32 f_ra, "#"^fimm_hi13  is op_hi8=0xE8 & loc_mode5=0b00100 & fimm_lo3 ; f_ra & fimm_hi13 {
+    local imm:4 = (zext(fimm_hi13:4) << 3 | zext(fimm_lo3:4)) << 16;
+    if (f_ra f>= imm) goto inst_next;
+    f_ra = imm;
+}
 # MINF32 RaH, #16FHi   LSW: 1110 1000 0011 0III ; MSW: IIII IIII IIII Iaaa  (2-word)
-:MINF32 f_ra, "#16FHi"  is op_hi8=0xE8 & loc_mode5=0b00110 ; f_ra { f_ra = f_ra; }
+:MINF32 f_ra, "#"^fimm_hi13  is op_hi8=0xE8 & loc_mode5=0b00110 & fimm_lo3 ; f_ra & fimm_hi13 {
+    local imm:4 = (zext(fimm_hi13:4) << 3 | zext(fimm_lo3:4)) << 16;
+    if (f_ra f<= imm) goto inst_next;
+    f_ra = imm;
+}
 # MAXF32 RaH,RbH||MOV32 RcH,RdH  LSW: 1110 0110 1001 1100 ; MSW: 0000 dddc ccbb baaa
 # RaH=max(RaH,RbH); the parallel MOV32 RcH,RdH copies — RdH not cleanly decodable, model
 # RcH as written from RbH (the available source) so its def survives.
