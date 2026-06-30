@@ -52,6 +52,18 @@ mem32d: "@"f_mem_off6  is f_mem_b76=0b00 & f_mem_off6 {
     export *[ram]:4 a;
 }
 
+# --- TMU intrinsics ----------------------------------------------------------
+# The Trigonometric Math Unit ops (0xE27x) have no SLEIGH primitive. Declare them as
+# pcodeops so the decompiler renders a named intrinsic call (e.g. `R0H = SINPUF32(R1H)`)
+# instead of dropping the op or falling back to the generic 0xE2 MOV32. SINPUF32/COSPUF32
+# take a "per-unit" angle (turns, = radians/2pi); ATANPUF32 returns a per-unit angle.
+define pcodeop SINPUF32;
+define pcodeop COSPUF32;
+define pcodeop ATANPUF32;
+define pcodeop QUADF32;
+define pcodeop IEXP2F32;
+define pcodeop LOG2F32;
+
 # --- STF flag model ----------------------------------------------------------
 # CMPF32/MINF32/MAXF32 set ZF=STF[0] and NF=STF[1] from the comparison (SPRU430F).
 # (LUF/LVF over/underflow flags are not modeled.) MOVST0 forwards STF->ST0 so the
@@ -89,6 +101,22 @@ macro setFloatFlags(a, b) {
 :EINVF32 f_ra, f_rb    is op16=0xE693; f_rb & f_ra & f_msw_hi=0 { local one:4 = 0x3F800000; f_ra = one f/ f_rb; }       # reciprocal estimate
 :EISQRTF32 f_ra, f_rb  is op16=0xE692; f_rb & f_ra & f_msw_hi=0 { local one:4 = 0x3F800000; f_ra = one f/ sqrt(f_rb); } # 1/sqrt estimate
 :FRACF32 f_ra, f_rb    is op16=0xE6F1; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb f- trunc(f_rb); } # fractional part (approx)
+
+# =============================================================================
+# TMU (Trigonometric Math Unit) ops — 0xE27x. MSW reg fields: aaa=RaH dest, bbb=RbH,
+# ccc=RcH, ddd=RdH (2nd dest for QUADF32). Real math where a SLEIGH primitive exists
+# (div/sqrt/2pi); transcendentals use the pcodeops above.
+:MPY2PIF32 f_ra, f_rb  is op16=0xE270; f_rb & f_ra & f_msw_hi=0 { local twopi:4 = 0x40C90FDB; f_ra = f_rb f* twopi; } # *2pi
+:DIV2PIF32 f_ra, f_rb  is op16=0xE271; f_rb & f_ra & f_msw_hi=0 { local twopi:4 = 0x40C90FDB; f_ra = f_rb f/ twopi; } # /2pi
+:IEXP2F32 f_ra, f_rb   is op16=0xE272; f_rb & f_ra & f_msw_hi=0 { f_ra = IEXP2F32(f_rb); }   # 1/2^x estimate
+:LOG2F32 f_ra, f_rb    is op16=0xE273; f_rb & f_ra & f_msw_hi=0 { f_ra = LOG2F32(f_rb); }    # log2(x) estimate
+:DIVF32 f_ra, f_rb, f_rc  is op16=0xE274; f_rc & f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb f/ f_rc; }
+:SQRTF32 f_ra, f_rb    is op16=0xE277; f_rb & f_ra & f_msw_hi=0 { f_ra = sqrt(f_rb); }
+:SINPUF32 f_ra, f_rb   is op16=0xE278; f_rb & f_ra & f_msw_hi=0 { f_ra = SINPUF32(f_rb); }   # sin(2pi*x)
+:COSPUF32 f_ra, f_rb   is op16=0xE279; f_rb & f_ra & f_msw_hi=0 { f_ra = COSPUF32(f_rb); }   # cos(2pi*x)
+:ATANPUF32 f_ra, f_rb  is op16=0xE27A; f_rb & f_ra & f_msw_hi=0 { f_ra = ATANPUF32(f_rb); }  # atan(x)/2pi
+# QUADF32 RaH,RbH,RcH (+RdH) — quadrant determination for ATANPUF32; two dest regs.
+:QUADF32 f_ra, f_rb, f_rc  is op16=0xE27C; f_rc & f_rb & f_ra { f_ra = QUADF32(f_rb, f_rc); }
 
 # Conversions (reg-reg).  LSW fixed; MSW reg fields. The FP reg holds a float; the
 # int forms hold a 2's-complement int in the 32-bit reg. trunc = float->int (toward 0),
