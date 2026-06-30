@@ -8,17 +8,18 @@
 
 # --- 22-bit absolute call/branch target -------------------------------------
 # LC/LB 22bit: word1 low 6 bits (loc_off6) = addr[21:16], word2 (imm16) = addr[15:0].
-# Compute the absolute target in a disassembly action ([reloc = ...]) on the main
-# constructor; both word fields are in scope. Build a code-space pointer var, then
-# call/goto it.
-# call22 (exports a ram varnode at the constant target) is defined in flow.sinc; using it
-# makes Ghidra record a real CALL/JUMP reference instead of an empty computed branch.
-:LC call22  is op_hi8=0x00 & op_lo_76=0b10 ; call22 {
+# Same full-instruction destination-subtable idiom as LCR/FFC in flow.sinc (see the long
+# pattern-size comment there): the subtable matches the WHOLE 2-word instruction (opcode
+# discriminator + loc_off6 ; imm16) and exports a ram varnode at the constant address, so
+# Ghidra records a real CALL/JUMP reference. The parent constructor just references it.
+lcdest: reloc  is op_hi8=0x00 & op_lo_76=0b10 & loc_off6 ; imm16  [ reloc = (loc_off6 << 16) | imm16; ] { export *[ram]:4 reloc; }
+lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc_off6 << 16) | imm16; ] { export *[ram]:4 reloc; }
+:LC lcdest  is lcdest {
     RPC = inst_next;
-    call call22;
+    call lcdest;
 }
-:LB call22  is op_hi8=0x00 & op_lo_76=0b01 ; call22 {
-    goto call22;
+:LB lbdest  is lbdest {
+    goto lbdest;
 }
 
 # LC *XAR7   0111 0110 0000 0100   (indirect call via XAR7)

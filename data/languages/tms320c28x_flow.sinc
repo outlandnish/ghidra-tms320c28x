@@ -59,11 +59,21 @@ rel16dest: reloc  is simm16  [ reloc = inst_start + simm16; ] { export *[ram]:4 
 rel8dest:  reloc  is simm8   [ reloc = inst_start + simm8;  ] { export *[ram]:4 reloc; }
 
 # ABSOLUTE 22-bit call/branch targets (LCR/LC/FFC/LB #22bit). word1 low 6 bits = addr[21:16],
-# word2 (imm16) = addr[15:0]. Like rel16dest, EXPORT a ram varnode at the constant address so
-# `call`/`goto` of the subtable records a real CALL/JUMP reference (a `call [local_varnode]`
-# is a computed branch and Ghidra logs NO xref → empty call graph). Used by LCR/LC/FFC (call22)
-# and LB (goto22). The *XARn indirect forms stay `call [reg]` — those are genuinely computed.
-call22: reloc  is loc_off6 ; imm16  [ reloc = (loc_off6 << 16) | imm16; ] { export *[ram]:4 reloc; }
+# word2 (imm16) = addr[15:0]. Like rel16dest, the destination subtable EXPORTs a ram varnode at the
+# constant address so `call`/`goto` records a real CALL/JUMP reference (a `call [local_varnode]` is a
+# computed branch and Ghidra logs NO xref → empty call graph).
+#
+# CRITICAL pattern-size rule learned the hard way: the address spans two 16-bit tokens (loc_off6 in
+# word1, imm16 in word2), so the subtable is intrinsically 2 words. A subtable referenced by `&` must
+# equal the parent's word-length; a parent matching only the opcode bits is 1 word → SLEIGH errors
+# "Mismatched pattern sizes -- 2 vs 1". Referencing it by `;` makes the subtable START at word2 (the
+# regression: every LCR mis-parsed across 3 words, decoding garbage targets + cascading halt_baddata).
+# The only correct form: the DESTINATION SUBTABLE matches the FULL 2-word instruction including the
+# opcode discriminator, and the parent constructor just references it (parent size == subtable size).
+# Hence one subtable per opcode (the discriminator bits differ). The *XARn indirect forms below stay
+# `call [reg]` — those are genuinely computed.
+lcrdest: reloc  is op_hi8=0x76 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc_off6 << 16) | imm16; ] { export *[ram]:4 reloc; }
+ffcdest: reloc  is op_hi8=0x00 & op_lo_76=0b11 & loc_off6 ; imm16  [ reloc = (loc_off6 << 16) | imm16; ] { export *[ram]:4 reloc; }
 
 # =============================================================================
 # Conditional branches
@@ -118,9 +128,9 @@ call22: reloc  is loc_off6 ; imm16  [ reloc = (loc_off6 << 16) | imm16; ] { expo
 # word2 = addr[15:0]. (NOT pc-relative — the earlier rel16dest version computed
 # inst_start+simm16, so every LCR pointed back at itself; in unlinked .objs the
 # field is a 0 reloc placeholder, which made it look like a self-call.)
-:LCR call22  is op_hi8=0x76 & op_lo_76=0b01 ; call22 {
+:LCR lcrdest  is lcrdest {
     RPC = inst_next;
-    call call22;
+    call lcrdest;
 }
 
 # LCR *XARn           0011 1110 0110 0RRR  (indirect call using RPC)
@@ -131,9 +141,9 @@ call22: reloc  is loc_off6 ; imm16  [ reloc = (loc_off6 << 16) | imm16; ] { expo
 
 # FFC XAR7,#22bit     0000 0000 11CC CCCC : CCCC CCCC CCCC CCCC  (fast call; return
 # PC saved in XAR7, ABSOLUTE 22-bit target). word1 low 6 bits = addr[21:16].
-:FFC "XAR7,"call22  is op_hi8=0x00 & op_lo_76=0b11 ; call22 {
+:FFC "XAR7,"ffcdest  is ffcdest {
     XAR7 = inst_next;
-    call call22;
+    call ffcdest;
 }
 
 # LRETR               0000 0000 0000 0110   (long return using RPC)
