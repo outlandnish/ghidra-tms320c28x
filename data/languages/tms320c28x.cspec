@@ -32,9 +32,16 @@
 
   <stackpointer register="SP" space="ram" growth="positive"/>
 
-  <!-- Skeleton calling convention. The C28x C/C++ ABI passes the first arguments
-       in ACC/XAR4/XAR5 and the rest on the stack, returning in ACC. This is a
-       first approximation refined once load/store/call semantics land. -->
+  <!-- LCR saves the return address in RPC; LRETR returns through it. Telling Ghidra
+       this lets the decompiler model call/return framing correctly. -->
+  <returnaddress>
+    <register name="RPC"/>
+  </returnaddress>
+
+  <!-- C28x C/C++ ABI (SPRU514 §7.4). Integer/pointer args in ACC then XAR4/XAR5, rest
+       on the stack; integer/pointer return in ACC, float return in R0H. Register classes:
+       save-on-entry (callee-saved): XAR1/XAR2/XAR3, R4H-R7H, DP; everything else is
+       save-on-call (scratch, clobbered by a call). -->
   <default_proto>
     <prototype name="__c28x" extrapop="0" stackshift="0" strategy="register">
       <input>
@@ -52,13 +59,41 @@
         </pentry>
       </input>
       <output>
+        <!-- float return in R0H; integer/pointer return in ACC -->
+        <pentry minsize="4" maxsize="4" metatype="float">
+          <register name="R0H"/>
+        </pentry>
         <pentry minsize="1" maxsize="4">
           <register name="ACC"/>
         </pentry>
       </output>
       <unaffected>
         <register name="SP"/>
+        <!-- save-on-entry (callee-saved) — values survive across a call -->
+        <register name="XAR1"/>
+        <register name="XAR2"/>
+        <register name="XAR3"/>
+        <register name="R4H"/>
+        <register name="R5H"/>
+        <register name="R6H"/>
+        <register name="R7H"/>
+        <register name="DP"/>
       </unaffected>
+      <killedbycall>
+        <!-- save-on-call (scratch) — a call may clobber these -->
+        <register name="ACC"/>
+        <register name="P"/>
+        <register name="XT"/>
+        <register name="XAR0"/>
+        <register name="XAR4"/>
+        <register name="XAR5"/>
+        <register name="XAR6"/>
+        <register name="XAR7"/>
+        <register name="R0H"/>
+        <register name="R1H"/>
+        <register name="R2H"/>
+        <register name="R3H"/>
+      </killedbycall>
     </prototype>
   </default_proto>
 </compiler_spec>
