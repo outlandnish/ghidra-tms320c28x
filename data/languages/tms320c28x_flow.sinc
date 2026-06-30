@@ -58,6 +58,13 @@ CC8: "UNC"  is cond4hi=0xf { local c:1 = 1:1;                      export c; }
 rel16dest: reloc  is simm16  [ reloc = inst_start + simm16; ] { export *[ram]:4 reloc; }
 rel8dest:  reloc  is simm8   [ reloc = inst_start + simm8;  ] { export *[ram]:4 reloc; }
 
+# ABSOLUTE 22-bit call/branch targets (LCR/LC/FFC/LB #22bit). word1 low 6 bits = addr[21:16],
+# word2 (imm16) = addr[15:0]. Like rel16dest, EXPORT a ram varnode at the constant address so
+# `call`/`goto` of the subtable records a real CALL/JUMP reference (a `call [local_varnode]`
+# is a computed branch and Ghidra logs NO xref → empty call graph). Used by LCR/LC/FFC (call22)
+# and LB (goto22). The *XARn indirect forms stay `call [reg]` — those are genuinely computed.
+call22: reloc  is loc_off6 ; imm16  [ reloc = (loc_off6 << 16) | imm16; ] { export *[ram]:4 reloc; }
+
 # =============================================================================
 # Conditional branches
 # =============================================================================
@@ -111,11 +118,9 @@ rel8dest:  reloc  is simm8   [ reloc = inst_start + simm8;  ] { export *[ram]:4 
 # word2 = addr[15:0]. (NOT pc-relative — the earlier rel16dest version computed
 # inst_start+simm16, so every LCR pointed back at itself; in unlinked .objs the
 # field is a 0 reloc placeholder, which made it look like a self-call.)
-:LCR abs22  is op_hi8=0x76 & op_lo_76=0b01 & loc_off6 ; imm16
-            [ abs22 = (loc_off6 << 16) | imm16; ] {
+:LCR call22  is op_hi8=0x76 & op_lo_76=0b01 ; call22 {
     RPC = inst_next;
-    local tgt:4 = abs22;
-    call [tgt];
+    call call22;
 }
 
 # LCR *XARn           0011 1110 0110 0RRR  (indirect call using RPC)
@@ -126,11 +131,9 @@ rel8dest:  reloc  is simm8   [ reloc = inst_start + simm8;  ] { export *[ram]:4 
 
 # FFC XAR7,#22bit     0000 0000 11CC CCCC : CCCC CCCC CCCC CCCC  (fast call; return
 # PC saved in XAR7, ABSOLUTE 22-bit target). word1 low 6 bits = addr[21:16].
-:FFC "XAR7,"abs22  is op_hi8=0x00 & op_lo_76=0b11 & loc_off6 ; imm16
-            [ abs22 = (loc_off6 << 16) | imm16; ] {
+:FFC "XAR7,"call22  is op_hi8=0x00 & op_lo_76=0b11 ; call22 {
     XAR7 = inst_next;
-    local tgt:4 = abs22;
-    call [tgt];
+    call call22;
 }
 
 # LRETR               0000 0000 0000 0110   (long return using RPC)

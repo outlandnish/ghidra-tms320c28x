@@ -11,16 +11,14 @@
 # Compute the absolute target in a disassembly action ([reloc = ...]) on the main
 # constructor; both word fields are in scope. Build a code-space pointer var, then
 # call/goto it.
-:LC abs22  is op_hi8=0x00 & op_lo_76=0b10 & loc_off6 ; imm16
-            [ abs22 = (loc_off6 << 16) | imm16; ] {
-    local tgt:4 = abs22;
+# call22 (exports a ram varnode at the constant target) is defined in flow.sinc; using it
+# makes Ghidra record a real CALL/JUMP reference instead of an empty computed branch.
+:LC call22  is op_hi8=0x00 & op_lo_76=0b10 ; call22 {
     RPC = inst_next;
-    call [tgt];
+    call call22;
 }
-:LB abs22  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16
-            [ abs22 = (loc_off6 << 16) | imm16; ] {
-    local tgt:4 = abs22;
-    goto [tgt];
+:LB call22  is op_hi8=0x00 & op_lo_76=0b01 ; call22 {
+    goto call22;
 }
 
 # LC *XAR7   0111 0110 0000 0100   (indirect call via XAR7)
