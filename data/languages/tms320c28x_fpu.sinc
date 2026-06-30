@@ -26,10 +26,25 @@ define token fpu_msw (16)
     p_rd    = (11,13)  # ddd  MPYF32 dest RdH
     p_ra    = (8,10)   # aaa  MOV32 dest RaH
     p_re_lo = (14,15)  # ee   low 2 bits of ReH (high bit is in the LSW)
+    # 0xE203 store MSW = 0000 0aaa mem32: the mem32 operand lives in the LOW 8 bits of the
+    # MSW (a standard C28x loc byte). b76 selects the addressing mode; off6 is the direct offset.
+    f_mem_b76 = (6,7)  # mem32 addressing-mode selector (00 = @6bit DP-direct)
+    f_mem_off6 = (0,5) # mem32 direct-mode 6-bit offset (combined with DP)
 ;
 attach variables [ f_ra f_rb f_rc ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 attach variables [ fimm_reg ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 attach variables [ p_rd p_ra ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
+
+# --- mem32 destination on the MSW (0xE203 store) -----------------------------
+# The C28x `mem32` operand carried in the LOW 8 bits of the MSW. Only DP-direct mode
+# (@6bit, b76=00) is observed for these FPU stores (dis2000: `MOV32 @0xa,R1H`), and that
+# is the only mode that yields a clean, recoverable address — (DP<<6)|off6, exactly as the
+# integer `loc32: "@"loc_off6` rule in addr.sinc. Export the 32-bit memory cell so the store
+# writes a real global (the whole reason the 0x441 float unpack vanished from the decompile).
+mem32d: "@"f_mem_off6  is f_mem_b76=0b00 & f_mem_off6 {
+    local a:4 = (zext(DP) << 6) | zext(f_mem_off6:4);
+    export *[ram]:4 a;
+}
 
 # --- STF flag model ----------------------------------------------------------
 # CMPF32/MINF32/MAXF32 set ZF=STF[0] and NF=STF[1] from the comparison (SPRU430F).
@@ -153,7 +168,10 @@ macro setFloatFlags(a, b) {
 #   0xE223 MOVD32 RaH,mem32  0xE250 MACF32  0xE280 STF,mem32  0xE284 UI32TOF32  0xE288
 #   I32TOF32  0xE2A0..AF MOV32 RaH,mem32,CNDF  0xE2C4 UI16TOF32  0xE2C8 I16TOF32
 :MOV32 "mem32", "STF"       is op16=0xE200 ; imm16  { local s:4 = STF; }            # store STF -> mem
-:MOV32 "mem32", p_ra        is op16=0xE203 ; p_ra   { local s:4 = p_ra; }           # store RaH -> mem
+:MOV32 mem32d, p_ra         is op16=0xE203 ; mem32d & p_ra { mem32d = p_ra; }        # store RaH -> [DP:off6]
+# Non-direct mem32 modes (indirect *XARn etc.): the address isn't cleanly recoverable from
+# the byte alone, so keep the flow-preserving consume (don't regress those to halt_baddata).
+:MOV32 "mem32", p_ra        is op16=0xE203 ; f_mem_b76!=0b00 & p_ra { local s:4 = p_ra; }
 :MOV16 "mem16", p_ra        is op16=0xE213 ; p_ra   { local s:2 = p_ra:2; }         # store RaH[15:0] -> mem
 :MOVD32 p_ra, "mem32"       is op16=0xE223 ; p_ra   { p_ra = p_ra; }                 # load mem -> RaH (opaque)
 :MACF32 "R7H,R3H", "mem32,*XAR7++"  is op16=0xE250 ; imm16 {   # RPT-capable MAC: R3H*=mem, R7H+=R3H
