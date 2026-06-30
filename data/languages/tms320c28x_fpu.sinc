@@ -142,13 +142,26 @@ macro setFloatFlags(a, b) {
 
 # =============================================================================
 # Register immediate loads: MOVIZ (high 16) / MOVXI (low 16) of an FP reg.
-# LSW=1110 1000 0000 zIII ; imm in the 2nd word.  Already correct — leave.
-# =============================================================================
-:MOVIZ fimm_reg, "#"imm16  is op_hi8=0xE8 & fimm_hi=0 & fimm_z=0 & fimm_reg ; imm16 {
-    fimm_reg = (fimm_reg & 0x0000FFFF) | (zext(imm16:2) << 16);
+#   LSW: 1110 1000 0000 zIII   (III = HIGH 3 bits of the 16-bit immediate)
+#   MSW: IIII IIII IIII Iaaa   (13 I = LOW 13 bits of the immediate; aaa = dest reg)
+# The 16-bit immediate is split: imm16 = (LSW[2:0] << 13) | MSW[15:3]
+#                                      = (fimm_lo3 << 13) | fimm_hi13
+# and the DEST REGISTER is MSW[2:0] = f_ra (NOT the LSW bits).
+#
+# WAS WRONG (the "already correct — leave" note was a misdiagnosis): the old form used
+# `fimm_reg` (= LSW[2:0], which is the immediate HIGH 3 bits, not the reg) as the dest, and
+# the whole `imm16` MSW word as the value. That produced (a) the wrong destination register
+# whenever LSW-III != MSW-aaa, and (b) a garbage immediate (raw MSW). Surfaced in PCS411
+# @0x8f7da: the 0x441 scale constants decoded as 0xEE62.../0xE119... (~1e28) instead of the
+# real 0x3DCCCCCD (0.1) / 0x3C23D70A (0.01), and R2H scale-loads were mislabeled R6H so R2H
+# read as uninitialized in the decompile. See PCODE-GAPS RESOLVED entry for the full diagnosis.
+:MOVIZ f_ra, "#"^fimm_hi13  is op_hi8=0xE8 & fimm_hi=0 & fimm_z=0 & fimm_lo3 ; fimm_hi13 & f_ra {
+    local imm:2 = (zext(fimm_lo3:2) << 13) | fimm_hi13:2;
+    f_ra = (f_ra & 0x0000FFFF) | (zext(imm) << 16);
 }
-:MOVXI fimm_reg, "#"imm16  is op_hi8=0xE8 & fimm_hi=0 & fimm_z=1 & fimm_reg ; imm16 {
-    fimm_reg = (fimm_reg & 0xFFFF0000) | zext(imm16:2);
+:MOVXI f_ra, "#"^fimm_hi13  is op_hi8=0xE8 & fimm_hi=0 & fimm_z=1 & fimm_lo3 ; fimm_hi13 & f_ra {
+    local imm:2 = (zext(fimm_lo3:2) << 13) | fimm_hi13:2;
+    f_ra = (f_ra & 0xFFFF0000) | zext(imm);
 }
 
 # =============================================================================
