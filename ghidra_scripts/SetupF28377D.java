@@ -1,14 +1,20 @@
 // Post-import setup for a raw TMS320F28377D firmware image:
-//   1. Map + label ALL peripheral frames (CAN, GPIO, SCI, SPI, I2C, ADC, ePWM,
-//      eCAP/eQEP, DMA, PIE, sysctl, timers...) so every MMIO access is self-
-//      documenting and XREFs resolve to named registers.
-//   2. Label every peripheral field-by-field (not just CAN) via shared *_REGS tables.
-//   3. Mark the reset vector so Ghidra can follow real flow and decode only reachable
+//   1. Map the device memory map — peripheral MMIO frames AND the on-chip RAM regions
+//      (M0/M1, LS0-5, D0/D1, GS0-15, CPU-to-CPU MSGRAMs) per datasheet SPRS880P Table 7-1.
+//      Mapping RAM as uninitialized blocks lets references into it resolve (notably LCR
+//      calls into D0/D1 RAM at 0xB000-0xBFFF, where `.ramfunc` RAM-resident code lives,
+//      copied from flash at boot — absent from a static flash dump) instead of producing
+//      "could not follow flow into non-existing memory" errors.
+//   2. Label ALL peripheral frames (CAN, GPIO, SCI, SPI, I2C, ADC, ePWM, eCAP/eQEP, DMA,
+//      PIE, sysctl, timers...) so every MMIO access is self-documenting and XREFs resolve.
+//   3. Label every peripheral field-by-field (not just CAN) via shared *_REGS tables.
+//   4. Mark the reset vector so Ghidra can follow real flow and decode only reachable
 //      code (leaving const pools as data).
 //
 // Word addresses (the C28x is word-addressable; see docs/c28x/f2837xd_peripherals.md,
 // f28377d_memmap.md, dcan_registers.md). Run as a post-script after importing the .bin.
-// Register tables extracted from spruhm8k.pdf (F2837xD TRM, SPRUHM8K).
+// Register tables extracted from spruhm8k.pdf (F2837xD TRM, SPRUHM8K); the RAM/flash/ROM
+// memory map from the device datasheet SPRS880P Table 7-1.
 //
 // @category TMS320C28x
 import ghidra.app.script.GhidraScript;
@@ -421,16 +427,32 @@ public class SetupF28377D extends GhidraScript {
         {0x0005D000L, 0x130L, "DEV_CFG"},
     };
 
-    // Dual-core RAM regions.
+    // Dual-core RAM regions (word addresses). Verified against the device datasheet
+    // SPRS880P Table 7-1 (C28x Memory Map). These are RAM at runtime but ABSENT from a
+    // static flash-only dump — mapping them as uninitialized blocks lets Ghidra resolve
+    // references into them (e.g. LCR into D0/D1 RAM, which holds `.ramfunc` RAM-resident
+    // code copied from flash at boot) instead of flagging "non-existing memory".
+    //   M0 0x0000-0x03FF, M1 0x0400-0x07FF
+    //   LS0-LS5 0x8000-0xAFFF (2K each)
+    //   D0 0xB000-0xB7FF, D1 0xB800-0xBFFF  (← .ramfunc lives here; was MISSING before)
+    //   GS0-GS15 0xC000-0x1BFFF (4K each)
+    //   MSGRAM CPU2->CPU1 0x3F800, CPU1->CPU2 0x3FC00
+    // NOTE: createUninitializedBlock() takes the length in BYTES, and the C28x space is
+    // word-addressed (1 word = 2 bytes). To span N words, pass N*2 bytes. (The peripheral
+    // *_REGS tables already follow this — e.g. 0x200 bytes = 0x100 words.) The lengths below
+    // are word_count*2 so each block covers the full sector from Table 7-1.
     private static final Object[][] RAM_REGIONS = {
-        {0x000000L, 0x000800L, "M0M1_RAM"},
-        {0x008000L, 0x004000L, "LS_RAM"},
-        {0x00C000L, 0x002000L, "D0D1_RAM"},
-        {0x00E000L, 0x002000L, "GS_RAM_LO"},
-        {0x010000L, 0x008000L, "GS0_15_RAM"},
-        {0x018000L, 0x004000L, "RAM_18000"},
-        {0x03F800L, 0x000400L, "MSGRAM_CPU2_TO_CPU1"},
-        {0x03FC00L, 0x000400L, "MSGRAM_CPU1_TO_CPU2"},
+        {0x000000L, 0x001000L, "M0M1_RAM"},          // M0+M1   = 0x0800 words → 0x1000 bytes (0x0000-0x07FF)
+        {0x008000L, 0x006000L, "LS0_5_RAM"},         // LS0-LS5 = 0x3000 words → 0x6000 bytes (0x8000-0xAFFF)
+        {0x00B000L, 0x002000L, "D0D1_RAM"},          // D0+D1   = 0x1000 words → 0x2000 bytes (0xB000-0xBFFF) — .ramfunc
+        {0x00C000L, 0x020000L, "GS0_15_RAM"},        // GS0-15  = 0x10000 words → 0x20000 bytes (0xC000-0x1BFFF)
+        {0x03F800L, 0x000800L, "MSGRAM_CPU2_TO_CPU1"}, // 0x400 words → 0x800 bytes
+        {0x03FC00L, 0x000800L, "MSGRAM_CPU1_TO_CPU2"}, // 0x400 words → 0x800 bytes
+        // On-chip ROM (datasheet Table 7-1). Mapped so LCR/branch targets into the boot
+        // ROM / secure ROM (e.g. TI-RTOS, boot loader, reset vectors at 0x3FFFC0) resolve
+        // instead of "non-existing memory". Empty (uninitialized) in a flash-only dump.
+        {0x3F0000L, 0x010000L, "SECURE_ROM"},          // 0x8000 words → 0x10000 bytes (0x3F0000-0x3F7FFF)
+        {0x3F8000L, 0x010000L, "BOOT_ROM"},            // 0x8000 words → 0x10000 bytes (0x3F8000-0x3FFFFF)
     };
 
     @Override
