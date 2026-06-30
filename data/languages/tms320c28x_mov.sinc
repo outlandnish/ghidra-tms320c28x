@@ -13,8 +13,14 @@
 
 # MOV AX, loc16     1001 001A LLLL LLLL   -- load AL/AH from 16-bit location
 # Top 7 bits (op_hi7) = 1001001 = 0x49; bit 8 = the A bit consumed by the AX subtable.
+# The load SETS N (bit15 of AX) and Z (AX==0) — SPRU430F "MOV AX,loc16" Flags table. The
+# canonical idiom `MOV AH,*+XARn[k]; SB ...,NEQ` (manual's own example) relies on it: omitting
+# setNZ16 left the branch reading the PREVIOUS compare's stale Z → the decompiler pruned the
+# real arm (same class as the ANDB/ADDB/MOVB AX,#imm8 missing-N/Z fix). Surfaced PCS411 CPU2
+# FUN_00085bb9 @0x85bc9-0x85bcb. (The store form `MOV loc16,AX` does NOT set flags — leave it.)
 :MOV AX, loc16      is op_hi7=0x49 & AX & loc16  {
     AX = loc16;
+    setNZ16(AX);
 }
 
 # MOV loc16, AX     1001 011A LLLL LLLL   -- store AL/AH to 16-bit location
