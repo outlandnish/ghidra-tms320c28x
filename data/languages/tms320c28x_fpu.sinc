@@ -241,26 +241,32 @@ attach variables [ p_rf ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 #   MSW: IIII IIII IIbb baaa   (aaa = dest RaH, bbb = SOURCE RbH)
 # CRITICAL: dest (aaa) and source (bbb) are SEPARATE fields and routinely differ, so
 # modeling this as `f_ra = f_ra` makes the result a self-reference — the decompiler then
-# constant-folds the downstream CMP/branch and prunes real blocks as "unreachable". Read
-# f_rb. The #16FHi constant is the HIGH 16 bits of the float (low mantissa = 0); it's split
-# across both words: imm16 = LSW[5:0] | (MSW[15:6] << 6), float operand = imm16 << 16.
+# constant-folds the downstream CMP/branch and prunes real blocks as "unreachable". Read f_rb.
+# The #16FHi constant is the HIGH 16 bits of the float (low mantissa = 0), split across both
+# words. By the same convention proven for MOVIZ/CMPF32 (the LSW immediate bits are the
+# HIGH-order bits), imm16 = (LSW[5:0] << 10) | MSW[15:6] = (fimm_lo6 << 10) | fimm_hi10.
+# NOTE: no #16FHi MPY/ADD/SUB site exists in the PCS image to bench this against — the
+# ordering is INFERRED from the (tested) MOVIZ/CMPF32 fix, not independently verified here.
+# If a future image has one, confirm it decodes to a sane IEEE-754 high-half.
 :MPYF32 f_ra, "#"^fimm_hi10, f_rb  is op_hi8=0xE8 & op_lo_76=0b01 & fimm_lo6 ; f_ra & f_rb & fimm_hi10 {
-    local imm:4 = (zext(fimm_hi10:4) << 6 | zext(fimm_lo6:4)) << 16;
+    local imm:4 = (zext(fimm_lo6:4) << 10 | zext(fimm_hi10:4)) << 16;
     f_ra = f_rb f* imm;
 }
 :ADDF32 f_ra, "#"^fimm_hi10, f_rb  is op_hi8=0xE8 & op_lo_76=0b10 & fimm_lo6 ; f_ra & f_rb & fimm_hi10 {
-    local imm:4 = (zext(fimm_hi10:4) << 6 | zext(fimm_lo6:4)) << 16;
+    local imm:4 = (zext(fimm_lo6:4) << 10 | zext(fimm_hi10:4)) << 16;
     f_ra = f_rb f+ imm;
 }
 :SUBF32 f_ra, "#"^fimm_hi10, f_rb  is op_hi8=0xE8 & op_lo_76=0b11 & fimm_lo6 ; f_ra & f_rb & fimm_hi10 {
-    local imm:4 = (zext(fimm_hi10:4) << 6 | zext(fimm_lo6:4)) << 16;
+    local imm:4 = (zext(fimm_lo6:4) << 10 | zext(fimm_hi10:4)) << 16;
     f_ra = f_rb f- imm;
 }
 
 # CMPF32 RaH, #16FHi   LSW: 1110 1000 0001 0III ; MSW: IIII IIII IIII Iaaa  (2-word)
-# imm split LSW[2:0] | MSW[15:3]<<3 (high 16 bits of the float, low mantissa = 0).
+# imm16 (high 16 bits of the float, low mantissa=0) is split: III (LSW[2:0]) = HIGH 3 bits,
+# MSW[15:3] = LOW 13 bits → imm16 = (fimm_lo3 << 13) | fimm_hi13. (Was backwards — same bug
+# as the MOVIZ/MOVXI fix; verified on a real image: #1.0/#2.0/#5.0 sites now decode right.)
 :CMPF32 f_ra, "#"^fimm_hi13  is op_hi8=0xE8 & loc_mode5=0b00010 & fimm_lo3 ; f_ra & fimm_hi13 {
-    local imm:4 = (zext(fimm_hi13:4) << 3 | zext(fimm_lo3:4)) << 16;
+    local imm:4 = (zext(fimm_lo3:4) << 13 | zext(fimm_hi13:4)) << 16;
     setFloatFlags(f_ra, imm);
 }
 # CMPF32 RaH, #0.0     LSW: 1110 0101 1010 0aaa  (single word). fimm_reg = aaa.
@@ -275,15 +281,15 @@ attach variables [ p_rf ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 :MOVST0 "#"imm8        is op_hi8=0xAD & imm8 { ST0 = STF:2; }
 
 # MAXF32 RaH, #16FHi   LSW: 1110 1000 0010 0III ; MSW: IIII IIII IIII Iaaa  (2-word)
-# RaH = max(RaH, imm). imm split LSW[2:0] | MSW[15:3]<<3.
+# RaH = max(RaH, imm). imm16 = (LSW[2:0] << 13) | MSW[15:3] (III = HIGH 3 bits; see CMPF32).
 :MAXF32 f_ra, "#"^fimm_hi13  is op_hi8=0xE8 & loc_mode5=0b00100 & fimm_lo3 ; f_ra & fimm_hi13 {
-    local imm:4 = (zext(fimm_hi13:4) << 3 | zext(fimm_lo3:4)) << 16;
+    local imm:4 = (zext(fimm_lo3:4) << 13 | zext(fimm_hi13:4)) << 16;
     if (f_ra f>= imm) goto inst_next;
     f_ra = imm;
 }
 # MINF32 RaH, #16FHi   LSW: 1110 1000 0011 0III ; MSW: IIII IIII IIII Iaaa  (2-word)
 :MINF32 f_ra, "#"^fimm_hi13  is op_hi8=0xE8 & loc_mode5=0b00110 & fimm_lo3 ; f_ra & fimm_hi13 {
-    local imm:4 = (zext(fimm_hi13:4) << 3 | zext(fimm_lo3:4)) << 16;
+    local imm:4 = (zext(fimm_lo3:4) << 13 | zext(fimm_hi13:4)) << 16;
     if (f_ra f<= imm) goto inst_next;
     f_ra = imm;
 }
