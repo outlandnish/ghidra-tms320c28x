@@ -305,8 +305,17 @@ attach variables [ p_rf ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 :NEGF32 f_ra, f_rb, fcndf  is op_hi8=0xE6 & loc_hi4=0b1010 & fcndf
                            ; f_rb & f_ra & f_msw_hi=0 { local negone:4 = 0xBF800000; f_ra = f_rb f* negone; }
 # MOVST0 FLAG          LSW: 1010 1101 FFFF FFFF  (copy selected STF flags into ST0)
-# ST0 holds the integer Z/N flags the SB decoder reads; forward STF's low bits.
-:MOVST0 "#"imm8        is op_hi8=0xAD & imm8 { ST0 = STF:2; }
+# ST0 holds the integer Z/N flags the SB ...,COND decoder reads. setFloatFlags() puts the
+# float compare result in STF[0]=ZF / STF[1]=NF, but the named flags are $(Z)=ST0[4] and
+# $(N)=ST0[5] (slaspec). A flat `ST0 = STF:2` lands them in ST0 bits 0/1, so the SB branch
+# reads ST0[4]/[5] (never set) → constant condition → the decompiler prunes the real arm.
+# Map STF's compare bits into the named ST0 flag fields instead. (imm8 is the flag-select
+# mask; Z+N covers every CMPF32/MAXF32/MINF32 → SB EQ/NEQ/GT/GEQ/LT/LEQ idiom. C/V/TC are
+# untouched — the FPU compare path doesn't set them.)
+:MOVST0 "#"imm8        is op_hi8=0xAD & imm8 {
+    $(Z) = STF[0,1];   # float ZF -> integer Z (ST0[4])
+    $(N) = STF[1,1];   # float NF -> integer N (ST0[5])
+}
 
 # MAXF32 RaH, #16FHi   LSW: 1110 1000 0010 0III ; MSW: IIII IIII IIII Iaaa  (2-word)
 # RaH = max(RaH, imm). imm16 = (LSW[2:0] << 13) | MSW[15:3] (III = HIGH 3 bits; see CMPF32).
