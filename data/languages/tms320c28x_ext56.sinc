@@ -153,8 +153,15 @@
 # Note: several mnemonics share an opcode (C28ADDR==CLRC AMODE==0x5616, etc.);
 # we pick the canonical name per opcode to avoid duplicate-pattern conflicts.
 # =============================================================================
-:CLRC "AMODE"   is op16=0x5616 { $(AMODE) = 0; }   # = C28ADDR
-:SETC "AMODE"   is op16=0x561e { $(AMODE) = 1; }   # = LPADDR
+# CLRC/SETC AMODE select the addressing-mode decode for everything that FOLLOWS, so they
+# must propagate the ctx_AMODE decode context forward (globalset on inst_next), not just
+# flip the runtime ST1 bit. Without this the disassembler always decoded as AMODE=0 and
+# any AMODE=1 (C2xLP-compatible) run after a SETC AMODE was mis-decoded. The AMODE=1 loc
+# rows are added separately (see addr.sinc); this is the flow that activates them.
+:CLRC "AMODE"   is op16=0x5616 [ ctx_AMODE = 0; globalset(inst_next, ctx_AMODE); ]
+                { $(AMODE) = 0; }   # = C28ADDR
+:SETC "AMODE"   is op16=0x561e [ ctx_AMODE = 1; globalset(inst_next, ctx_AMODE); ]
+                { $(AMODE) = 1; }   # = LPADDR
 :SETC "Objmode" is op16=0x561f { }                 # = C28OBJ
 :CLRC "Objmode" is op16=0x5636 { }                 # = C27OBJ
 :SETC "XF"      is op16=0x5626 { }

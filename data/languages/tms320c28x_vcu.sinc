@@ -14,13 +14,21 @@
 # =============================================================================
 # VCRC -- compute CRC on a 16-bit memory operand, accumulate into VCRC register.
 # All share the 1110 0010 11.. .... prefix and take a loc16 (mem16) source.
-# Decode-only: VCRC = f(VCRC, [loc16]) modeled as a dependency, not the real poly.
+# The CRC polynomial math is hardware-internal and not worth open-coding; model each
+# variant as a named pcodeop intrinsic VCRC = VCRCxx(VCRC, src). This (a) renders as a
+# real `VCRC8L(VCRC, src)` call in the decompiler instead of a misleading `VCRC + src`
+# add, and (b) keeps the true data dependency: VCRC out depends on VCRC in + the source
+# operand, which is the exact signal for finding CAN CRC-check/compute code.
 # =============================================================================
+define pcodeop VCRC8L;      # CRC-8  on the low byte
+define pcodeop VCRC16P1L;   # CRC-16 (poly 1) on the low half
+define pcodeop VCRC32L;     # CRC-32 on the low half
+
 # NOTE: these are 2-word -- LSW = opcode, MSW = "0000 0000 mem16" (loc field in the
 # second word's low byte). So the loc16 sub-table is matched AFTER the ';' word break.
-:VCRC8L_1 loc16     is op16=0xE2CB ; loc16     { local s:2 = loc16; VCRC = VCRC + zext(s); }
-:VCRC16P1L_1 loc16  is op16=0xE2CE ; loc16     { local s:2 = loc16; VCRC = VCRC + zext(s); }
-:VCRC32L_1 loc16    is op16=0xE2C1 ; loc16     { local s:2 = loc16; VCRC = VCRC + zext(s); }
+:VCRC8L_1 loc16     is op16=0xE2CB ; loc16     { local s:2 = loc16; VCRC = VCRC8L(VCRC, s); }
+:VCRC16P1L_1 loc16  is op16=0xE2CE ; loc16     { local s:2 = loc16; VCRC = VCRC16P1L(VCRC, s); }
+:VCRC32L_1 loc16    is op16=0xE2C1 ; loc16     { local s:2 = loc16; VCRC = VCRC32L(VCRC, s); }
 :VCRCCLR            is op16=0xE524             { VCRC = 0; }
 
 # =============================================================================

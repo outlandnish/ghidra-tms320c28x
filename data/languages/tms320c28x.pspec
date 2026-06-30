@@ -13,6 +13,23 @@
     </context_set>
   </context_data>
 
+  <!-- Peripheral-register (MMIO) ranges marked volatile so the decompiler never elides
+       or reorders reads/writes to hardware registers (a status poll or a write-to-clear
+       must not be optimized away). Word addresses (datasheet SPRS880P Table 7-1/7-5):
+         0x000B00-0x001FFF  ADC results, CPU timers, PIE, DMA, CLA, CLB
+         0x003000-0x007FFF  CLB, EPWM, ECAP, EQEP, DAC, CMPSS, SDFM, McBSP, SPI, SCI,
+                            I2C, uPP, WD, NMI, XINT, ADC cfg, XBARs, GPIO
+         0x040000-0x04FFFF  USB, EMIF, CAN-A/B (regs + msg RAM)
+         0x050000-0x05FFFF  IPC, DevCfg, AnalogSubsys, ClkCfg, CpuSys, DCSM, MemCfg,
+                            access-protection, Flash ctrl/ECC
+       (RAM regions and flash are deliberately NOT volatile.) -->
+  <volatile outputop="write_volatile" inputop="read_volatile">
+    <range space="ram" first="0x000B00" last="0x001FFF"/>
+    <range space="ram" first="0x003000" last="0x007FFF"/>
+    <range space="ram" first="0x040000" last="0x04FFFF"/>
+    <range space="ram" first="0x050000" last="0x05FFFF"/>
+  </volatile>
+
   <default_symbols>
     <!-- C28x CPU interrupt vector table (SPRU430F Table 3-1). Word addresses. -->
     <symbol name="RESET"  address="ram:0x3FFFC0" entry="true"/>
