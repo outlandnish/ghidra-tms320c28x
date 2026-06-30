@@ -30,10 +30,16 @@ define token fpu_msw (16)
     # MSW (a standard C28x loc byte). b76 selects the addressing mode; off6 is the direct offset.
     f_mem_b76 = (6,7)  # mem32 addressing-mode selector (00 = @6bit DP-direct)
     f_mem_off6 = (0,5) # mem32 direct-mode 6-bit offset (combined with DP)
+    # 0xBD/0xBF register-form MOV32 MSW = 0x0F<reg> : the FP reg index sits in MSW bits[2:5]
+    # (dis2000-confirmed: R0H..R7H => MSW byte 0x12,16,1A,1E,22,26,2A,2E = field value 4..11).
+    f_movf_reg = (2,5)
 ;
 attach variables [ f_ra f_rb f_rc ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 attach variables [ fimm_reg ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 attach variables [ p_rd p_ra ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
+# f_movf_reg values 4..11 map to R0H..R7H (low 4 indices unused/reserved).
+attach variables [ f_movf_reg ]
+    [ _ _ _ _ R0H R1H R2H R3H R4H R5H R6H R7H _ _ _ _ ];
 
 # --- mem32 destination on the MSW (0xE203 store) -----------------------------
 # The C28x `mem32` operand carried in the LOW 8 bits of the MSW. Only DP-direct mode
@@ -152,8 +158,13 @@ macro setFloatFlags(a, b) {
 # connects the float values to the command/IPC structs for dataflow.
 #   MOV32 loc32, RaH  (FP->C28x)  LSW: 1011 1111 loc32  MSW: imm16
 #   MOV32 RaH,  loc32 (C28x->FP)  LSW: 1011 1101 loc32  MSW: imm16
-:MOV32 loc32, "RaH"  is op_hi8=0xBF & loc32 ; imm16 { loc32 = loc32; }   # store FP reg (opaque) -> loc32
-:MOV32 "RaH", loc32  is op_hi8=0xBD & loc32 ; imm16 { local s:4 = loc32; } # load loc32 -> FP reg (consume loc32)
+# Register-form MOV32: source/dest is the LSW loc32 (ACC/P/XARn/XT — fully decoded by the
+# loc32 subtable); the FP register is the MSW (0x0F<reg>, f_movf_reg). The memory forms of
+# MOV32 live under 0xE2 (load) / 0xE203 (store), so 0xBD/0xBF are exclusively register-form.
+# Writing the real FP reg (was `local s:4 = loc32` / `loc32 = loc32`) lets the decompiler
+# track which MOVIZ/MOVXI const flows through ACC into the MPYF32 — the item-#2 value-recovery.
+:MOV32 f_movf_reg, loc32  is op_hi8=0xBD & loc32 ; f_movf_reg { f_movf_reg = loc32; }   # load <src> -> FP reg
+:MOV32 loc32, f_movf_reg  is op_hi8=0xBF & loc32 ; f_movf_reg { loc32 = f_movf_reg; }   # store FP reg -> <dst>
 
 # =============================================================================
 # 0xE2 family: LSW = 1110 0010 <hi4> <lo4> ; MSW = 0000 0aaa mem32
