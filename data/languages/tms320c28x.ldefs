@@ -15,4 +15,22 @@
     <compiler name="default" spec="tms320c28x.cspec" id="default"/>
     <external_name tool="IDA-PRO" name="tms320c28"/>
   </language>
+
+  <!-- F2812 device variant: same C28x SLEIGH core (.sla) and calling convention (.cspec)
+       as the default — the F2812 fixed-point instruction set is a strict subset of the
+       decoded ISA — but with the F281x-specific memory map (peripheral MMIO frames and
+       interrupt vectors) in tms320c28x_f2812.pspec. Also covers the memory-compatible
+       F2810/F2811. Pair with ghidra_scripts/SetupF2812.java for full peripheral labels. -->
+  <language processor="TMS320C28x"
+            endian="little"
+            size="32"
+            variant="f2812"
+            version="0.1"
+            slafile="tms320c28x.sla"
+            processorspec="tms320c28x_f2812.pspec"
+            id="TMS320C28x:LE:32:f2812">
+    <description>TI TMS320F2812 (F281x) fixed-point C28x DSP — no FPU/VCU. Word-addressable, 16-bit byte. Also F2810/F2811.</description>
+    <compiler name="default" spec="tms320c28x.cspec" id="default"/>
+    <external_name tool="IDA-PRO" name="tms320c28"/>
+  </language>
 </language_definitions>

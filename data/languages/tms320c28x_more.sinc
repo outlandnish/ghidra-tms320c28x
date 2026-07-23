@@ -345,7 +345,7 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 # Batch 9: final rts-validation gaps — MOV ACC,#16bit<<#shift, CMPB AX,#8bit.
 # =============================================================================
 # MOV ACC,#16bit<<#0..15   1111 1111 0010 SHFT : iiii iiii iiii iiii  (2-word)
-:MOV ACCreg, "#"imm16 is op_hi8=0xFF & loc_hi4=0b0010 & shft4 & ACCreg ; imm16 {
+:MOV ACCreg, "#"imm16^"<<#"^shft4 is op_hi8=0xFF & loc_hi4=0b0010 & shft4 & ACCreg ; imm16 {
     local v:4 = zext(imm16:2); local s:4 = zext(shft4:1); ACC = v << s;
 }
 # CMPB AX,#8bit   0101 001A CCCC CCCC  (compare AX with zero-ext 8-bit; set flags)
