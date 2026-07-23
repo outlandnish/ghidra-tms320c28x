@@ -76,17 +76,43 @@
 :ADDUL Preg, loc32   is op16=0x5657 ; loc32 & Preg  { P = P + loc32; }
 # SUBUL P,loc32      0x565d
 :SUBUL Preg, loc32   is op16=0x565d ; loc32 & Preg  { P = P - loc32; }
-# MAXL ACC,loc32     0x5661  (ACC = max(ACC, loc32), signed)
+# MAXL ACC,loc32     0x5661  (ACC = max(ACC, loc32), signed). Sets N/Z from the signed
+# compare (N = ACC<loc32, Z = ACC==loc32) so a following MAXCUL P,loc32 can consume them.
 :MAXL ACCreg, loc32  is op16=0x5661 ; loc32 & ACCreg  {
     local v:4 = loc32;
+    $(Z) = (ACC == v);
+    $(N) = (ACC s< v);
     if (ACC s>= v) goto inst_next;
     ACC = v;
 }
-# MINL ACC,loc32     0x5650
+# MINL ACC,loc32     0x5650. Sets N/Z from the signed compare so a following MINCUL P,loc32
+# can consume them (the 64-bit min idiom).
 :MINL ACCreg, loc32  is op16=0x5650 ; loc32 & ACCreg  {
     local v:4 = loc32;
+    $(Z) = (ACC == v);
+    $(N) = (ACC s< v);
     if (ACC s<= v) goto inst_next;
     ACC = v;
+}
+# MAXCUL P,loc32     0x5651  (conditional UNSIGNED max of the low word, using N/Z from the
+# preceding MAXL). Manual pseudocode: if(N=1&Z=0) P=loc32; if(N=0&Z=1&P<loc32) P=loc32; else
+# unchanged. Pairs with MAXL to form a 64-bit maximum/saturate. WAS MISSING -> decoding 0x5651
+# desynced the linear sweep (phantom "FFC" ops); e.g. the MATH sine ramfunc tail @0x881c8.
+:MAXCUL Preg, loc32  is op16=0x5651 ; loc32 & Preg  {
+    local v:4 = loc32;
+    local doset:1 = ($(N) != 0) | (($(Z) != 0) & (P < v));
+    if (doset == 0) goto inst_next;
+    P = v;
+}
+# MINCUL P,loc32     0x5659  (conditional UNSIGNED min of the low word, using N/Z from the
+# preceding MINL). Manual pseudocode: if(N=0&Z=0) P=loc32; if(N=0&Z=1&P>loc32) P=loc32; else
+# unchanged. Pairs with MINL to form a 64-bit minimum/saturate. WAS MISSING -> decoding 0x5659
+# desynced the linear sweep (phantom "FFC" ops); e.g. the MATH sine ramfunc tail @0x881c4.
+:MINCUL Preg, loc32  is op16=0x5659 ; loc32 & Preg  {
+    local v:4 = loc32;
+    local doset:1 = ($(N) == 0) & (($(Z) == 0) | (P > v));
+    if (doset == 0) goto inst_next;
+    P = v;
 }
 
 # =============================================================================
