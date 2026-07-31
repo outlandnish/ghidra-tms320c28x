@@ -148,14 +148,15 @@ jobs:
       # "breaking change" axis for consumers, just "newer decode is better".
       # ---------------------------------------------------------------------
 
+      # The zip is built on EVERY push and PR, not just on main. Gating it to the
+      # release path would mean a broken extension build is discovered only after
+      # merge, when it is too late to fix on the branch that broke it.
       - name: Set up Gradle
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.14"       # Ghidra requires >= 8.5 (application.properties)
 
       - name: Build the installable extension zip
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         run: |
           set -euo pipefail
           # NOTE: extension.properties `version` is the GHIDRA version (12.1.2), not the
@@ -163,6 +164,13 @@ jobs:
           # the running install. Do not rewrite it to the CalVer tag.
           gradle -PGHIDRA_INSTALL_DIR="$GHIDRA_INSTALL_DIR" distributeExtension
           ls -la dist/
+
+      - name: Publish extension zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: ghidra-tms320c28x-extension
+          path: dist/*.zip
+          if-no-files-found: error
 
       - name: Create the release
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
