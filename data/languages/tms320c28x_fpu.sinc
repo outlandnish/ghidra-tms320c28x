@@ -183,11 +183,18 @@ macro setFloatFlags(a, b) {
 # @0x8f7da: the 0x441 scale constants decoded as 0xEE62.../0xE119... (~1e28) instead of the
 # real 0x3DCCCCCD (0.1) / 0x3C23D70A (0.01), and R2H scale-loads were mislabeled R6H so R2H
 # read as uninitialized in the decompile. See PCODE-GAPS RESOLVED entry for the full diagnosis.
-:MOVIZ f_ra, "#"^fimm_hi13  is op_hi8=0xE8 & fimm_hi=0 & fimm_z=0 & fimm_lo3 ; fimm_hi13 & f_ra {
+#
+# DISPLAY: printing `fimm_hi13` alone shows only the LOW 13 bits of the constant, so a
+# MOVIZ of 0x46a5 rendered as "#0x6a5" — the semantics were right but the listing lied.
+# Confirmed against TI dis2000 (`e802 352b` = MOVIZ R3,#0x46a5, we printed #0x6a5).
+# Compute the joined value into ctx_fimm16 in a disassembly action and print that.
+:MOVIZ f_ra, "#"^ctx_fimm16  is op_hi8=0xE8 & fimm_hi=0 & fimm_z=0 & fimm_lo3 ; fimm_hi13 & f_ra
+        [ ctx_fimm16 = (fimm_lo3 << 13) | fimm_hi13; ] {
     local imm:2 = (zext(fimm_lo3:2) << 13) | fimm_hi13:2;
     f_ra = (f_ra & 0x0000FFFF) | (zext(imm) << 16);
 }
-:MOVXI f_ra, "#"^fimm_hi13  is op_hi8=0xE8 & fimm_hi=0 & fimm_z=1 & fimm_lo3 ; fimm_hi13 & f_ra {
+:MOVXI f_ra, "#"^ctx_fimm16  is op_hi8=0xE8 & fimm_hi=0 & fimm_z=1 & fimm_lo3 ; fimm_hi13 & f_ra
+        [ ctx_fimm16 = (fimm_lo3 << 13) | fimm_hi13; ] {
     local imm:2 = (zext(fimm_lo3:2) << 13) | fimm_hi13:2;
     f_ra = (f_ra & 0xFFFF0000) | zext(imm);
 }
@@ -273,18 +280,22 @@ attach variables [ p_rf ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 # The #16FHi constant is the HIGH 16 bits of the float (low mantissa = 0), split across both
 # words. By the same convention proven for MOVIZ/CMPF32 (the LSW immediate bits are the
 # HIGH-order bits), imm16 = (LSW[5:0] << 10) | MSW[15:6] = (fimm_lo6 << 10) | fimm_hi10.
-# NOTE: no #16FHi MPY/ADD/SUB site exists in the PCS image to bench this against — the
-# ordering is INFERRED from the (tested) MOVIZ/CMPF32 fix, not independently verified here.
-# If a future image has one, confirm it decodes to a sane IEEE-754 high-half.
-:MPYF32 f_ra, "#"^fimm_hi10, f_rb  is op_hi8=0xE8 & op_lo_76=0b01 & fimm_lo6 ; f_ra & f_rb & fimm_hi10 {
+# VERIFIED (was "INFERRED, no site to bench"): a real F28377D production image has such a
+# site, and TI dis2000 agrees with this split — word pair `e84c ...` = MPYF32 R0H,#0x3180,R0H,
+# i.e. imm16 = (fimm_lo6 << 10) | fimm_hi10 = (0x0C << 10) | 0x180 = 0x3180.
+# The DISPLAY printed `fimm_hi10` alone (#0x180), so it is computed into ctx_fimm16 below.
+:MPYF32 f_ra, "#"^ctx_fimm16, f_rb  is op_hi8=0xE8 & op_lo_76=0b01 & fimm_lo6 ; f_ra & f_rb & fimm_hi10
+        [ ctx_fimm16 = (fimm_lo6 << 10) | fimm_hi10; ] {
     local imm:4 = (zext(fimm_lo6:4) << 10 | zext(fimm_hi10:4)) << 16;
     f_ra = f_rb f* imm;
 }
-:ADDF32 f_ra, "#"^fimm_hi10, f_rb  is op_hi8=0xE8 & op_lo_76=0b10 & fimm_lo6 ; f_ra & f_rb & fimm_hi10 {
+:ADDF32 f_ra, "#"^ctx_fimm16, f_rb  is op_hi8=0xE8 & op_lo_76=0b10 & fimm_lo6 ; f_ra & f_rb & fimm_hi10
+        [ ctx_fimm16 = (fimm_lo6 << 10) | fimm_hi10; ] {
     local imm:4 = (zext(fimm_lo6:4) << 10 | zext(fimm_hi10:4)) << 16;
     f_ra = f_rb f+ imm;
 }
-:SUBF32 f_ra, "#"^fimm_hi10, f_rb  is op_hi8=0xE8 & op_lo_76=0b11 & fimm_lo6 ; f_ra & f_rb & fimm_hi10 {
+:SUBF32 f_ra, "#"^ctx_fimm16, f_rb  is op_hi8=0xE8 & op_lo_76=0b11 & fimm_lo6 ; f_ra & f_rb & fimm_hi10
+        [ ctx_fimm16 = (fimm_lo6 << 10) | fimm_hi10; ] {
     local imm:4 = (zext(fimm_lo6:4) << 10 | zext(fimm_hi10:4)) << 16;
     f_ra = f_rb f- imm;
 }
@@ -293,7 +304,8 @@ attach variables [ p_rf ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 # imm16 (high 16 bits of the float, low mantissa=0) is split: III (LSW[2:0]) = HIGH 3 bits,
 # MSW[15:3] = LOW 13 bits → imm16 = (fimm_lo3 << 13) | fimm_hi13. (Was backwards — same bug
 # as the MOVIZ/MOVXI fix; verified on a real image: #1.0/#2.0/#5.0 sites now decode right.)
-:CMPF32 f_ra, "#"^fimm_hi13  is op_hi8=0xE8 & loc_mode5=0b00010 & fimm_lo3 ; f_ra & fimm_hi13 {
+:CMPF32 f_ra, "#"^ctx_fimm16  is op_hi8=0xE8 & loc_mode5=0b00010 & fimm_lo3 ; f_ra & fimm_hi13
+        [ ctx_fimm16 = (fimm_lo3 << 13) | fimm_hi13; ] {
     local imm:4 = (zext(fimm_lo3:4) << 13 | zext(fimm_hi13:4)) << 16;
     setFloatFlags(f_ra, imm);
 }
