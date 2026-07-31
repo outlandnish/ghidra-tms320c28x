@@ -27,6 +27,8 @@ jobs:
   sleigh:
     name: Compile SLEIGH module
     runs-on: ubuntu-latest
+    permissions:
+      contents: write      # needed to create the release + tag on merge to main
     steps:
       - uses: actions/checkout@v4
         with:
@@ -139,3 +141,49 @@ jobs:
           name: tms320c28x-sla
           path: data/languages/tms320c28x.sla
           if-no-files-found: error
+
+      # ---------------------------------------------------------------------
+      # Release, on merge to main only. CalVer (vYYYY.MM.DD), because this
+      # module tracks a hardware ISA rather than an API -- there is no semantic
+      # "breaking change" axis for consumers, just "newer decode is better".
+      # ---------------------------------------------------------------------
+
+      - name: Set up Gradle
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.14"       # Ghidra requires >= 8.5 (application.properties)
+
+      - name: Build the installable extension zip
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        run: |
+          set -euo pipefail
+          # NOTE: extension.properties `version` is the GHIDRA version (12.1.2), not the
+          # release tag -- Ghidra refuses to load an extension whose version does not match
+          # the running install. Do not rewrite it to the CalVer tag.
+          gradle -PGHIDRA_INSTALL_DIR="$GHIDRA_INSTALL_DIR" distributeExtension
+          ls -la dist/
+
+      - name: Create the release
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          BASE="v$(date -u +%Y.%m.%d)"
+          TAG="$BASE"
+          n=1
+          # More than one merge in a day is normal; suffix rather than clobber.
+          while gh release view "$TAG" >/dev/null 2>&1 \
+                || git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; do
+            n=$((n + 1))
+            TAG="$BASE.$n"
+          done
+          echo "Releasing $TAG"
+
+          # --generate-notes derives the changelog from the previous release on its own.
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --generate-notes \
+            dist/*.zip \
+            data/languages/tms320c28x.sla
