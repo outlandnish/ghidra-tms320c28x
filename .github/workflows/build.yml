@@ -8,14 +8,26 @@ name: build
 # and there is no error to notice it by. You just get silently wrong disassembly.
 #
 # This workflow (a) proves the sources still compile, (b) publishes the compiled
-# .sla as a downloadable artifact so users do not need the SLEIGH compiler, and
-# (c) guards against a committed .sla drifting out of sync with the sources.
+# .sla and the installable extension zip as downloadable artifacts so users do not
+# need the SLEIGH compiler, and (c) guards against a committed .sla drifting out of
+# sync with the sources.
+#
+# RELEASING IS MANUAL. Run this workflow from the Actions tab with "Cut a release"
+# ticked. Cutting a release is a decision, not a side effect of merging -- a release
+# per merge would bury the meaningful ones in noise. The build itself still runs on
+# every push and PR, so the release path is only ever asked to publish artifacts
+# that CI has already built and checked.
 
 on:
   push:
     branches: [main]
   pull_request:
   workflow_dispatch:
+    inputs:
+      release:
+        description: "Cut a CalVer release (vYYYY.MM.DD) from this build"
+        type: boolean
+        default: false
 
 env:
   # Pin the Ghidra version the module is developed against. The exact release asset
@@ -28,7 +40,7 @@ jobs:
     name: Compile SLEIGH module
     runs-on: ubuntu-latest
     permissions:
-      contents: write      # needed to create the release + tag on merge to main
+      contents: read       # build never needs write; only the release job does
     steps:
       - uses: actions/checkout@v4
         with:
@@ -142,15 +154,9 @@ jobs:
           path: data/languages/tms320c28x.sla
           if-no-files-found: error
 
-      # ---------------------------------------------------------------------
-      # Release, on merge to main only. CalVer (vYYYY.MM.DD), because this
-      # module tracks a hardware ISA rather than an API -- there is no semantic
-      # "breaking change" axis for consumers, just "newer decode is better".
-      # ---------------------------------------------------------------------
-
-      # The zip is built on EVERY push and PR, not just on main. Gating it to the
-      # release path would mean a broken extension build is discovered only after
-      # merge, when it is too late to fix on the branch that broke it.
+      # The zip is built on EVERY push and PR, not just when releasing. Gating it to
+      # the release path would mean a broken extension build is discovered only when
+      # you try to ship, which is the worst possible moment to find out.
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
@@ -172,8 +178,37 @@ jobs:
           path: dist/*.zip
           if-no-files-found: error
 
+  # -------------------------------------------------------------------------
+  # Manual release. CalVer (vYYYY.MM.DD), because this module tracks a hardware
+  # ISA rather than an API -- there is no semantic "breaking change" axis for
+  # consumers, just "newer decode is better".
+  #
+  # Publishes the artifacts the build job already produced rather than rebuilding,
+  # so what ships is exactly what CI compiled and checked.
+  # -------------------------------------------------------------------------
+  release:
+    name: Release
+    needs: sleigh
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.release }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write      # create the tag + release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # need existing tags to pick the next CalVer suffix
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ghidra-tms320c28x-extension
+          path: dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: tms320c28x-sla
+          path: sla
+
       - name: Create the release
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -181,17 +216,19 @@ jobs:
           BASE="v$(date -u +%Y.%m.%d)"
           TAG="$BASE"
           n=1
-          # More than one merge in a day is normal; suffix rather than clobber.
+          # More than one release in a day is possible; suffix rather than clobber.
           while gh release view "$TAG" >/dev/null 2>&1 \
                 || git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; do
             n=$((n + 1))
             TAG="$BASE.$n"
           done
-          echo "Releasing $TAG"
+          echo "Releasing $TAG from ${GITHUB_SHA:0:12}"
+          ls -la dist sla
 
           # --generate-notes derives the changelog from the previous release on its own.
           gh release create "$TAG" \
+            --target "$GITHUB_SHA" \
             --title "$TAG" \
             --generate-notes \
             dist/*.zip \
-            data/languages/tms320c28x.sla
+            sla/tms320c28x.sla
