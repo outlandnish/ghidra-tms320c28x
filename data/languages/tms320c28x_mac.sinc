@@ -42,8 +42,20 @@
     ACC = a * b;
 }
 
+# MPY P,loc16,#16bit    1000 1100 LLLL LLLL : iiii iiii iiii iiii  (2-word)
+# P = signed [loc16] * signed #16bit. Unlike the ACC form above, this one does NOT
+# load T (SPRU430F: "P = signed [loc16] * signed 16bit;").
+:MPY Preg, loc16, "#"imm16  is op_hi8=0x8C & Preg & loc16 ; imm16  {
+    local lv:2 = loc16;
+    local iv:2 = imm16;
+    local a:4 = sext(lv);
+    local b:4 = sext(iv);
+    P = a * b;
+}
+
 # MOVS T,loc16      0001 0001 LLLL LLLL   -- T = [loc16]; ACC -= P<<PM (PM=0 modeled)
-:MOVS Treg, loc16  is op_hi8=0x11 & Treg & loc16  {
+# loc!=0xAC: that one encoding is SUBL ACC,P << PM (see the P<<PM block at the end).
+:MOVS Treg, loc16  is op_hi8=0x11 & loc_full8!=0xAC & Treg & loc16  {
     ACC = ACC - P;
     T = loc16;
 }
@@ -83,13 +95,57 @@
 }
 
 # MOVA T,loc16      0001 0000 LLLL LLLL   -- T = loc16; ACC += P (load T, add prev product)
-:MOVA Treg, loc16  is op_hi8=0x10 & Treg & loc16  {
+# loc!=0xAC: that one encoding is ADDL ACC,P << PM (see the P<<PM block below).
+:MOVA Treg, loc16  is op_hi8=0x10 & loc_full8!=0xAC & Treg & loc16  {
     ACC = ACC + P;
     T = loc16;
 }
 
 # MOVP T,loc16      0001 0110 LLLL LLLL   -- T = loc16; ACC = P (load T, move product)
-:MOVP Treg, loc16  is op_hi8=0x16 & Treg & loc16  {
+# loc!=0xAC: that one encoding is MOVL ACC,P << PM (in tms320c28x_more.sinc as MOVL ACC,"P").
+:MOVP Treg, loc16  is op_hi8=0x16 & loc_full8!=0xAC & Treg & loc16  {
     ACC = P;
     T = loc16;
+}
+
+# =============================================================================
+# "P << PM" specials -- fully-specified opcodes living INSIDE the loc16 space
+# =============================================================================
+# SPRU430F gives each of these a complete 16-bit encoding whose low byte (0xAC)
+# is also a legal loc16 code, so they sit inside the operand space of the
+# MOVA/MOVS/MOVP forms above. SLEIGH resolves in favour of the more constrained
+# pattern, so these out-match the general forms.
+#
+# Found by TI dis2000 parity on a real F28377D production image: word 0x10AC in a
+# Q-format math routine was decoding as "MOVA T,@TH" -- which silently clobbers T
+# and attributes the accumulate to the wrong register -- when it is really
+# "ADDL ACC,P << PM". The manual's own MPY P,loc16,#16bit example shows exactly
+# the MPY P / ADDL ACC,P << PM sequence this image uses.
+#
+# PM shift is not modeled, consistent with the rest of this file.
+
+# (MOVL ACC,P << PM = 0x16AC and MOVL P,ACC = 0xFF5A were already covered in
+#  tms320c28x_more.sinc as MOVL ACC,"P" / MOVL "P",ACC — don't re-add them here.)
+#
+# PRECEDENCE (learned the hard way): being "more specific" is NOT enough. A first
+# attempt declared these as bare op16=0x10AC etc. and they compiled clean but never
+# fired — 0x10AC still decoded as MOVA T,@TH, because the general MOVA/MOVS/MOVP
+# constructors overlap the same word and won the match. CMPL (0xFF59) worked only
+# because nothing else in the 0xFF family overlaps it. The fix is to EXCLUDE the
+# encoding from the general form (loc_full8!=0xAC above) so there is no overlap at
+# all. Verify any addition like this on a real word, not just on a clean compile.
+
+# ADDL ACC,P << PM   0001 0000 1010 1100
+:ADDL "ACC,P << PM"  is op16=0x10AC  { ACC = ACC + P; }
+
+# SUBL ACC,P << PM   0001 0001 1010 1100
+:SUBL "ACC,P << PM"  is op16=0x11AC  { ACC = ACC - P; }
+
+# CMPL ACC,P << PM   1111 1111 0101 1001   -- compare only; ACC unchanged
+:CMPL "ACC,P << PM"  is op16=0xFF59  {
+    local b:4 = P;
+    local r:4 = ACC - b;
+    $(C) = !(ACC < b);
+    $(V) = sborrow(ACC, b);
+    setNZ32(r);
 }

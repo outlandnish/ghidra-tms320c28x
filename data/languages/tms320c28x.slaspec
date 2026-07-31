@@ -95,6 +95,12 @@ define register offset=0xC8 size=4 [ VT0 VT1 VSTATUS VCRC ];
 define register offset=0x80 size=4 contextreg;
 define context contextreg
   ctx_AMODE = (0,0)        # 0 = C28x modes (compiler default), 1 = C2xLP-compatible
+  # Scratch field for DISPLAY of immediates that are split across both words of a
+  # 2-word instruction (the FPU #16FHi forms). SLEIGH can't print an arithmetic
+  # expression, so the constructor computes the joined value into this field in a
+  # disassembly action and prints the field. `noflow` keeps it local to the one
+  # instruction. Display only -- the semantics still compute from the raw fields.
+  ctx_fimm16 = (8,23) noflow
 ;
 
 # Tokens and instruction constructors live in the .sinc include.
