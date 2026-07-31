@@ -1,0 +1,141 @@
+name: build
+
+# Compiles the SLEIGH module on every push/PR.
+#
+# Why this exists: the .sla is a BUILD ARTIFACT generated from the .sinc/.slaspec
+# sources, and nothing previously proved the two agreed. A stale .sla is the worst
+# kind of failure here -- the sources say one thing, the loaded module does another,
+# and there is no error to notice it by. You just get silently wrong disassembly.
+#
+# This workflow (a) proves the sources still compile, (b) publishes the compiled
+# .sla as a downloadable artifact so users do not need the SLEIGH compiler, and
+# (c) guards against a committed .sla drifting out of sync with the sources.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # Pin the Ghidra version the module is developed against. The exact release asset
+  # (which carries a date stamp, e.g. ghidra_12.1.2_PUBLIC_20260605.zip) is resolved
+  # from the releases API so the date does not have to be hardcoded here.
+  GHIDRA_VERSION: "12.1.2"
+
+jobs:
+  sleigh:
+    name: Compile SLEIGH module
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0        # needed to diff a PR against its base
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Resolve Ghidra release asset
+        id: ghidra
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          url=$(curl -sSL -H "Authorization: Bearer $GH_TOKEN" \
+                  "https://api.github.com/repos/NationalSecurityAgency/ghidra/releases?per_page=100" \
+                | jq -r --arg v "$GHIDRA_VERSION" '
+                    .[].assets[]
+                    | select(.name | test("^ghidra_" + $v + "_PUBLIC_[0-9]{8}\\.zip$"))
+                    | .browser_download_url' \
+                | head -1)
+          if [ -z "$url" ]; then
+            echo "::error::No Ghidra $GHIDRA_VERSION release asset found. Bump GHIDRA_VERSION in this workflow."
+            exit 1
+          fi
+          echo "url=$url"                        >> "$GITHUB_OUTPUT"
+          echo "name=$(basename "$url" .zip)"    >> "$GITHUB_OUTPUT"
+          echo "Resolved: $url"
+
+      - name: Cache Ghidra
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ~/ghidra
+          key: ghidra-${{ steps.ghidra.outputs.name }}
+
+      - name: Download Ghidra
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p ~/ghidra
+          curl -sSL "${{ steps.ghidra.outputs.url }}" -o /tmp/ghidra.zip
+          unzip -q /tmp/ghidra.zip -d ~/ghidra
+
+      - name: Compile the language
+        run: |
+          set -euo pipefail
+          GHIDRA_DIR=$(find ~/ghidra -maxdepth 1 -type d -name 'ghidra_*' | head -1)
+          if [ -z "$GHIDRA_DIR" ]; then echo "::error::Ghidra install not found"; exit 1; fi
+          echo "GHIDRA_INSTALL_DIR=$GHIDRA_DIR" >> "$GITHUB_ENV"
+
+          # Mirror data/buildLanguage.xml: options from sleighArgs.txt, compile every
+          # .slaspec in data/languages.
+          cd data
+          "$GHIDRA_DIR/support/sleigh" -i sleighArgs.txt -a ./languages 2>&1 | tee /tmp/sleigh.log
+
+          # The sleigh launcher does not always propagate a non-zero exit, and a failed
+          # compile simply writes no .sla -- so assert both conditions explicitly.
+          if grep -q "^ERROR" /tmp/sleigh.log; then
+            echo "::error::SLEIGH reported errors:"
+            grep "^ERROR" /tmp/sleigh.log | head -20
+            exit 1
+          fi
+          if [ ! -f languages/tms320c28x.sla ]; then
+            echo "::error::No .sla produced."
+            exit 1
+          fi
+          echo "Built $(stat -c%s languages/tms320c28x.sla) bytes"
+          echo "Warnings: $(grep -c '^WARN' /tmp/sleigh.log || true)"
+
+      - name: Guard against a stale committed .sla
+        run: |
+          set -euo pipefail
+          SLA=data/languages/tms320c28x.sla
+
+          if ! git ls-files --error-unmatch "$SLA" >/dev/null 2>&1; then
+            echo "$SLA is not tracked (build artifact only) -- nothing to keep in sync."
+            exit 0
+          fi
+
+          # HARD GATE (deterministic): if this PR edits the sources but not the committed
+          # artifact, the artifact is by definition stale. This is the exact mistake the
+          # guard exists to catch, and it needs no assumptions about build reproducibility.
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="origin/${{ github.base_ref }}"
+            CHANGED=$(git diff --name-only "$BASE...HEAD")
+            if echo "$CHANGED" | grep -qE '\.(sinc|slaspec)$' && ! echo "$CHANGED" | grep -q "$SLA"; then
+              echo "::error::This PR changes .sinc/.slaspec but not $SLA. Rebuild it and commit the result:"
+              echo "::error::  cd data && \$GHIDRA_INSTALL_DIR/support/sleigh -i sleighArgs.txt -a ./languages"
+              exit 1
+            fi
+          fi
+
+          # SOFT SIGNAL: byte-compare the committed artifact against this fresh build.
+          # Reported, not enforced -- SLEIGH output is not guaranteed to be reproducible
+          # across build paths/versions, so a mismatch here is a prompt to look, not proof
+          # of staleness. Promote to a hard failure once it has proven stable in practice.
+          if git diff --quiet -- "$SLA"; then
+            echo "Committed .sla is byte-identical to a fresh build."
+          else
+            echo "::warning::Committed .sla differs byte-wise from a fresh build of these sources."
+            echo "::warning::That is expected if SLEIGH output is not reproducible; verify it is not staleness."
+          fi
+
+      - name: Publish compiled .sla
+        uses: actions/upload-artifact@v4
+        with:
+          name: tms320c28x-sla
+          path: data/languages/tms320c28x.sla
+          if-no-files-found: error
