@@ -10,10 +10,6 @@ Two device targets share one SLEIGH core (the C28x instruction set is common; th
   also covering the memory-compatible F2810/F2811. Language `TMS320C28x:LE:32:f2812`;
   peripherals via `SetupF2812.java`. See [docs/c28x/f2812_memmap.md](docs/c28x/f2812_memmap.md).
 
-The F2812 instruction set is a strict **subset** of the F28377D's, so the same prebuilt
-`.sla` decodes both — the variants differ only in the device memory map (peripheral MMIO
-frames + interrupt vectors), carried by their respective `.pspec` files.
-
 > **WIP / vibe-coded.** Verify against the SPRU430F/SPRUHS1C reference
 > before trusting any decode for critical work, and please file issues.
 
@@ -54,17 +50,9 @@ Then in Ghidra: **File ▸ Install Extensions ▸ +**, pick the `dist/*.zip`, an
 3. After import, **Window ▸ Register Manager**: `ACC` should show `AH`/`AL` sub-pieces.
 4. Quick smoke test: in the listing, disassemble bytes `01 00` → `ABORTI`, `21 76` → `IDLE`.
 
-### Loading a raw firmware image — the two things that bite everyone
+### Loading a raw firmware image
 
-This is a **word-addressable** architecture (1 address = 16 bits, not 8). Two consequences
-when you import a raw `.bin`:
-
-- **Set the image base.** Raw binaries import at base `0`; set it to the image's real load
-  address (**Memory Map ▸ edit the block**, or `set_image_base` if scripting) or every
-  absolute reference (peripheral registers, string pointers, branch targets) lands wrong.
-- **Byte order.** Some vendor flash dumps store the instruction stream **byte-swapped**. If
-  a known function decodes to garbage but the bytes "look" right, try a 16-bit byte-swap of
-  the image first. (TI-toolchain `.out`/COFF objects are already in the right order.)
+This is a **word-addressable** architecture (1 address = 16 bits, not 8).
 
 > **Tooling note:** in this `wordsize=2` space, Ghidra's `Address.getOffset()` returns a
 > **byte** offset (= word × 2), while TI's `dis2000` prints **word** addresses. Divide by 2
@@ -81,23 +69,13 @@ separate it from the embedded data tables. Run them in this order after **import
    (SP-push/frame-setup runs). It also adds call-site→target references (so the call graph
    is visible) and runs an **entropy/code-likeness filter** so prologue matches that land in
    data don't become bogus functions. Reads only initialized memory. Tune via `-Dc28x.seed.*`
-   (see the script header). `FindEntryPoints.java` is the read-only companion that just
-   *ranks* candidates.
+   (see the script header).
 2. **`MarkJumpTables.java`** — switch/case **pointer tables** (word-pairs forming in-image
    code addresses) get mis-decoded as bogus instructions; this marks them as `pointer` data
    with refs to their targets. Skips runs inside defined functions.
 3. **`MarkDataTables.java`** — **float-constant tables** (gain curves, LUTs, calibration)
    likewise decode as garbage; this marks high-confidence (`≥90%` sane-float) runs as
-   `Float4` arrays and removes the 0-xref false-seeds they spawned. Conservative — it skips
-   any run overlapping a *referenced* function, so it won't clobber code.
-
-Both `Mark*` scripts support `-D...dryRun=true` to preview before changing anything. Together
-they turn a wall of red `halt_baddata` blocks into clean code + typed data tables.
-
-> Why the data scripts matter: C28x firmware interleaves large float/pointer tables with code.
-> A seed scan inevitably lands a few false functions in them (a float word can even look like a
-> call opcode), so marking the tables as data is what makes the result clean. See the
-> per-script headers for the exact heuristics and their limits.
+   `Float4` arrays and removes the 0-xref false-seeds they spawned.
 
 ### Optional: label the device peripherals
 
@@ -114,29 +92,9 @@ device memory and label its peripheral frames so XREFs resolve to readable regis
 
 ### Rebuilding the `.sla` (only if you edit the spec)
 
-The prebuilt `.sla` is checked in, so most users skip this. If you modify a `.sinc`:
-
 ```sh
 "$GHIDRA_INSTALL_DIR/support/sleigh" data/languages/tms320c28x.slaspec
 ```
-A clean build prints only `WARN  N NOP constructors found` (harmless). **Any `ERROR` = no
-`.sla` written.** Ghidra caches the `.sla` at startup, so after rebuilding you must **restart
-Ghidra and re-import** the target (re-analyzing a loaded program keeps the old language). See
-[docs/BUILDING.md](docs/BUILDING.md) for the full loop and the WSL↔Windows `sleigh.bat` gotcha.
-
-## Goal
-
-A practical reverse-engineering processor module — decode-complete and decompilable,
-not a cycle-accurate model:
-
-- **Decode-complete** core C28x + FPU + VCU instructions (everything disassembles).
-- **Real p-code semantics** on the common subset: loads/stores in every addressing
-  mode, MOV/ALU/compare/branch/call, and MAC. This makes XREFs to peripheral
-  registers resolve and the decompiler produce useful output.
-- **FPU / VCU instructions decode-only** (disassemble, minimal semantics) — FP math
-  and hardware CRC rarely need full modeling for control-flow RE.
-- Includes a **peripheral-labeling script** (`ghidra_scripts/SetupF28377D.java`) that
-  maps + labels the F2837xD peripheral frames (incl. the D_CAN CANA/CANB registers).
 
 ## Architectural Quirks
 
@@ -165,42 +123,4 @@ not a cycle-accurate model:
 
 ## Status
 
-Compiles clean against Ghidra 12.1.2's SLEIGH compiler and decompiles C28x code.
-The full instruction set across all families decodes, the shared `loc16`/`loc32`
-addressing sub-tables are implemented (AMODE=0), and the decompiler produces C output.
-
-**Validation (TI ground truth):** disassembled five objects from TI's own
-`rts2800_fpu32.lib` runtime (real TI-compiled C28x code) and diffed mnemonics against
-TI's `dis2000`: **100% agreement, 0 wrong decodes** across all objects (`k_expf`,
-`catrigf`, `c99_complex`, `memcpy_s`, `strcpy_s`). The harness is
-[tests/run_ti_parity.ps1](tests/run_ti_parity.ps1) +
-[ghidra_scripts/DumpParity.java](ghidra_scripts/DumpParity.java) — reuse it for any
-TI object.
-
-**Validation (real firmware — decompilation).** Beyond the TI runtime, the module was
-hardened against real F28377D production images (both the CAN/PM and the motor-control/DI
-halves) by sweeping every function for decompiler truncations (`halt_baddata`) and fixing
-the missing/buggy opcode behind each. After this pass, those images decompile with **zero
-real-code truncations** — the only residual `halt_baddata` are false functions that a
-prologue-pattern seed scan places on data tables (zero xrefs), not code gaps. This drove
-the bulk of the opcode set beyond what the TI runtime exercises: the full `0x56`-prefix
-extended-math family (MIN/MAX, CMP64/NEG64, 64-bit `ACC:P` shifts by T, QMPYL/QMPYUL,
-ADDCL/SUBBL, ABSTC/NEGTC, …), the `SBF` short-branch family, `RPTB` block-repeat, the
-`0xE2`/`0xE6` FPU mem-move + conversion families (incl. the round `…16R` variants),
-status/mode ops with flow-preserving p-code, and many core loc-form ALU ops.
-
-**Validation (corruption check — differential vs dis2000).** A whole-image differential
-disassembly against TI's `dis2000` (~134K instructions on one image) checks not just *that*
-a word decodes but that it decodes to the **right length**. A wrong word-count constructor
-is the dangerous failure mode — it silently desyncs everything after it, with no visible
-truncation. The sweep currently reports **zero instruction-length mismatches** (one such
-bug — a mis-encoded `MAX AX,loc16` that claimed `FLIP` and over-consumed a word — was found
-this way and fixed). The remaining mnemonic-only differences are benign: dis2000's `||`
-parallel-execution prefix, and a handful of TMU trig ops (`DIVF32`/`SINPUF32`/…) we currently
-fall back to the generic `0xE2` `MOV32` for (same length, approximate semantics).
-
-Note: parity (mnemonic + length) still does **not** prove full operand/semantics
-correctness. Several operand bugs were caught by cross-checking the manual and dis2000, so
-keep auditing. See [docs/TESTING.md](docs/TESTING.md) for the parity harness and the
-bug classes it can't catch. **When in doubt about any decode, run the word through `dis2000`
-— it is the ground-truth oracle and has repeatedly been right where a manual grep was wrong.**
+Work in progress. Has successfully decoded several firmware images from production hardware. Expect bugs and verify against the TI reference manual or `dis2000` from the TI C28x SDK.
