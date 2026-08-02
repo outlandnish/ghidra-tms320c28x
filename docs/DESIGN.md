@@ -90,6 +90,64 @@ disassembler work but breaks the decompiler with "X may not be a global space". 
 > Note: SPRU430F Table 2-1 lists XAR0 as "16 bits" — a known doc typo. Fig 2-2 and
 > all addressing-mode text treat all XAR0–7 as 32-bit. Modeled as 32-bit.
 
+## `ZEXT24(&stack…)` on stack locals — SOLVED by a two-part fix
+
+**Symptom.** Stack accesses rendered as `*(int *)(ZEXT24(&stack0x0008) - 3)` instead of
+clean `local_X` variables. (`ZEXT24` is Ghidra's notation for a 2→4-byte zero-extension,
+not "24 bits".)
+
+**Root cause.** `SP` is a 16-bit register (`offset=0x40 size=2`) but the `ram` space is
+4-byte-addressed (`size=4`), so a stack address must widen SP: the address p-code is a
+`INT_ZEXT` of the (narrow) stackpointer. `ActionStackPtrFlow` *does* run (output anchors on
+`&stack0xNNNN` symbols), but the decompiler never folds `INT_ZEXT(&stack[n] ± c)` back into
+a single spacebase reference, so every stack access stays visible pointer-math and no
+`local_*` forms. This is the narrow-SP / word-addressed-space case of
+[NSA/ghidra Discussion #2749](https://github.com/NationalSecurityAgency/ghidra/discussions/2749).
+
+**The fix is TWO complementary halves — neither works alone:**
+
+1. **SLEIGH (this module, `tms320c28x_addr.sinc`) — native-width `*-SP[n]` addressing.**
+   The two `*-SP[loc_off6]` constructors build the address in SP's own 16-bit width:
+   ```
+   local off:2 = SP - loc_off6:2;   export *[ram]:2 off;   # (loc32: export *[ram]:4 off)
+   ```
+   so the p-code is a single `ZEXT(SP - n)` — one spacebase expression the rule below can
+   fold. The old `zext(SP) - zext(n)` put the subtract *outside* the zext, where spacebase
+   folding never follows. Numerically identical for every in-frame access (`SP ≥ n`, no
+   16-bit borrow). **No `.slaspec` change** — `SP` stays 16-bit (widening it to 4 bytes
+   breaks decompiler registration; see dead ends below).
+2. **Decompiler (Ghidra core, `ruleaction.cc`) — `vnSpacebase` walk.** Teaches
+   `RuleLoadVarnode`/`RuleStoreVarnode`'s spacebase resolver to see through a bounded chain
+   (`INT_ADD`/`INT_ZEXT`/`INT_SUB`/`CAST`/`PTRSUB`) and peel one `ZEXT` of a narrow
+   spacebase register, **range-checked to the SP width** so it can never synthesize an
+   invalid address. Lives on the `dieseld23/ghidra` `fold-zext-spacebase` branch; candidate
+   upstream PR against #2749. Fixes the whole class for every narrow-SP, word-addressed
+   processor, not just C28x.
+
+**Verified (annotated FC1.bin, F2812):** with both halves, `ZEXT24` on stack locals folds
+to real `fStack_*`/`uStack_*` locals — e.g. `alarm_engine_eval` 251 → ~0, `flow_demand_ctrl`
+71 → 0, and `alarm_engine_eval` no longer offset-crashes. **This module ships half 1 only.**
+Half 1 alone is inert on a *stock* `decompile.exe` (still shows `ZEXT24`) but harmless and
+numerically identical — the folding requires the patched decompiler.
+
+**Dead ends (do NOT re-attempt — all confirmed):**
+- **Widen `SP` to 4 bytes** so no `zext` is needed → decompiler *"Could not register
+  program: Marshaling error"* (confirmed on a genuine cold restart, after a stale-`.sla`
+  cache masked it repeatedly). Ghidra can't marshal a stackpointer wider than 16 bits in a
+  `wordsize=2` space.
+- **Dedicated 2-byte stack space + SP spacebase** → #2749 documents it makes the decompiler
+  treat stack offsets as *invalid references*.
+- **`segmentop` in the cspec** → resolves x86 far *data* pointers, not the stack-frame
+  `zext`; `type="protected"` also drags in x86-16 analyzers. N/A.
+- Not the cause: the `wordsize>1` `default_symbols` bug
+  ([#5633](https://github.com/NationalSecurityAgency/ghidra/issues/5633)) only bites *small*
+  spaces; our `ram` is `size=4` and the `0x3FFFC0` vectors load fine.
+
+**Note for p-code injection / call-fixup authors:** build stack addresses in the
+stackpointer's native width *inside* the zext (`zext(SP − n)`), never `zext(SP) − n` — the
+latter defeats spacebase folding on every narrow-SP target (this is what left a residual
+`ZEXT24` on the program's soft-float `[SP-2]` scratch until its fixups were rewritten).
+
 ## Source files
 
 | File | Role |
@@ -105,9 +163,27 @@ disassembler work but breaks the decompiler with "X may not be a global space". 
 | `tms320c28x_more.sinc` | additional opcodes (LC/LB, MOVZ, MOVL XARn,#22bit ptr-loads, immediate-stores, PUSH/POP, PREAD/PWRITE, …) |
 | `tms320c28x_fpu.sinc` | FPU (F2837x) — decode-only |
 | `tms320c28x_vcu.sinc` | VCU-II / VCRC — decode-only (hardware CRC) |
-| `tms320c28x.pspec` | PC, interrupt vectors, default AMODE context |
+| `tms320c28x.pspec` | F28377D device map: PC, interrupt vectors, volatile MMIO, default AMODE context |
+| `tms320c28x_f2812.pspec` | F2812 (F281x) device map: F281x MMIO ranges + vectors — see below |
 | `tms320c28x.cspec` | 16-bit char / 32-bit ptr data model, SP, calling convention |
 | `docs/c28x/*.txt` | extracted SPRU430F / spruhs1c reference chapters |
+
+### Device targets (one core, multiple device maps)
+
+The SLEIGH `.sla` decodes the **superset** ISA (C28x core + FPU + VCU + TMU). Individual
+devices expose subsets of it, so a device target is just a **`.pspec` + setup-script**
+pair layered over the shared `.sla`/`.cspec` — no ISA fork, no `.sla` rebuild:
+
+| Target | Language id | pspec | setup script |
+|---|---|---|---|
+| F28377D (C28x+FPU+VCU) | `TMS320C28x:LE:32:default` | `tms320c28x.pspec` | `SetupF28377D.java` |
+| F2812 (F281x fixed-point) | `TMS320C28x:LE:32:f2812` | `tms320c28x_f2812.pspec` | `SetupF2812.java` |
+
+The F2812 has **no FPU/TMU/VCU/CLA** and a completely different peripheral set (Event
+Managers, eCAN, older ADC, McBSP — not ePWM/eCAP/eQEP/D_CAN); those opcodes/frames simply
+never appear in F2812 code, so the superset spec handles it. Adding another C28x device is
+the same recipe: verify its map (datasheet + TI header `.cmd`), drop in a `.pspec` variant
+and a `Setup*.java`. F2812 map ground truth: `docs/c28x/f2812_memmap.md`.
 
 ## Reference manuals
 

@@ -48,8 +48,8 @@ loc16: "@"loc_off6  is ctx_AMODE=0 & loc_b76=0b00 & loc_off6 {
 
 # --- Stack:  *-SP[6bit]  ->  addr = SP - 6bit
 loc16: "*-SP["loc_off6"]"  is ctx_AMODE=0 & loc_b76=0b01 & loc_off6 {
-    local a:4 = zext(SP) - zext(loc_off6:2);
-    export *[ram]:2 a;
+    local off:2 = SP - loc_off6:2;
+    export *[ram]:2 off;
 }
 
 # --- Stack:  *SP++   (addr = SP, then SP += 1 word)
@@ -126,8 +126,8 @@ loc32: "@"loc_off6  is ctx_AMODE=0 & loc_b76=0b00 & loc_off6 {
 }
 
 loc32: "*-SP["loc_off6"]"  is ctx_AMODE=0 & loc_b76=0b01 & loc_off6 {
-    local a:4 = zext(SP) - zext(loc_off6:2);
-    export *[ram]:4 a;
+    local off:2 = SP - loc_off6:2;
+    export *[ram]:4 off;
 }
 
 loc32: "*SP++"  is ctx_AMODE=0 & loc_full8=0b10111101 {

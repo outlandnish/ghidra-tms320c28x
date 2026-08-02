@@ -1,7 +1,18 @@
 # ghidra-tms320c28x
 
-A Ghidra processor module (SLEIGH) for the Texas Instruments **TMS320C28x** DSP core,
-targeting the **TMS320F28377D** (dual-core C28x + FPU, F2837xD family)..
+A Ghidra processor module (SLEIGH) for the Texas Instruments **TMS320C28x** DSP core.
+Two device targets share one SLEIGH core (the C28x instruction set is common; the
+`.sla` is identical):
+
+- **TMS320F28377D** — dual-core C28x + FPU + VCU (F2837xD family). Language
+  `TMS320C28x:LE:32:default`; peripherals via `SetupF28377D.java`.
+- **TMS320F2812** — the original fixed-point C28x (F281x family; no FPU/VCU/TMU/CLA),
+  also covering the memory-compatible F2810/F2811. Language `TMS320C28x:LE:32:f2812`;
+  peripherals via `SetupF2812.java`. See [docs/c28x/f2812_memmap.md](docs/c28x/f2812_memmap.md).
+
+The F2812 instruction set is a strict **subset** of the F28377D's, so the same prebuilt
+`.sla` decodes both — the variants differ only in the device memory map (peripheral MMIO
+frames + interrupt vectors), carried by their respective `.pspec` files.
 
 > **WIP / vibe-coded.** Verify against the SPRU430F/SPRUHS1C reference
 > before trusting any decode for critical work, and please file issues.
@@ -88,11 +99,18 @@ they turn a wall of red `halt_baddata` blocks into clean code + typed data table
 > call opcode), so marking the tables as data is what makes the result clean. See the
 > per-script headers for the exact heuristics and their limits.
 
-### Optional: label the F2837xD peripherals
+### Optional: label the device peripherals
 
-Run `ghidra_scripts/SetupF28377D.java` (Script Manager) to map and label the F2837xD
-peripheral frames — including the D_CAN **CANA/CANB** registers — so XREFs to them resolve
-to readable names. Useful for CAN-firmware RE.
+Pick the script for your target (Script Manager, category **TMS320C28x**) to map the
+device memory and label its peripheral frames so XREFs resolve to readable register names:
+
+- **F28377D** — `ghidra_scripts/SetupF28377D.java` (maps the F2837xD frames + on-chip
+  RAM, including the D_CAN **CANA/CANB** registers; prompts for CPU1/CPU2).
+- **F2812** — `ghidra_scripts/SetupF2812.java` (maps the F281x memory map — SARAM/Flash/
+  OTP/Boot ROM/PIE-vect, optional XINTF zones — and labels **eCAN-A**, **EV-A/EV-B**,
+  **ADC**, **SCI-A/B**, **SPI-A**, **GPIO**, **SysCtrl/PLL/WD**, **PIE**, **CPU timers**,
+  **XINT**, **XINTF**, **CSM** field-by-field). Select the `TMS320C28x:LE:32:f2812`
+  language at import for the matching volatile-MMIO ranges + F281x vectors.
 
 ### Rebuilding the `.sla` (only if you edit the spec)
 
