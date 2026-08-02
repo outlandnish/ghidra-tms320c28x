@@ -15,6 +15,16 @@
 //       pushes / frame setup (MOVL *SP++,XARn = lo8 0xBD; ADDB SP,#N = hi8 0xFE; MOV32
 //       *SP++,RnH = 0xE203). A run of these is a likely entry.
 //
+//   (C) FN-PTR-TABLE targets — recovers PROLOGUE-LESS LEAF functions reached only via LCR *XARn
+//       (register-indirect call through a const fn-ptr table). These have no prologue (B misses)
+//       and no literal call word (A misses), but their entry address IS stored as a 2-word const
+//       table entry (lo16, hi6). We scan for those entries and seed each target that is (a) not
+//       yet a function, (b) a clean [entry..its-own-return] block, (c) looks-like-code.
+//       NOTE: an earlier "seed the addr after every return" version was tested and REJECTED — it
+//       over-fired into padding/alignment/LRETR-tails and created hundreds of junk 1-word funcs.
+//       The fn-ptr-table scan is high-precision instead. (Found PCS411's 0xaa00..0xaa04 service
+//       dispatch table — 7 leaf handlers, all missed by A+B.) Disable with -Dc28x.seed.noGapScan.
+//
 //   FALSE-SEED FILTER (general). The failure mode is a prologue/call-like byte pattern that
 //   occurs by CHANCE inside a DATA table (strings, calibration/crypto blobs), producing a
 //   bogus function that immediately hits halt_baddata. Real C28x code is LOW-entropy and
@@ -132,6 +142,16 @@ public class SeedFunctions extends GhidraScript {
             if (w2 < 0) continue;
             long tgt = ((long)lo6 << 16) | (w2 & 0xffff);
             if (tgt < lo || tgt > hi) continue;
+            // GATE THE CALL SITE, not just the target. This is a raw byte scan, so a word
+            // pair inside a DATA table (or inside the immediate of a 2-word instruction)
+            // can look exactly like LCR/LB + a plausible in-image address. Those invented
+            // "calls" then (a) seed a bogus function at a data address -- which bypasses the
+            // data filter below, because call targets are trusted -- and (b) inject a fake
+            // UNCONDITIONAL_CALL xref that makes the junk look corroborated. Requiring the
+            // SITE itself to look like code removes both at the source. (Observed on a real
+            // F28377D image: 7 halt_baddata stubs seeded into the const-table region, four
+            // of them carrying fake call xrefs from other data words.)
+            if (!noDataFilter && !looksLikeCode(base + wi, window, maxEntropy, minCodeFrac)) continue;
             calledTargets.add(tgt);
             if (isCall) callSiteToTarget.put(base + wi, tgt);   // record CALL sites for ref-adding
         }
@@ -188,30 +208,236 @@ public class SeedFunctions extends GhidraScript {
 
         // --- create functions ---------------------------------------------------
         int created = 0, already = 0, failed = 0;
+        java.util.TreeSet<Long> createdEntries = new java.util.TreeSet<>();
+        int offcut = 0;
         for (long w : seeds) {
             Address a = addr(w);
             if (currentProgram.getFunctionManager().getFunctionAt(a) != null) { already++; continue; }
+            // OFFCUT REJECT: `a` lies INSIDE an already-decoded instruction but is not its
+            // start. That is a byte-scan artifact -- the raw scan happily matches the trailing
+            // immediate word of a 2-word instruction (e.g. the 0x0016 of `MOV @TH,#0x16`) and
+            // proposes it as an entry. Seeding there produces a 1-word stub that can never
+            // decode, which then masquerades as a missing opcode. Real entries are always at
+            // an instruction boundary.
+            ghidra.program.model.listing.Instruction host =
+                currentProgram.getListing().getInstructionContaining(a);
+            if (host != null && !host.getAddress().equals(a)) { offcut++; continue; }
             if (currentProgram.getListing().getInstructionAt(a) == null) {
                 new DisassembleCommand(a, null, true).applyTo(currentProgram, monitor);
             }
             CreateFunctionCmd cmd = new CreateFunctionCmd(a);
             cmd.applyTo(currentProgram, monitor);
-            if (currentProgram.getFunctionManager().getFunctionAt(a) != null) created++;
+            if (currentProgram.getFunctionManager().getFunctionAt(a) != null) { created++; createdEntries.add(w); }
             else failed++;
         }
 
+        // --- (C) fn-ptr-table targets (prologue-less leaves via LCR *XARn) -------------------
+        // Recovers leaf handlers dispatched through a CONST fn-ptr table (e.g. PCS411's
+        // 0xaa00..0xaa04 service table). These have no prologue (B misses) and no literal call
+        // word (A misses), but their entry address IS stored in a 2-word const table entry.
+        // Scan for those entries; seed each target that is (a) not yet a function and (b) a
+        // clean [entry..its-own-return] block that looks like code.
+        //
+        // WHY NOT "seed the address after every return": tested on PCS411, that over-fires
+        // massively — inter-function padding/alignment and 1-2 word LRETR tails produce hundreds
+        // of junk 1-word "functions" (xrefs=0). The fn-ptr-table scan is high-PRECISION: a 2-word
+        // value that is a valid in-image code addr starting a return-bounded block is almost
+        // certainly a real indirect-call target. (Disable with -Dc28x.seed.noGapScan.)
+        int gapSeeded = 0, gapRejected = 0;
+        if (!Boolean.getBoolean("c28x.seed.noGapScan")) {
+            var fmgr = currentProgram.getFunctionManager();
+            var listing = currentProgram.getListing();
+
+            // CODE/DATA discrimination (critical guard) — CODE-DENSITY, not a global cutoff.
+            // Const tables (fn-ptr tables, floats, calib blobs) hold 2-word values that LOOK like
+            // pointers (small hi word) but are DATA; seeding into them disassembles data-as-code
+            // and yields halt_baddata. A fixed "code ends at 0xN" boundary is NOT reliable — code
+            // and data can interleave and the boundary differs per image. Instead, accept a target
+            // only if its NEIGHBORHOOD is already densely covered by A+B-recognized functions: real
+            // code sits among other code; data tables have ~0 function coverage. (Verified on
+            // PCS411: real leaves score 0.50–1.00, every data-region false target scores 0.00.)
+            // Tunables: -Dc28x.seed.minLeafWords (default 3), -Dc28x.seed.minDensity (default 0.25),
+            // -Dc28x.seed.densityWin (default 64 words each side).
+            //
+            // FUTURE (if density alone proves insufficient on a harder image): the image also
+            // contains explicit ADDRESS TABLES that mark the data region — e.g. PCS411 has a
+            // 224-entry fn-ptr table at word 0x995a4 (right where code ends ~0x993a0), plus the
+            // 0xa2xxx dispatch tables. A run of >=8 consecutive valid in-image address pairs is a
+            // table => its span is data; exclude targets landing inside such spans. The image has
+            // NO labeled "code-extent/data-extent" descriptor (that lived in the stripped BHX/linker
+            // output; the sibling .hex is a different image — bootloader/RAM-app), so this
+            // table-run heuristic is the closest in-image structural marker. Not needed yet:
+            // code-density already cleanly separates (real leaves 0.5-1.0, data targets 0.0).
+            int minLeafWords = Integer.getInteger("c28x.seed.minLeafWords", 3);
+            double minDensity = Double.parseDouble(System.getProperty("c28x.seed.minDensity", "0.25"));
+            int densWin       = Integer.getInteger("c28x.seed.densityWin", 64);
+
+            // candidate targets from 2-word const entries: word[i]=lo16, word[i+1]=hi(0..0x3f).
+            java.util.TreeSet<Long> tgts = new java.util.TreeSet<>();
+            for (long wi = 0; wi < nwords - 1; wi++) {
+                int loW = wordAt(wi * 2);
+                int hi6w = wordAt((wi + 1) * 2);
+                if (loW < 0 || hi6w < 0 || hi6w > 0x3f) continue;
+                long tgt = ((long) hi6w << 16) | (loW & 0xffff);
+                if (tgt < lo || tgt > hi) continue;        // in-image
+                tgts.add(tgt);
+            }
+            for (long tWord : tgts) {
+                Address a = addr(tWord);
+                if (fmgr.getFunctionContaining(a) != null) continue;                              // already owned
+                if (codeDensity(tWord, densWin) < minDensity) { gapRejected++; continue; }        // guard (0): in a code neighborhood, not a data table
+                if (!tryDecodeToReturn(a, listing)) { gapRejected++; continue; }                  // guard (1): clean [entry..return]
+                if (!looksLikeCode(tWord, window, maxEntropy, minCodeFrac)) { gapRejected++; continue; } // guard (2): not data
+                if (listing.getInstructionAt(a) == null)
+                    new DisassembleCommand(a, null, true).applyTo(currentProgram, monitor);
+                CreateFunctionCmd cc = new CreateFunctionCmd(a);
+                cc.applyTo(currentProgram, monitor);
+                Function nf = fmgr.getFunctionAt(a);
+                if (nf == null) { gapRejected++; continue; }
+                // guard (3): reject tiny tails (1-2 word "functions" = padding/stranded LRETR)
+                long sz = nf.getBody().getMaxAddress().getOffset() / 2 - tWord + 1;
+                if (sz < minLeafWords) { new ghidra.app.cmd.function.DeleteFunctionCmd(a).applyTo(currentProgram); gapRejected++; continue; }
+                gapSeeded++; created++; createdEntries.add(tWord);
+            }
+            println(String.format("gap-scan: minDensity=%.2f win=%d minLeafWords=%d", minDensity, densWin, minLeafWords));
+        }
+
+        // --- PRUNE: drop seeds that are immediately-truncating stubs sitting in DATA ------
+        // A seeded function whose very first fall-through path runs into an undecodable word
+        // is either (a) data misread as code, or (b) a genuine hole in the SLEIGH module.
+        // Those two need OPPOSITE handling, and the discriminator is the neighbourhood: real
+        // code sits among other recognized functions, const tables do not. So only prune when
+        // code density is ~0; a truncating stub AMONG code is kept and reported, because that
+        // is exactly the signal that finds a missing opcode (this is how MPY P,loc16,#16bit
+        // was found -- do NOT let the prune hide that class).
+        // Everything dropped is printed: no silent truncation of the seed set.
+        int pruned = 0, keptGaps = 0;
+        int pruneMaxWords = Integer.getInteger("c28x.seed.pruneMaxWords", 16);
+        double pruneDensity = Double.parseDouble(System.getProperty("c28x.seed.pruneDensity", "0.25"));
+        // own copy: the gap-scan's densWin is scoped to the (optional) gap-scan block
+        int pruneWin = Integer.getInteger("c28x.seed.densityWin", 64);
+        if (!Boolean.getBoolean("c28x.seed.noPrune")) {
+            // Sweep ALL default-named (FUN_xxx) functions, not just this run's creations, so a
+            // re-run also cleans junk left by an earlier pass. Anything the user has renamed is
+            // never touched.
+            java.util.ArrayList<Long> candidates = new java.util.ArrayList<>();
+            for (Function f0 : currentProgram.getFunctionManager().getFunctions(true)) {
+                if (f0.getSymbol() == null
+                    || f0.getSymbol().getSource() != ghidra.program.model.symbol.SourceType.DEFAULT) continue;
+                candidates.add(f0.getEntryPoint().getOffset() / 2);
+            }
+            for (long w : candidates) {
+                Address a = addr(w);
+                Function f = currentProgram.getFunctionManager().getFunctionAt(a);
+                if (f == null) continue;
+                long sz = f.getBody().getMaxAddress().getOffset() / 2 - w + 1;
+                if (sz > pruneMaxWords) continue;                 // big enough to be real
+                if (!truncatesEarly(a, 32)) continue;             // decodes fine -> keep
+                double dens = codeDensity(w, pruneWin);
+                if (dens >= pruneDensity) {
+                    println(String.format("  KEPT truncating stub @%05x (density %.2f) -- among real code: "
+                        + "likely a MISSING OPCODE, investigate", w, dens));
+                    keptGaps++;
+                    continue;
+                }
+                new ghidra.app.cmd.function.DeleteFunctionCmd(a).applyTo(currentProgram);
+                currentProgram.getListing().clearCodeUnits(a, f.getBody().getMaxAddress(), false);
+                println(String.format("  pruned data false-seed @%05x (%d words, density %.2f)", w, sz, dens));
+                pruned++;
+            }
+        }
+        println(String.format("prune: removed %d data false-seeds, kept %d truncating stubs in code regions",
+            pruned, keptGaps));
+
         println(String.format("image: base=0x%x  words=%d", base, nwords));
+        println(String.format("gap-scan (signal C): seeded %d leaf functions, rejected %d", gapSeeded, gapRejected));
         println(String.format("call/branch targets in-image: %d", calledTargets.size()));
         println(String.format("prologue addresses (run>0): %d", prologRun.size()));
         println(String.format("candidates: %d  ->  rejected as data (entropy/non-code): %d  ->  seeds: %d",
             raw.size(), rejectedData, seeds.size()));
-        println(String.format("created %d, already existed %d, failed %d ; call-site refs added %d",
-            created, already, failed, refsAdded));
+        println(String.format("created %d, already existed %d, failed %d, offcut-rejected %d ; call-site refs added %d",
+            created, already, failed, offcut, refsAdded));
         if (!prologOnlyIfCalled && !includeLoneProlog)
             println("(default mode: call targets + prologue runs >= " + minRun +
                     " words, filtered by the data/entropy gate. Tune with -Dc28x.seed.* ;\n" +
                     " -Dc28x.seed.noDataFilter=true disables the gate; -Dc28x.seed.includeLoneProlog=true\n" +
                     " adds every 1-op prologue match. See the header for all properties.)");
+    }
+
+    // --- Signal C guard: does [entry .. ] disassemble cleanly through to its OWN return? -----
+    // Walks instructions from `entry`, following fall-through, up to a cap. Returns true iff it
+    // reaches a function-terminating return (LRETR/LRET/IRET) WITHOUT hitting a bad/halt
+    // instruction or running off into another already-owned function. This is the guard that
+    // separates real prologue-less leaves from split-artifact fragments (which run past their
+    // own region and never terminate) and from mid-data garbage. Disassembles on demand so it
+    // works even when the gap bytes were never reached by fall-through.
+    boolean tryDecodeToReturn(Address entry, ghidra.program.model.listing.Listing listing) {
+        Address a = entry;
+        for (int i = 0; i < 200; i++) {                 // cap: real leaves here are < ~60 instrs
+            ghidra.program.model.listing.Instruction ins = listing.getInstructionAt(a);
+            if (ins == null) {
+                // followFlow=TRUE. With false, only the fall-through path got disassembled,
+                // so a conditional-branch target INSIDE the leaf (e.g. the `SB ret0,EQ` /
+                // `ret0: MOVB AL,#0; LRETR` tail every compiler emits) was left as raw bytes.
+                // CreateFunctionCmd then built a body that stops at the first LRETR and the
+                // decompiler truncated on the un-disassembled arm -- a halt_baddata that
+                // looked like a missing opcode but was really missing COVERAGE. (Observed on
+                // a real F28377D image: 6 such arms across 5 signal-C leaves.)
+                new DisassembleCommand(a, null, true).applyTo(currentProgram, monitor);
+                ins = listing.getInstructionAt(a);
+                if (ins == null) return false;          // undecodable / bad instruction
+            }
+            String m = ins.getMnemonicString();
+            if (m.equals("LRETR") || m.equals("LRET") || m.equals("IRET")) return true;  // own return
+            // if we wander into an already-owned function, this isn't a clean standalone leaf
+            if (i > 0 && currentProgram.getFunctionManager().getFunctionAt(a) != null) return false;
+            Address nxt = ins.getMaxAddress().add(1);
+            if (nxt.getOffset() > hi * 2 + 1) return false;
+            a = nxt;
+        }
+        return false;                                   // no return within cap → not a clean leaf
+    }
+
+    // --- Prune helper: does the fall-through path from `entry` hit an undecodable word fast? --
+    // Walks fall-through ONLY, up to `cap` instructions, and returns true if it runs into an
+    // address with no instruction that also refuses to decode -- i.e. exactly where the
+    // decompiler would emit halt_baddata. Read-only: uses PseudoDisassembler, so probing a
+    // candidate never lays down code (unlike tryDecodeToReturn, which is allowed to).
+    boolean truncatesEarly(Address entry, int cap) {
+        ghidra.app.util.PseudoDisassembler pd = new ghidra.app.util.PseudoDisassembler(currentProgram);
+        ghidra.program.model.listing.Listing listing = currentProgram.getListing();
+        Address a = entry;
+        for (int i = 0; i < cap; i++) {
+            ghidra.program.model.listing.Instruction ins = listing.getInstructionAt(a);
+            if (ins == null) {
+                try { return pd.disassemble(a) == null; } catch (Exception e) { return true; }
+            }
+            String m = ins.getMnemonicString();
+            if (m.equals("LRETR") || m.equals("LRET") || m.equals("IRET")) return false;
+            Address nxt = ins.getFallThrough();
+            if (nxt == null) return false;                  // unconditional flow change, not a stub
+            if (nxt.getOffset() > hi * 2 + 1) return false;
+            a = nxt;
+        }
+        return false;
+    }
+
+    // --- Signal C guard (0): is `entryWord` in a CODE neighborhood (vs a data table)? --------
+    // Fraction of a +/- `win`-word window already covered by an A+B-recognized function body.
+    // Real code regions are densely covered (a leaf sits among other functions); const/data
+    // tables have ~0 coverage. Per-region — no global code/data cutoff assumed (code & data can
+    // interleave, and the boundary differs per image). This is what makes the fn-ptr-table scan
+    // safe: a 2-word "pointer" that happens to point into a data blob lands in a 0-density region
+    // and is rejected, while a real indirect-call target lands among code.
+    double codeDensity(long entryWord, int win) {
+        var fmgr = currentProgram.getFunctionManager();
+        int inFn = 0, tot = 0;
+        for (long p = entryWord - win; p <= entryWord + win; p++) {
+            if (p < lo || p > hi) continue;
+            tot++;
+            if (fmgr.getFunctionContaining(addr(p)) != null) inFn++;
+        }
+        return tot > 0 ? (double) inFn / tot : 0.0;
     }
 
     // --- General data filter: does the window of words at `entry` look like CODE? ---------
