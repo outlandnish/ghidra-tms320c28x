@@ -33,8 +33,14 @@ Pop-Location
 
 # --- 2. COFF2 .text -> raw word bin -------------------------------------------
 $bytes = [IO.File]::ReadAllBytes("$work\$Obj")
-function U16($o){ $bytes[$o] -bor ($bytes[$o+1] -shl 8) }
-function U32($o){ $bytes[$o] -bor ($bytes[$o+1] -shl 8) -bor ($bytes[$o+2] -shl 16) -bor ($bytes[$o+3] -shl 24) }
+# CAST TO [int] FIRST. PowerShell's bitwise operators return the type of the LEFT
+# operand, so `$bytes[$o] -bor (...)` with a [byte] on the left truncates the whole
+# result back to 8 bits. That silently read .text's scnptr as 0x55 instead of 0x255
+# (the high byte 0x02 was discarded), so the harness extracted the wrong 364 bytes
+# and every parity run for an object whose .text starts past byte 255 (k_expf,
+# catrigf, c99_complex) reported ~0% agreement — a harness bug, not a spec bug.
+function U16($o){ [int]$bytes[$o] -bor ([int]$bytes[$o+1] -shl 8) }
+function U32($o){ [int]$bytes[$o] -bor ([int]$bytes[$o+1] -shl 8) -bor ([int]$bytes[$o+2] -shl 16) -bor ([int]$bytes[$o+3] -shl 24) }
 $magic = U16 0
 if ($magic -ne 0x00c2) { throw ("not a COFF2 object (magic=0x{0:x4})" -f $magic) }
 $nscns  = U16 2
