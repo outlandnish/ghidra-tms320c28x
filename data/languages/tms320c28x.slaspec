@@ -45,7 +45,14 @@ define register offset=0x20 size=2 [ AR0 AR0H AR1 AR1H AR2 AR2H AR3 AR3H
                                      AR4 AR4H AR5 AR5H AR6 AR6H AR7 AR7H ];
 
 # --- Pointers and program counters
-define register offset=0x40 size=2 [ DP SP ];
+# SP is 16-bit on the C28x but the stack always lives in low RAM, so we model it
+# as a 4-byte pointer to match the address-space width. This eliminates the
+# `ZEXT24(&stack…)` casts (and `& 0xffff` wrap masks) the decompiler would
+# otherwise emit at every stack access. SPL/SPH alias the halves for the rare
+# 16-bit-mode uses (e.g. `@SP` in loc16 addressing).
+define register offset=0x40 size=2 [ DP ];
+define register offset=0x54 size=4 [ SP ];
+define register offset=0x54 size=2 [ SPL SPH ];
 define register offset=0x44 size=4 [ PC RPC ];   # 22-bit values held in 32-bit slots
 
 # --- Status registers

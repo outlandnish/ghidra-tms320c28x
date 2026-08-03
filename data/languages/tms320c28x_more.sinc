@@ -15,7 +15,7 @@
 lcdest: reloc  is op_hi8=0x00 & op_lo_76=0b10 & loc_off6 ; imm16  [ reloc = (loc_off6 << 16) | imm16; ] { export *[ram]:4 reloc; }
 lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc_off6 << 16) | imm16; ] { export *[ram]:4 reloc; }
 :LC lcdest  is lcdest {
-    local sp2:4 = zext(SP); *[ram]:4 sp2 = RPC; SP = SP + 2;
+    local sp2:4 = SP; *[ram]:4 sp2 = RPC; SP = SP + 2;
     RPC = inst_next >> 1;
     call lcdest;
 }
@@ -24,7 +24,7 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 }
 
 # LC *XAR7   0111 0110 0000 0100   (indirect call via XAR7)
-:LC "*XAR7"  is op16=0x7604 { local sp2:4 = zext(SP); *[ram]:4 sp2 = RPC; SP = SP + 2; RPC = inst_next >> 1; call [XAR7]; }
+:LC "*XAR7"  is op16=0x7604 { local sp2:4 = SP; *[ram]:4 sp2 = RPC; SP = SP + 2; RPC = inst_next >> 1; call [XAR7]; }
 # LB *XAR7   0111 0110 0010 0000   (indirect branch via XAR7)
 :LB "*XAR7"  is op16=0x7620 { goto [XAR7]; }
 
@@ -222,11 +222,11 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 :ANDB AX, "#"imm8  is op_hi7=0x48 & AX & imm8  { AX = AX & zext(imm8:1); setNZ16(AX); }
 # PUSH loc16       0010 0010 LLLL LLLL  (push 16-bit value: *SP++ = loc16)
 :PUSH loc16  is op_hi8=0x22 & loc16  {
-    local sp:4 = zext(SP); local v:2 = loc16; *[ram]:2 sp = v; SP = SP + 1;
+    local sp:4 = SP; local v:2 = loc16; *[ram]:2 sp = v; SP = SP + 1;
 }
 # POP loc16        0010 1010 LLLL LLLL
 :POP loc16   is op_hi8=0x2A & loc16  {
-    SP = SP - 1; local sp:4 = zext(SP); loc16 = *[ram]:2 sp;
+    SP = SP - 1; local sp:4 = SP; loc16 = *[ram]:2 sp;
 }
 # MOV IER, loc16   0010 0011 LLLL LLLL
 :MOV "IER", loc16  is op_hi8=0x23 & loc16  { IER = loc16; }
@@ -265,16 +265,16 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 # Batch 4: fixed PUSH/POP of registers (function prologue/epilogue). No operands.
 # push16(v): *SP = v; SP++.   pop16(dst): SP--; dst = *SP.   (SP is word-addressed)
 # =============================================================================
-macro push16(v) { local a:4 = zext(SP); *[ram]:2 a = v; SP = SP + 1; }
-macro pop16(dst) { SP = SP - 1; local a:4 = zext(SP); dst = *[ram]:2 a; }
+macro push16(v) { local a:4 = SP; *[ram]:2 a = v; SP = SP + 1; }
+macro pop16(dst) { SP = SP - 1; local a:4 = SP; dst = *[ram]:2 a; }
 
 :POP "IFR"       is op16=0x0002 { pop16(IFR); }
 :POP "AR1H:AR0H" is op16=0x0003 { SP = SP - 2; }               # decode-only (pair pop)
-:POP "RPC"       is op16=0x0007 { SP = SP - 2; local a:4 = zext(SP); RPC = *[ram]:4 a; }
-:PUSH "RPC"      is op16=0x0004 { local a:4 = zext(SP); *[ram]:4 a = RPC; SP = SP + 2; }
+:POP "RPC"       is op16=0x0007 { SP = SP - 2; local a:4 = SP; RPC = *[ram]:4 a; }
+:PUSH "RPC"      is op16=0x0004 { local a:4 = SP; *[ram]:4 a = RPC; SP = SP + 2; }
 # PUSH/POP P (32-bit product reg). 0x761d / 0x7611. dis2000-confirmed (PCS411 0x9167c).
-:PUSH "P"        is op16=0x761D { local a:4 = zext(SP); *[ram]:4 a = P; SP = SP + 2; }
-:POP "P"         is op16=0x7611 { SP = SP - 2; local a:4 = zext(SP); P = *[ram]:4 a; }
+:PUSH "P"        is op16=0x761D { local a:4 = SP; *[ram]:4 a = P; SP = SP + 2; }
+:POP "P"         is op16=0x7611 { SP = SP - 2; local a:4 = SP; P = *[ram]:4 a; }
 :PUSH "AR1H:AR0H" is op16=0x0005 { SP = SP + 2; }              # decode-only (pair push)
 :POP "DP"        is op16=0x7603 { pop16(DP); }
 :POP "ST0"       is op16=0x7613 { pop16(ST0); }
