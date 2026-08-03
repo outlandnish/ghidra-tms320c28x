@@ -2,10 +2,11 @@
 
 A repeatable playbook for taking a "this function won't decompile / shows red
 `halt_baddata` / has unreachable blocks" report and turning it into a verified SLEIGH fix.
-Distilled from the PMR/DIR/PCS/bootloader work logged in `docs/PCODE-GAPS.md`.
+Distilled from the PMR/DIR/PCS/bootloader gap-filling work.
 
-Read `docs/PCODE-GAPS-PICKUP.md` first for the environment (paths, compile loop, byte-vs-word
-addressing). This doc is the *decision process*; that one is the *mechanics*.
+This doc is the *decision process*. For the *mechanics* — build/compile loop, headless
+decode-parity harnesses, and the byte-vs-word addressing model — see `docs/BUILDING.md`,
+`docs/TESTING.md`, and (for emulation) `docs/EMULATION.md`.
 
 ---
 
