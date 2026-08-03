@@ -63,22 +63,27 @@ $ws = "$work\run"; Remove-Item -Recurse -Force $ws -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force "$ws\proj","$ws\scripts" | Out-Null
 Copy-Item "$Module\ghidra_scripts\DumpParity.java" "$ws\scripts\" -Force
 $outTxt = "$work\ours_parity.txt"; Remove-Item $outTxt -ErrorAction SilentlyContinue
+# This Ghidra rejects `-D...` on the analyzeHeadless CLI; pass the system property via
+# the JVM env instead (DumpParity reads -Dc28x.parity.out).
+$savedJTO = $env:JAVA_TOOL_OPTIONS
+$env:JAVA_TOOL_OPTIONS = "-Dc28x.parity.out=$outTxt"
 Push-Location $ws
 & "$Ghidra\support\analyzeHeadless.bat" "$ws\proj" t `
   -import $textBin -processor "TMS320C28x:LE:32:default" `
   -scriptPath "$ws\scripts" -postScript DumpParity.java -noanalysis -overwrite `
-  -max-cpu 2 "-Dc28x.parity.out=$outTxt" 2>&1 | Out-Null
+  -max-cpu 2 2>&1 | Out-Null
 Pop-Location
+$env:JAVA_TOOL_OPTIONS = $savedJTO
 if (-not (Test-Path $outTxt)) { throw "headless dump produced no output" }
 
 # --- 4. align + report --------------------------------------------------------
 # TI ground truth: lines "<8hex word>   <hexword>   <MNEMONIC> ...". Continuation
 # words have an opcode but NO mnemonic field; we key on the mnemonic-bearing lines.
-$ti = @{}
+$tiMap = @{}
 foreach ($ln in Get-Content "$work\$base.dis2000.txt") {
   if ($ln -match '^\s*([0-9a-fA-F]{8})\s+[0-9a-fA-F]{4}\s+([A-Z][A-Z0-9_]+)') {
     $w = [Convert]::ToInt64($Matches[1],16)
-    if (-not $ti.ContainsKey($w)) { $ti[$w] = $Matches[2].ToUpper() }
+    if (-not $tiMap.ContainsKey($w)) { $tiMap[$w] = $Matches[2].ToUpper() }
   }
 }
 $ours = @{}
@@ -91,14 +96,14 @@ foreach ($ln in Get-Content $outTxt) {
 }
 
 $agree=0; $wrong=@(); $undef=@(); $missing=@()
-foreach ($w in ($ti.Keys | Sort-Object)) {
+foreach ($w in ($tiMap.Keys | Sort-Object)) {
   if (-not $ours.ContainsKey($w)) { $missing += $w; continue }
   $o = $ours[$w]
   if ($o -eq "<UNDEF>") { $undef += $w }
-  elseif ($o -eq $ti[$w]) { $agree++ }
-  else { $wrong += [pscustomobject]@{ Word=$w; TI=$ti[$w]; Ours=$o } }
+  elseif ($o -eq $tiMap[$w]) { $agree++ }
+  else { $wrong += [pscustomobject]@{ Word=$w; TI=$tiMap[$w]; Ours=$o } }
 }
-$tot = $ti.Count
+$tot = $tiMap.Count
 Write-Host ""
 Write-Host ("=== TI PARITY: {0} ===" -f $Obj) -ForegroundColor Cyan
 Write-Host ("  TI instructions:  {0}" -f $tot)

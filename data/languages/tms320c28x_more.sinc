@@ -15,7 +15,8 @@
 lcdest: reloc  is op_hi8=0x00 & op_lo_76=0b10 & loc_off6 ; imm16  [ reloc = (loc_off6 << 16) | imm16; ] { export *[ram]:4 reloc; }
 lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc_off6 << 16) | imm16; ] { export *[ram]:4 reloc; }
 :LC lcdest  is lcdest {
-    RPC = inst_next;
+    local sp2:4 = zext(SP); *[ram]:4 sp2 = RPC; SP = SP + 2;
+    RPC = inst_next >> 1;
     call lcdest;
 }
 :LB lbdest  is lbdest {
@@ -23,7 +24,7 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 }
 
 # LC *XAR7   0111 0110 0000 0100   (indirect call via XAR7)
-:LC "*XAR7"  is op16=0x7604 { RPC = inst_next; call [XAR7]; }
+:LC "*XAR7"  is op16=0x7604 { local sp2:4 = zext(SP); *[ram]:4 sp2 = RPC; SP = SP + 2; RPC = inst_next >> 1; call [XAR7]; }
 # LB *XAR7   0111 0110 0010 0000   (indirect branch via XAR7)
 :LB "*XAR7"  is op16=0x7620 { goto [XAR7]; }
 
@@ -55,18 +56,50 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 # MOVB AX.LSB, loc16   1100 011A LLLL LLLL
 # Spec: load AX.LSB with the low byte AND CLEAR AX.MSB (zero-extend the byte into the
 # full 16-bit AX). Preserving the MSB (the old & 0xFF00 form) was wrong.
-:MOVB AX^".LSB", loc16  is op_hi7=0x63 & AX & loc16  {
+# NB: the AR0/AR1-indexed byte forms are BYTE-ADDRESSED (see below) and are excluded here.
+:MOVB AX^".LSB", loc16  is op_hi7=0x63 & AX & loc_mode5!=0b10010 & loc_mode5!=0b10011 & loc16  {
     local b:2 = loc16 & 0xFF;
     AX = b;
 }
 # MOVB AX.MSB, loc16   0011 100A LLLL LLLL  -- load MSB of AX, LSB left unchanged.
-:MOVB AX^".MSB", loc16  is op_hi7=0x1C & AX & loc16  {
+:MOVB AX^".MSB", loc16  is op_hi7=0x1C & AX & loc_mode5!=0b10010 & loc_mode5!=0b10011 & loc16  {
     AX = (AX & 0x00FF) | ((loc16 & 0xFF) << 8);
 }
 # MOVB loc16, AX.LSB   0011 110A LLLL LLLL  -- store low byte of AX into loc16.
 # (Spec writes only 8 bits of loc16, the other byte by address parity; we approximate
 # with a 16-bit zero-extended store, which is fine for decompilation.)
 :MOVB loc16, AX^".LSB"  is op_hi7=0x1E & loc16 & AX  { loc16 = AX & 0xFF; }
+
+# --- byte moves: register-INDEXED forms are BYTE-ADDRESSED --------------------
+# C28x MOVB with *+XARn[ARm] indexing treats ARm as a BYTE offset into a byte-packed
+# array: effective byte addr = (XARn<<1)+ARm, byte lane = ARm&1. The generic loc16 path
+# above computes a WORD addr (XARn+ARm) and reads the low byte, i.e. byte[2*ARm] (only the
+# even entries) -- fatal for a byte-packed table such as an AES S-box (256 packed bytes).
+# ram is wordsize=2, so word addr = (byteaddr>>1) and lane picks the high/low byte.
+:MOVB AX^".LSB", "*+"loc_areg"[AR0]"  is op_hi7=0x63 & AX & ctx_AMODE=0 & loc_mode5=0b10010 & loc_areg {
+    local ba:4 = (loc_areg << 1) + zext(AR0);
+    local wv:2 = *[ram]:2 (ba >> 1);
+    local sh:2 = zext(ba:1 & 1) << 3;
+    AX = (wv >> sh) & 0xFF;
+}
+:MOVB AX^".LSB", "*+"loc_areg"[AR1]"  is op_hi7=0x63 & AX & ctx_AMODE=0 & loc_mode5=0b10011 & loc_areg {
+    local ba:4 = (loc_areg << 1) + zext(AR1);
+    local wv:2 = *[ram]:2 (ba >> 1);
+    local sh:2 = zext(ba:1 & 1) << 3;
+    AX = (wv >> sh) & 0xFF;
+}
+:MOVB AX^".MSB", "*+"loc_areg"[AR0]"  is op_hi7=0x1C & AX & ctx_AMODE=0 & loc_mode5=0b10010 & loc_areg {
+    local ba:4 = (loc_areg << 1) + zext(AR0);
+    local wv:2 = *[ram]:2 (ba >> 1);
+    local sh:2 = zext(ba:1 & 1) << 3;
+    AX = (AX & 0x00FF) | (((wv >> sh) & 0xFF) << 8);
+}
+:MOVB AX^".MSB", "*+"loc_areg"[AR1]"  is op_hi7=0x1C & AX & ctx_AMODE=0 & loc_mode5=0b10011 & loc_areg {
+    local ba:4 = (loc_areg << 1) + zext(AR1);
+    local wv:2 = *[ram]:2 (ba >> 1);
+    local sh:2 = zext(ba:1 & 1) << 3;
+    AX = (AX & 0x00FF) | (((wv >> sh) & 0xFF) << 8);
+}
 
 # --- ALU additions -----------------------------------------------------------
 # SUBU ACC, loc16   0000 0001 LLLL LLLL   (subtract unsigned)
