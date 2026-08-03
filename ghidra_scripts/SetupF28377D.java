@@ -19,6 +19,9 @@
 // @category TMS320C28x
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.address.Address;
+import ghidra.program.model.data.DataType;
+import ghidra.program.model.data.Undefined4DataType;
+import ghidra.program.model.data.Undefined8DataType;
 import ghidra.program.model.mem.Memory;
 import ghidra.program.model.mem.MemoryBlock;
 import ghidra.program.model.symbol.SourceType;
@@ -93,10 +96,12 @@ public class SetupF28377D extends GhidraScript {
     };
 
     // ── eQEP (spruhm8k Table 17-16, shared across EQEP1-3) ────────────────────
+    // All QPOS* registers are 32-bit position counters (Q1.31 encoder position). QUTMR
+    // and QUPRD are 32-bit unit timers. Firmware reads/writes these as full 32-bit values.
     private static final Object[][] EQEP_REGS = {
-        {0x0000L,"QPOSCNT"},{0x0002L,"QPOSINIT"},{0x0004L,"QPOSMAX"},{0x0006L,"QPOSCMP"},
-        {0x0008L,"QPOSILAT"},{0x000AL,"QPOSSLAT"},{0x000CL,"QPOSLAT"},
-        {0x000EL,"QUTMR"},{0x0010L,"QUPRD"},
+        {0x0000L,"QPOSCNT",4},{0x0002L,"QPOSINIT",4},{0x0004L,"QPOSMAX",4},{0x0006L,"QPOSCMP",4},
+        {0x0008L,"QPOSILAT",4},{0x000AL,"QPOSSLAT",4},{0x000CL,"QPOSLAT",4},
+        {0x000EL,"QUTMR",4},{0x0010L,"QUPRD",4},
         {0x0012L,"QWDTMR"},{0x0013L,"QWDPRD"},
         {0x0014L,"QDECCTL"},{0x0015L,"QEPCTL"},{0x0016L,"QCAPCTL"},{0x0017L,"QPOSCTL"},
         {0x0018L,"QEINT"},{0x0019L,"QFLG"},{0x001AL,"QCLR"},{0x001BL,"QFRC"},
@@ -300,26 +305,29 @@ public class SetupF28377D extends GhidraScript {
     // ── IPC registers (F2837xD_ipc.h — CPU1 and CPU2 views differ in SEND/RECV order) ──
     // Common prefix: IPCACK–IPCCOUNTERH are identical in both views.
     // Base = 0x050000 for both CPUs (F2837xD_Headers_nonBIOS_cpu{1,2}.cmd).
+    // IPC ADDR and DATA are 32-bit inter-core message payload registers. The REPLY regs
+    // and BOOTMODE also carry 32-bit values. COUNTERL/H are the two halves of a 64-bit
+    // counter — leave as 16-bit since firmware reads them separately.
     private static final Object[][] IPC_REGS_CPU1 = {
         {0x0000L,"IPCACK"},{0x0001L,"IPCSTS"},{0x0002L,"IPCSET"},
         {0x0003L,"IPCCLR"},{0x0004L,"IPCFLG"},
         {0x0007L,"IPCCOUNTERL"},{0x0009L,"IPCCOUNTERH"},
-        {0x000BL,"IPCSENDCOM"},{0x000DL,"IPCSENDADDR"},{0x000FL,"IPCSENDDATA"},
-        {0x0011L,"IPCREMOTEREPLY"},
-        {0x0013L,"IPCRECVCOM"},{0x0015L,"IPCRECVADDR"},{0x0017L,"IPCRECVDATA"},
-        {0x0019L,"IPCLOCALREPLY"},
-        {0x001BL,"IPCBOOTSTS"},{0x001DL,"IPCBOOTMODE"},
+        {0x000BL,"IPCSENDCOM"},{0x000DL,"IPCSENDADDR",4},{0x000FL,"IPCSENDDATA",4},
+        {0x0011L,"IPCREMOTEREPLY",4},
+        {0x0013L,"IPCRECVCOM"},{0x0015L,"IPCRECVADDR",4},{0x0017L,"IPCRECVDATA",4},
+        {0x0019L,"IPCLOCALREPLY",4},
+        {0x001BL,"IPCBOOTSTS"},{0x001DL,"IPCBOOTMODE",4},
     };
 
     private static final Object[][] IPC_REGS_CPU2 = {
         {0x0000L,"IPCACK"},{0x0001L,"IPCSTS"},{0x0002L,"IPCSET"},
         {0x0003L,"IPCCLR"},{0x0004L,"IPCFLG"},
         {0x0007L,"IPCCOUNTERL"},{0x0009L,"IPCCOUNTERH"},
-        {0x000BL,"IPCRECVCOM"},{0x000DL,"IPCRECVADDR"},{0x000FL,"IPCRECVDATA"},
-        {0x0011L,"IPCLOCALREPLY"},
-        {0x0013L,"IPCSENDCOM"},{0x0015L,"IPCSENDADDR"},{0x0017L,"IPCSENDDATA"},
-        {0x0019L,"IPCREMOTEREPLY"},
-        {0x001BL,"IPCBOOTSTS"},{0x001DL,"IPCBOOTMODE"},
+        {0x000BL,"IPCRECVCOM"},{0x000DL,"IPCRECVADDR",4},{0x000FL,"IPCRECVDATA",4},
+        {0x0011L,"IPCLOCALREPLY",4},
+        {0x0013L,"IPCSENDCOM"},{0x0015L,"IPCSENDADDR",4},{0x0017L,"IPCSENDDATA",4},
+        {0x0019L,"IPCREMOTEREPLY",4},
+        {0x001BL,"IPCBOOTSTS"},{0x001DL,"IPCBOOTMODE",4},
     };
 
     // ── DMA global registers (spruhm8k Table 5-4) ─────────────────────────────
@@ -329,6 +337,9 @@ public class SetupF28377D extends GhidraScript {
     };
 
     // ── DMA per-channel registers (spruhm8k Table 5-10, 6 channels × 0x40 stride) ──
+    // The *_ADDR_* registers are 32-bit memory pointers — the DMA engine literally reads
+    // them as 4-byte addresses. Typing them as u4 makes DMA setup code render as clean
+    // pointer assignments instead of `CONCAT22(SRC_ADDR_ACTIVE, SRC_ADDR_ACTIVE)`.
     private static final Object[][] DMA_CH_REGS = {
         {0x0000L,"MODE"},{0x0001L,"CONTROL"},
         {0x0002L,"BURST_SIZE"},{0x0003L,"BURST_COUNT"},
@@ -337,10 +348,10 @@ public class SetupF28377D extends GhidraScript {
         {0x0008L,"SRC_TRANSFER_STEP"},{0x0009L,"DST_TRANSFER_STEP"},
         {0x000AL,"SRC_WRAP_SIZE"},{0x000BL,"SRC_WRAP_COUNT"},{0x000CL,"SRC_WRAP_STEP"},
         {0x000DL,"DST_WRAP_SIZE"},{0x000EL,"DST_WRAP_COUNT"},{0x000FL,"DST_WRAP_STEP"},
-        {0x0010L,"SRC_BEG_ADDR_SHADOW"},{0x0012L,"SRC_ADDR_SHADOW"},
-        {0x0014L,"SRC_BEG_ADDR_ACTIVE"},{0x0016L,"SRC_ADDR_ACTIVE"},
-        {0x0018L,"DST_BEG_ADDR_SHADOW"},{0x001AL,"DST_ADDR_SHADOW"},
-        {0x001CL,"DST_BEG_ADDR_ACTIVE"},{0x001EL,"DST_ADDR_ACTIVE"},
+        {0x0010L,"SRC_BEG_ADDR_SHADOW",4}, {0x0012L,"SRC_ADDR_SHADOW",4},
+        {0x0014L,"SRC_BEG_ADDR_ACTIVE",4}, {0x0016L,"SRC_ADDR_ACTIVE",4},
+        {0x0018L,"DST_BEG_ADDR_SHADOW",4}, {0x001AL,"DST_ADDR_SHADOW",4},
+        {0x001CL,"DST_BEG_ADDR_ACTIVE",4}, {0x001EL,"DST_ADDR_ACTIVE",4},
     };
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -355,15 +366,34 @@ public class SetupF28377D extends GhidraScript {
     }
 
     // Generic field-level labeler — generalisation of the original labelCan().
+    // Row schema: {wordOffset, name} or {wordOffset, name, sizeBytes}. When sizeBytes is
+    // present and > 2 (i.e. an actual 32/64-bit register), we ALSO define an Undefined4/8
+    // at that address so the decompiler renders wide loads as `MOD_REG = X` instead of
+    // `CONCAT22(MOD_REG, MOD_REG)`. Defaulting to no data-type keeps 16-bit regs looking
+    // the way they always have.
     private void labelRegs(String mod, long base, Object[][] regs) throws Exception {
-        int n = 0;
+        int n = 0, typed = 0;
         for (Object[] r : regs) {
             long off = (Long) r[0];
             String nm = mod + "_" + (String) r[1];
-            createLabel(wAddr(base + off), nm, true, SourceType.USER_DEFINED);
+            Address a = wAddr(base + off);
+            createLabel(a, nm, true, SourceType.USER_DEFINED);
             n++;
+            if (r.length >= 3) {
+                int sz = (Integer) r[2];
+                if (sz == 4 || sz == 8) {
+                    DataType dt = (sz == 8) ? Undefined8DataType.dataType
+                                            : Undefined4DataType.dataType;
+                    try {
+                        currentProgram.getListing().clearCodeUnits(a, a.add(sz - 1), false);
+                        currentProgram.getListing().createData(a, dt);
+                        typed++;
+                    } catch (Exception e) { /* leave whatever's there */ }
+                }
+            }
         }
-        println("labeled " + mod + " (" + n + " regs) @ 0x" + Long.toHexString(base));
+        println("labeled " + mod + " (" + n + " regs, " + typed + " wide-typed) @ 0x"
+            + Long.toHexString(base));
     }
 
     // Create an uninitialized (MMIO) memory block if it isn't already mapped.
