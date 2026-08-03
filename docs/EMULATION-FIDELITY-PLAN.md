@@ -112,15 +112,27 @@ Decode-neutral (AES/KS/CE parity still 211/72/126, 0 wrong/undef/skew; addr_mode
 Validated: post-fix **AddRoundKey, SubBytes, ShiftRows, MixColumns are all bit-exact** vs
 FIPS-197 (`postSBX=63cab704…e18c`, `postMIX=5f726415…f91a`).
 
-**Bug #2 — `RPTB` does not loop (identified; needs a decision).** With SubBytes fixed, MixColumns
+**Bug #2 — `RPTB` does not loop (FIXED via a state modifier).** With SubBytes fixed, MixColumns
 was still wrong until RPTB looping was supplied. Confirmed by PC trace: `9b00f(RPTB) → 9b011..9b020
 → 9b021 → … → 9b03a(BANZ) → 9b003` — the block runs **once** and falls through (the outer BANZ is
 what loops; my earlier "RPTB loops fine" was a misread — `mixHits=4` was the outer column loop).
-The constructor only does `RB = zext(RSIZE)`. Modeling C28x's implicit zero-overhead block-repeat
-in SLEIGH is hard (no instruction at the loop-back point to hang p-code on). A **harness-level RPTB**
-(re-step the block RC+1 times: detect `op_hi8=0xB5`, block=`[inst_next, inst_next+RSIZE)`, count from
-the loc16/imm operand) makes MixColumns bit-exact — so the rest of the `.sla` is validated. Open
-question: model RPTB in `.sla` vs keep harness-handling + document.
+The constructor only does `RB = zext(RSIZE)`.
+
+RPTB is a zero-overhead **block** repeat with an implicit loop-back (the CPU compares PC to the
+block end after every instruction; there is no branch opcode there to hang loop-back p-code on),
+so it cannot be modeled in pure SLEIGH — a constructor's p-code affects only its own instruction,
+and the block end is arbitrary. Ghidra's answer to exactly this class of problem is an
+`EmulateInstructionStateModifier` (the same mechanism Hexagon uses for its hardware loops):
+`src/main/java/ghidra/program/emulation/TMS320C28xEmulateInstructionStateModifier.java` +
+the `emulateInstructionStateModifierClass` pspec property. Its `postExecuteCallback` arms one
+level of loop state when an RPTB executes (block `[inst_next, inst_next+RSIZE)`, count from the
+loc16/imm operand) and redirects the PC back to the block start at the block end until the count
+is exhausted — C28x RPTB cannot nest (single RB register), so one level is hardware-accurate.
+Build/install with `tests/build_modifier.ps1` (restart Ghidra). **Validated:** plain stepping (no
+harness) now hits the MixColumns block start 16× (4 cols × 4) and `postMIX` is bit-exact
+`5f726415…`. (The `.sla` RPTB constructor is left as-is; the modifier supplies the loop for the
+emulator. The earlier harness-level RPTB — re-step the block in the driver — remains a valid
+fallback for emulation drivers that don't load the modifier.)
 
 **Blocker #3 — the AES vector is NOT pure-isolation ("needs device data").** Even with round-1 math
 bit-exact, execution derails identically: `AES → LCR 0xaae42 → … → FUN_000b2016: LCR *XAR7` where

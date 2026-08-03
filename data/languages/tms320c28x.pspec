@@ -5,6 +5,14 @@
 <processor_spec>
   <programcounter register="PC"/>
 
+  <!-- RPTB (repeat-block) is a zero-overhead hardware loop with an implicit loop-back
+       (no branch instruction at the block end), which SLEIGH cannot model. This state
+       modifier redirects the PC back to the block start under emulation, like the CPU. -->
+  <properties>
+    <property key="emulateInstructionStateModifierClass"
+              value="ghidra.program.emulation.TMS320C28xEmulateInstructionStateModifier"/>
+  </properties>
+
   <!-- AMODE context bit: 0 = C28x addressing modes (compiler default). Decode in
        this mode by default; flow analysis can override when SETC/CLRC AMODE seen. -->
   <context_data>
