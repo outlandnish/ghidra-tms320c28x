@@ -273,13 +273,30 @@
     if (AXb0 s>= loc16) goto inst_next;
     AXb0 = loc16;
 }
+# CSB uses a Java CALLOTHER behavior (count leading sign bits); FLIP is done branch-free below.
+define pcodeop countSignBits;
+
 # FLIP AX  0101 0110 0111 000A  (bit-reverse AL/AH). dis2000-confirmed (0x5670/0x5671 —
 # previously MIS-DECODED as the 2-word MAX, which consumed an extra word and skewed flow).
-# No SLEIGH bit-reverse primitive; model opaque (write AX so dataflow continues). 1-word.
-:FLIP AXb0  is op_hi8=0x56 & op_lo71=0b0111000 & AXb0  { AXb0 = AXb0; }
-# CSB ACC  0101 0110 0011 0101  (count sign bits: T = leading-sign-bit count - 1).
-# Modeled opaque (no SLEIGH clz); write T so dataflow continues.
-:CSB "ACC"  is op16=0x5635  { T = T; }
+# 16-bit bit-reversal as a branch-free swap network — pure SLEIGH, so it works in both the
+# decompiler and the emulator (no callother needed). 1-word.
+:FLIP AXb0  is op_hi8=0x56 & op_lo71=0b0111000 & AXb0  {
+    local x:2 = AXb0;
+    x = ((x & 0x5555) << 1) | ((x >> 1) & 0x5555);
+    x = ((x & 0x3333) << 2) | ((x >> 2) & 0x3333);
+    x = ((x & 0x0f0f) << 4) | ((x >> 4) & 0x0f0f);
+    x = (x << 8) | (x >> 8);
+    AXb0 = x;
+}
+# CSB ACC  0101 0110 0011 0101  (count sign bits: T = leading-sign-bit count - 1). Computed by
+# the countSignBits CALLOTHER (TMS320C28xEmulateInstructionStateModifier); flags per SPRU430F:
+# N/Z from ACC (unchanged), TC = sign bit after the op (= ACC negative). 1-word.
+:CSB "ACC"  is op16=0x5635  {
+    T = countSignBits(ACC);
+    $(N) = (ACC s< 0);
+    $(Z) = (ACC == 0);
+    $(TC) = (ACC s< 0);
+}
 # ABSTC ACC  0101 0110 0101 1111  (ACC = |ACC|; TC ^= sign bit). dis2000-confirmed (DIR).
 :ABSTC "ACC"  is op16=0x565f  {
     local neg:1 = (ACC s< 0);
