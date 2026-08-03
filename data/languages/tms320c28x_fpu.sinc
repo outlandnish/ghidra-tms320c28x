@@ -141,8 +141,8 @@ macro setFloatFlags(a, b) {
 # Stack / control
 # =============================================================================
 # RB is 32-bit; occupies 2 words on the 16-bit word-addressed stack.
-:PUSH "RB"   is op16=0xFFF0 { local a:4 = zext(SP); *[ram]:4 a = RB; SP = SP + 2; }
-:POP "RB"    is op16=0xFFF1 { SP = SP - 2; local a:4 = zext(SP); RB = *[ram]:4 a; }
+:PUSH "RB"   is op16=0xFFF0 { local a:4 = SP; *[ram]:4 a = RB; SP = SP + 2; }
+:POP "RB"    is op16=0xFFF1 { SP = SP - 2; local a:4 = SP; RB = *[ram]:4 a; }
 :RESTORE     is op16=0xE562 { }   # restores saved FP regs from stack frame — no-op stub
 :ZEROA       is op16=0xE563 { R0H=0; R1H=0; R2H=0; R3H=0; R4H=0; R5H=0; R6H=0; R7H=0; }
 

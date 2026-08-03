@@ -48,13 +48,13 @@ loc16: "@"loc_off6  is ctx_AMODE=0 & loc_b76=0b00 & loc_off6 {
 
 # --- Stack:  *-SP[6bit]  ->  addr = SP - 6bit
 loc16: "*-SP["loc_off6"]"  is ctx_AMODE=0 & loc_b76=0b01 & loc_off6 {
-    local off:2 = SP - loc_off6:2;
-    export *[ram]:2 off;
+    local a:4 = SP - loc_off6;
+    export *[ram]:2 a;
 }
 
 # --- Stack:  *SP++   (addr = SP, then SP += 1 word)
 loc16: "*SP++"  is ctx_AMODE=0 & loc_full8=0b10111101 {
-    local a:4 = zext(SP);
+    local a:4 = SP;
     SP = SP + 1;
     export *[ram]:2 a;
 }
@@ -62,7 +62,7 @@ loc16: "*SP++"  is ctx_AMODE=0 & loc_full8=0b10111101 {
 # --- Stack:  *--SP   (SP -= 1 word, then addr = SP)
 loc16: "*--SP"  is ctx_AMODE=0 & loc_full8=0b10111110 {
     SP = SP - 1;
-    local a:4 = zext(SP);
+    local a:4 = SP;
     export *[ram]:2 a;
 }
 
@@ -105,7 +105,7 @@ loc16: "@AL"  is ctx_AMODE=0 & loc_full8=0b10101001 { export AL; }
 loc16: "@PH"  is ctx_AMODE=0 & loc_full8=0b10101010 { export PH; }
 loc16: "@PL"  is ctx_AMODE=0 & loc_full8=0b10101011 { export PL; }
 loc16: "@TH"  is ctx_AMODE=0 & loc_full8=0b10101100 { export T;  }   # @TH == high half of XT == T
-loc16: "@SP"  is ctx_AMODE=0 & loc_full8=0b10101101 { export SP; }
+loc16: "@SP"  is ctx_AMODE=0 & loc_full8=0b10101101 { export SPL; }
 
 # --- circular (*BR0++/--) and ARP-pointer (*,ARPn) modes (Table 5-1) -------------
 # These were MISSING and made every instruction using them (e.g. MOVL XT,*,ARP4 = 0x87b4)
@@ -126,19 +126,19 @@ loc32: "@"loc_off6  is ctx_AMODE=0 & loc_b76=0b00 & loc_off6 {
 }
 
 loc32: "*-SP["loc_off6"]"  is ctx_AMODE=0 & loc_b76=0b01 & loc_off6 {
-    local off:2 = SP - loc_off6:2;
-    export *[ram]:4 off;
+    local a:4 = SP - loc_off6;
+    export *[ram]:4 a;
 }
 
 loc32: "*SP++"  is ctx_AMODE=0 & loc_full8=0b10111101 {
-    local a:4 = zext(SP);
+    local a:4 = SP;
     SP = SP + 2;
     export *[ram]:4 a;
 }
 
 loc32: "*--SP"  is ctx_AMODE=0 & loc_full8=0b10111110 {
     SP = SP - 2;
-    local a:4 = zext(SP);
+    local a:4 = SP;
     export *[ram]:4 a;
 }
 

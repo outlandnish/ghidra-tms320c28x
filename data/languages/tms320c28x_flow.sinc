@@ -132,14 +132,14 @@ ffcdest: reloc  is op_hi8=0x00 & op_lo_76=0b11 & loc_off6 ; imm16  [ reloc = (lo
     # hardware pushes the OLD RPC (nested-call save) then loads RPC with the return
     # addr; LRETR pops it back. Needed for EMULATION of nested calls; net-neutral for
     # decompilation (push+pop cancel across the call). inst_next>>1 = word return addr.
-    local sp2:4 = zext(SP); *[ram]:4 sp2 = RPC; SP = SP + 2;
+    local sp2:4 = SP; *[ram]:4 sp2 = RPC; SP = SP + 2;
     RPC = inst_next >> 1;
     call lcrdest;
 }
 
 # LCR *XARn           0011 1110 0110 0RRR  (indirect call using RPC)
 :LCR "*"loc_areg  is op_hi8=0x3E & op_lo_35=0b01100 & loc_areg {
-    local sp2:4 = zext(SP); *[ram]:4 sp2 = RPC; SP = SP + 2;
+    local sp2:4 = SP; *[ram]:4 sp2 = RPC; SP = SP + 2;
     RPC = inst_next >> 1;
     call [loc_areg];
 }
@@ -155,7 +155,7 @@ ffcdest: reloc  is op_hi8=0x00 & op_lo_76=0b11 & loc_off6 ; imm16  [ reloc = (lo
 :LRETR  is op16=0x0006 {
     # return to RPC, then pop the saved caller RPC back off the stack (mirror of LCR).
     local ret:4 = RPC;
-    SP = SP - 2; local sp2:4 = zext(SP); RPC = *[ram]:4 sp2;
+    SP = SP - 2; local sp2:4 = SP; RPC = *[ram]:4 sp2;
     return [ret];
 }
 
@@ -163,7 +163,7 @@ ffcdest: reloc  is op_hi8=0x00 & op_lo_76=0b11 & loc_off6 ; imm16  [ reloc = (lo
 :LRET   is op16=0x7614 {
     # 22-bit return address was pushed as two words; pop the 32-bit value off SP.
     SP = SP - 2;
-    local addr:4 = zext(SP);
+    local addr:4 = SP;
     local t:4 = *[ram]:4 addr;
     return [t];
 }
@@ -171,7 +171,7 @@ ffcdest: reloc  is op_hi8=0x00 & op_lo_76=0b11 & loc_off6 ; imm16  [ reloc = (lo
 # IRET                0111 0110 0000 0010   (interrupt return)
 :IRET   is op16=0x7602 {
     SP = SP - 2;
-    local addr:4 = zext(SP);
+    local addr:4 = SP;
     local t:4 = *[ram]:4 addr;
     return [t];
 }
