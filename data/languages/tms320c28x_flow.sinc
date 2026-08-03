@@ -129,26 +129,34 @@ ffcdest: reloc  is op_hi8=0x00 & op_lo_76=0b11 & loc_off6 ; imm16  [ reloc = (lo
 # inst_start+simm16, so every LCR pointed back at itself; in unlinked .objs the
 # field is a 0 reloc placeholder, which made it look like a self-call.)
 :LCR lcrdest  is lcrdest {
-    RPC = inst_next;
+    # hardware pushes the OLD RPC (nested-call save) then loads RPC with the return
+    # addr; LRETR pops it back. Needed for EMULATION of nested calls; net-neutral for
+    # decompilation (push+pop cancel across the call). inst_next>>1 = word return addr.
+    local sp2:4 = zext(SP); *[ram]:4 sp2 = RPC; SP = SP + 2;
+    RPC = inst_next >> 1;
     call lcrdest;
 }
 
 # LCR *XARn           0011 1110 0110 0RRR  (indirect call using RPC)
 :LCR "*"loc_areg  is op_hi8=0x3E & op_lo_35=0b01100 & loc_areg {
-    RPC = inst_next;
+    local sp2:4 = zext(SP); *[ram]:4 sp2 = RPC; SP = SP + 2;
+    RPC = inst_next >> 1;
     call [loc_areg];
 }
 
 # FFC XAR7,#22bit     0000 0000 11CC CCCC : CCCC CCCC CCCC CCCC  (fast call; return
 # PC saved in XAR7, ABSOLUTE 22-bit target). word1 low 6 bits = addr[21:16].
 :FFC "XAR7,"ffcdest  is ffcdest {
-    XAR7 = inst_next;
+    XAR7 = inst_next >> 1;
     call ffcdest;
 }
 
 # LRETR               0000 0000 0000 0110   (long return using RPC)
 :LRETR  is op16=0x0006 {
-    return [RPC];
+    # return to RPC, then pop the saved caller RPC back off the stack (mirror of LCR).
+    local ret:4 = RPC;
+    SP = SP - 2; local sp2:4 = zext(SP); RPC = *[ram]:4 sp2;
+    return [ret];
 }
 
 # LRET                0111 0110 0001 0100
