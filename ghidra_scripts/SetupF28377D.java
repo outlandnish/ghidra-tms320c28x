@@ -436,18 +436,18 @@ public class SetupF28377D extends GhidraScript {
         {0x005000L, 0x020L, "ECAP1"},       {0x005020L, 0x020L, "ECAP2"},
         {0x005040L, 0x020L, "ECAP3"},       {0x005060L, 0x020L, "ECAP4"},
         {0x005080L, 0x020L, "ECAP5"},       {0x0050A0L, 0x020L, "ECAP6"},
-        {0x005100L, 0x022L, "EQEP1"},       {0x005140L, 0x022L, "EQEP2"},
-        {0x005180L, 0x022L, "EQEP3"},
+        {0x005100L, 0x044L, "EQEP1"},       {0x005140L, 0x044L, "EQEP2"},
+        {0x005180L, 0x044L, "EQEP3"},
         {0x006100L, 0x010L, "SPIA"},        {0x006110L, 0x010L, "SPIB"},
         {0x006120L, 0x010L, "SPIC"},
         {0x007200L, 0x010L, "SCIA"},        {0x007210L, 0x010L, "SCIB"},
         {0x007220L, 0x010L, "SCIC"},        {0x007230L, 0x010L, "SCID"},
-        {0x007300L, 0x022L, "I2CA"},        {0x007340L, 0x022L, "I2CB"},
+        {0x007300L, 0x044L, "I2CA"},        {0x007340L, 0x044L, "I2CB"},
         {0x007400L, 0x080L, "ADCA"},        {0x007480L, 0x080L, "ADCB"},
         {0x007500L, 0x080L, "ADCC"},        {0x007580L, 0x080L, "ADCD"},
         {0x007F00L, 0x030L, "GPIO_DATA"},
         {0x0005D200L, 0x032L, "CLK_CFG"},   {0x0005D300L, 0x082L, "CPU_SYS"},
-        {0x050000L, 0x024L, "IPC"},
+        {0x050000L, 0x048L, "IPC"},
     };
 
     // Peripheral frames accessible from CPU1 only.
