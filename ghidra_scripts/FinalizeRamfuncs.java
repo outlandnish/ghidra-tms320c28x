@@ -9,6 +9,15 @@
 //     (verified: 0x9669 1->0x47, 0xb779 1->0x23, 0x9856 1->0x16 — exactly the ground-truth sizes).
 //     Only DEFAULT-named (FUN_xxx) stubs are touched; a user-renamed function is never disturbed.
 //
+// (1b) CLEAR STALE FLOW-ERROR BOOKMARKS. The import-time auto-analysis runs the disassembler BEFORE
+//     these scripts materialize the RAM, so it drops a "Disassembly not permitted within uninitialized
+//     memory block" (or "Could not follow disassembly flow into non-existing memory") error bookmark
+//     at every call/branch into RAM-resident code. Once MaterializeSections has filled that RAM those
+//     marks are STALE — the target now holds real bytes. This pass clears each whose flow target(s) are
+//     now initialized ("uninitialized" marks) / mapped ("non-existing" marks); GENUINE cases (target
+//     still uninitialized/unmapped) and missing-opcode marks ("Unable to resolve constructor") are LEFT
+//     so real gaps (e.g. the SAT64/0x56xx SLEIGH backlog) stay visible. Runs always, honours dryRun.
+//
 // (2) UNDO FALSE NO-RETURN + REPAIR FLASH — now a BELT-AND-SUSPENDERS fallback. The module's
 //     tms320c28x.pspec disables the two culprit analyzers BY DEFAULT (enableNoReturnAnalysis=false,
 //     enableSharedReturnAnalysis=false), so on a normal import this pass finds nothing to repair (a
@@ -38,6 +47,9 @@ import ghidra.app.cmd.disassemble.DisassembleCommand;
 import ghidra.app.cmd.function.CreateFunctionCmd;
 import ghidra.app.cmd.function.DeleteFunctionCmd;
 import ghidra.program.model.address.Address;
+import ghidra.program.model.address.AddressSetView;
+import ghidra.program.model.listing.Bookmark;
+import ghidra.program.model.listing.BookmarkManager;
 import ghidra.program.model.listing.FlowOverride;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionManager;
@@ -123,6 +135,9 @@ public class FinalizeRamfuncs extends GhidraScript {
         println(String.format("pass 1 (stub bodies): %d stub(s) %s", stubs.size(),
             dryRun ? "would be rebuilt" : ("-> " + rebuilt + " rebuilt to full bodies")));
 
+        // --- pass 1b: clear stale flow-error bookmarks left by pre-materialization auto-analysis ----
+        clearStaleFlowBookmarks(dryRun);
+
         // --- pass 2: one-time repair of the pre-existing no-return truncation found above ---------
         // A no-op on a normal import (the pspec keeps the analyzers off, so `damage` is false). When
         // damage IS present, the analyzers were disabled above, so clearing the overrides + re-
@@ -154,6 +169,38 @@ public class FinalizeRamfuncs extends GhidraScript {
         }
         println(String.format("pass 2 (no-return): cleared %d false no-return mark(s), repaired %d truncated "
             + "flash call site(s)", falseNoReturn.size(), sites));
+    }
+
+    // Clear stale "uninitialized memory block" / "non-existing memory" flow-error bookmarks whose
+    // target has since been materialized (initialized / mapped). Genuine cases and missing-opcode
+    // ("Unable to resolve constructor") marks are left untouched. See header note (1b).
+    void clearStaleFlowBookmarks(boolean dryRun) {
+        AddressSetView ini = currentProgram.getMemory().getAllInitializedAddressSet();
+        BookmarkManager bm = currentProgram.getBookmarkManager();
+        Listing listing = currentProgram.getListing();
+        List<Bookmark> stale = new ArrayList<>();
+        int genuine = 0;
+        for (var it = bm.getBookmarksIterator(); it.hasNext(); ) {
+            Bookmark b = it.next();
+            if (!"Error".equalsIgnoreCase(b.getTypeString())) continue;
+            String c = b.getComment() == null ? "" : b.getComment();
+            boolean uninit = c.contains("uninitialized memory block");
+            boolean nonExist = c.contains("non-existing memory");
+            if (!uninit && !nonExist) continue;              // keep missing-opcode / other marks
+            Address a = b.getAddress();
+            Instruction ins = listing.getInstructionAt(a);
+            Address[] targets = (ins != null && ins.getFlows() != null && ins.getFlows().length > 0)
+                ? ins.getFlows() : new Address[]{a};
+            boolean allResolved = true;
+            for (Address t : targets) {
+                boolean resolved = uninit ? ini.contains(t) : (currentProgram.getMemory().getBlock(t) != null);
+                if (!resolved) { allResolved = false; break; }
+            }
+            if (allResolved) stale.add(b); else genuine++;
+        }
+        if (!dryRun) for (Bookmark b : stale) bm.removeBookmark(b);
+        println(String.format("pass 1b (stale bookmarks): %d stale flow-error mark(s) %s, %d genuine left",
+            stale.size(), dryRun ? "would be cleared" : "cleared", genuine));
     }
 
     // Does the function body emit a RETURN p-code op (LRETR/LRET/IRET)?

@@ -478,24 +478,34 @@ public class SetupF28377D extends GhidraScript {
         {0x05E608L, 0x05E60BL, "ROM_PREFETCH"},
     };
 
-    // Dual-core RAM regions. Format: {startWord, endWord (inclusive), name} — same convention as the
-    // peripheral tables above (the loop passes (end-start+1)*2 bytes). Verified against SPRS880P
-    // Table 7-1 (C28x Memory Map) + the C2000Ware 2837xD_RAM_lnk .cmd files. These are RAM but ABSENT
-    // from a static flash-only dump — mapping them as uninitialized blocks lets Ghidra resolve
-    // references into them (e.g. LCR into D0/D1 RAM, which holds `.ramfunc` RAM-resident code copied
-    // from flash at boot) instead of flagging "non-existing memory".
+    // Dual-core RAM + ROM regions. Format: {startWord, endWord (inclusive), name, perms} — same
+    // address convention as the peripheral tables above (the loop passes (end-start+1)*2 bytes). The
+    // perms string sets Read/Write/eXecute on the block: "RWX" for on-chip SARAM (M0/M1, LS0-5, D0/D1,
+    // GS0-15 — all executable per SPRS880P, and the code-bearing banks D0/D1/LS actually hold .ramfunc
+    // RAM-resident code copied from flash at boot), "RW" for message RAMs (data channels), "RX" for
+    // read-only executable ROM. Banks are split PER SPRS880P Table 7-1 (M0 vs M1, D0 vs D1, LS0..LS5)
+    // so a reference to e.g. 0xB800 resolves as D1_RAM rather than a merged blob. These regions are
+    // absent from a static flash-only dump — mapping them (uninitialized) lets Ghidra resolve refs
+    // (e.g. LCR into D0/D1 RAM) instead of flagging "non-existing memory".
     private static final Object[][] RAM_REGIONS = {
-        {0x000000L, 0x0007FFL, "M0M1_RAM"},            // M0 0x0-0x3FF + M1 0x400-0x7FF
-        {0x001480L, 0x00157FL, "CLA1_MSGRAM"},         // CLA<->CPU message RAM (Table 7-1)
-        {0x008000L, 0x00AFFFL, "LS0_5_RAM"},           // LS0-LS5, 2K each
-        {0x00B000L, 0x00BFFFL, "D0D1_RAM"},            // D0+D1 — .ramfunc RAM-resident code lives here
-        {0x00C000L, 0x01BFFFL, "GS0_15_RAM"},          // GS0-15, 4K each
-        {0x03F800L, 0x03FBFFL, "MSGRAM_CPU2_TO_CPU1"},
-        {0x03FC00L, 0x03FFFFL, "MSGRAM_CPU1_TO_CPU2"},
+        {0x000000L, 0x0003FFL, "M0_RAM",  "RWX"},       // M0 SARAM 1K
+        {0x000400L, 0x0007FFL, "M1_RAM",  "RWX"},       // M1 SARAM 1K
+        {0x001480L, 0x00157FL, "CLA1_MSGRAM", "RW"},    // CLA<->CPU message RAM (Table 7-1)
+        {0x008000L, 0x0087FFL, "LS0_RAM", "RWX"},       // LS0-LS5 SARAM, 2K each
+        {0x008800L, 0x008FFFL, "LS1_RAM", "RWX"},
+        {0x009000L, 0x0097FFL, "LS2_RAM", "RWX"},
+        {0x009800L, 0x009FFFL, "LS3_RAM", "RWX"},
+        {0x00A000L, 0x00A7FFL, "LS4_RAM", "RWX"},
+        {0x00A800L, 0x00AFFFL, "LS5_RAM", "RWX"},
+        {0x00B000L, 0x00B7FFL, "D0_RAM",  "RWX"},       // D0 SARAM 2K — .ramfunc RAM-resident code
+        {0x00B800L, 0x00BFFFL, "D1_RAM",  "RWX"},       // D1 SARAM 2K
+        {0x00C000L, 0x01BFFFL, "GS0_15_RAM", "RWX"},    // GS0-15, 4K each (one span; executable)
+        {0x03F800L, 0x03FBFFL, "MSGRAM_CPU2_TO_CPU1", "RW"},
+        {0x03FC00L, 0x03FFFFL, "MSGRAM_CPU1_TO_CPU2", "RW"},
         // On-chip ROM (Table 7-1). Mapped so LCR/branch targets into the boot ROM / secure ROM
         // (TI-RTOS, boot loader, reset vectors at 0x3FFFC0) resolve. Empty in a flash-only dump.
-        {0x3F0000L, 0x3F7FFFL, "SECURE_ROM"},
-        {0x3F8000L, 0x3FFFFFL, "BOOT_ROM"},
+        {0x3F0000L, 0x3F7FFFL, "SECURE_ROM", "RX"},
+        {0x3F8000L, 0x3FFFFFL, "BOOT_ROM",   "RX"},
     };
 
     @Override
@@ -538,17 +548,27 @@ public class SetupF28377D extends GhidraScript {
         }
         println("labeled " + n + " peripheral frames");
 
-        // 0b. Map dual-core RAM regions.
+        // 0b. Map dual-core RAM + ROM regions, applying per-region R/W/X permissions. Perms are set
+        // whether the block was just created or already existed, so re-running Setup fixes attributes
+        // on prior imports too (it does NOT split an already-merged block — that is the live-migration
+        // script's job; fresh imports get the split banks directly from the table above).
         int rn = 0;
         for (Object[] r : RAM_REGIONS) {
             long base = (Long) r[0], end = (Long) r[1];
             String name = (String) r[2];
+            String perms = (r.length > 3) ? (String) r[3] : "RW";
             try {
                 ensureRam(name, base, (end - base + 1) * 2);   // word span -> bytes
+                MemoryBlock b = currentProgram.getMemory().getBlock(wAddr(base));
+                if (b != null) {
+                    b.setRead(perms.indexOf('R') >= 0);
+                    b.setWrite(perms.indexOf('W') >= 0);
+                    b.setExecute(perms.indexOf('X') >= 0);
+                }
                 createLabel(wAddr(base), name, true, SourceType.USER_DEFINED); rn++;
             } catch (Exception e) { println("skip RAM " + name + ": " + e.getMessage()); }
         }
-        println("mapped " + rn + " RAM regions");
+        println("mapped " + rn + " RAM/ROM regions");
 
         // 0c. Fill flash + OTP the imported image doesn't cover. A DIR image based at 0x82000 omits
         // sector S0 (0x80000-0x81FFF) and any tail past its last word; the CRC table at 0x80010 and S0
@@ -589,12 +609,26 @@ public class SetupF28377D extends GhidraScript {
 
         // 1. D_CAN field-level labels (CAN kept as-is, now uses generic labeler).
         // CanaRegs 0x48000-0x481FF, CanbRegs 0x4A000-0x4A1FF (C2000Ware F2837xD_Headers_nonBIOS .cmd:
-        // CANA/CANB length=0x200). The DCAN accesses its mailboxes via the IF registers INSIDE this
-        // block — there is no separate message-RAM window (0x49000 is the older eCAN layout, not DCAN).
+        // CANA/CANB length=0x200). Firmware accesses the mailboxes via the IF registers in this frame,
+        // but the DCAN mailbox/message objects ALSO occupy a separate parity-protected message RAM
+        // mapped at 0x49000 (CANA) / 0x4B000 (CANB), 2K words each (SPRS880P Table 7-1) — mapped below
+        // so any direct reference into the message RAM resolves.
         ensureBlock("CANA_REGS", 0x048000L, (0x0481FFL - 0x048000L + 1) * 2);
         ensureBlock("CANB_REGS", 0x04A000L, (0x04A1FFL - 0x04A000L + 1) * 2);
         labelRegs("CANA", 0x048000L, CAN_REGS);
         labelRegs("CANB", 0x04A000L, CAN_REGS);
+
+        // 1b. Message RAMs that live at their own address windows, distinct from the register frames
+        // (SPRS880P Table 7-1): DCAN CANA/CANB message RAM (2K words each) and — CPU1.CLA1 only — the
+        // uPP TX/RX message RAM (0x6C00-0x6FFF). Mapped RW+volatile (peripheral- and CPU-updated).
+        ensureBlock("CANA_MSGRAM", 0x049000L, (0x0497FFL - 0x049000L + 1) * 2);
+        ensureBlock("CANB_MSGRAM", 0x04B000L, (0x04B7FFL - 0x04B000L + 1) * 2);
+        createLabel(wAddr(0x049000L), "CANA_MSGRAM", true, SourceType.USER_DEFINED);
+        createLabel(wAddr(0x04B000L), "CANB_MSGRAM", true, SourceType.USER_DEFINED);
+        if (isCPU1) {
+            ensureBlock("UPP_MSGRAM", 0x006C00L, (0x006FFFL - 0x006C00L + 1) * 2);
+            createLabel(wAddr(0x006C00L), "UPP_MSGRAM", true, SourceType.USER_DEFINED);
+        }
 
         // 2. ePWM field-level labels (12 instances, shared table).
         for (int i = 0; i < 12; i++) {

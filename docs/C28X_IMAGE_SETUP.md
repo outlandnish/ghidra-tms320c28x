@@ -9,7 +9,7 @@ at startup. Every step is a script in the **TMS320C28x** Script-Manager category
 | # | Step | What it does |
 |---|------|--------------|
 | 0 | **Import + set base** | Load the raw `.bin` as `TMS320C28x:LE:32:default` (F28377D) or `…:f2812`. Set the image base to the flash word address (e.g. `0x82000` for a DIR, `0x88000` for a PMR). See below on the byte-swap. |
-| 1 | `SetupF28377D.java` (or `SetupF2812.java`) | Map the device memory — peripheral MMIO frames **and the on-chip RAM regions** (M0/M1, LS0-5, D0/D1, GS0-15, MSGRAMs). Mapping RAM is what lets calls into it resolve later. |
+| 1 | `SetupF28377D.java` (or `SetupF2812.java`) | Map the device memory — peripheral MMIO frames **and the on-chip RAM regions**, split into their datasheet banks (`M0`/`M1`, `LS0`…`LS5`, `D0`/`D1`, `GS0-15`, CLA/CPU MSGRAMs) with correct perms (SARAM → **RWX** since ramfuncs run there; ROM → RX; message RAM → RW). Also maps the DCAN `CANA`/`CANB` message RAM (`0x49000`/`0x4b000`) and (CPU1) the uPP message RAM. Mapping RAM is what lets calls into it resolve later. |
 | 2 | `SeedFunctions.java` | Recover functions from the bytes (call targets + prologues) and add call-site→target refs. |
 | 3 | `MarkJumpTables.java`, `MarkDataTables.java` | Mark switch/pointer tables and float-constant pools as data so they stop decoding as garbage. |
 | 4 | **`MaterializeSections.java`** | Copy the flash **load images** into their RAM **run** addresses so the RAM-resident code/data becomes real. See below. |
@@ -69,6 +69,15 @@ script on the Swing/EDT thread cannot force):
    fall-through, so ~half get a 1-word body while their instructions sit loose. Pass 1 delete+recreates
    each default-named stub once decoded, binding the full body (dir_26_65_2: 65/65 full,
    `fixedPointDivide` = 0x47 words). **This holds.**
+
+1b. **Stale flow-error bookmarks — cleared.** The import-time auto-analysis runs the disassembler
+   **before** MaterializeSections fills the RAM, so it drops a *"Disassembly not permitted within
+   uninitialized memory block"* (or *"…flow into non-existing memory"*) error bookmark at every flash
+   `LCR`/branch into a RAM-resident function. Once the RAM is materialized those marks are **stale** —
+   the target now holds real bytes. Pass 1b removes each whose flow target is now initialized/mapped,
+   while **keeping** genuine gaps (target still uninitialized) and missing-opcode marks (*"Unable to
+   resolve constructor"* — e.g. the SAT64/`0x56xx` SLEIGH backlog) so real issues stay visible.
+   (dir_26_65_2: 308 stale cleared, 0 genuine; pmr: 95 cleared, 1 genuine kept.)
 
 2. **False no-return truncation — SOLVED at the source (pspec).** Two heuristic analyzers,
    **"Non-Returning Functions - Discovered"** and **"Shared Return Calls"**, used to falsely mark the
