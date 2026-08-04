@@ -384,15 +384,30 @@ public class MaterializeSections extends GhidraScript {
 
     // --- materialization helpers -------------------------------------------------------------
     // Greedy DISJOINT subset of a callee's triples, run-sorted. A real set of section copies is
-    // already disjoint (all kept); a scratch-buffer helper's many same-run copies collapse to one.
+    // disjoint in BOTH the RUN regions (you cannot copy two sections onto the same RAM) AND the LOAD
+    // regions (the linker places each section at a DISTINCT flash blob). Requiring both is what
+    // rejects the two false-positive routines:
+    //   - a scratch-buffer helper that copies many flash sources to the SAME run collapses on
+    //     run-overlap (was the only case the old run-only check caught);
+    //   - a spurious routine where the const-prop latched ONE base pointer that validates against
+    //     several size/run constants collapses on LOAD-overlap — its "sections" all read the same
+    //     clustered flash region (e.g. a PMR candidate with loads all at ~0x9bb5c but disjoint runs,
+    //     one of which even lands in the DMA register frame), which is physically impossible for real
+    //     distinct sections. Kept set stays run-ordered for the materialize loop. O(n^2), n is small.
     List<List<Long>> nonOverlapping(java.util.Collection<List<Long>> triples) {
         List<List<Long>> ts = new ArrayList<>(triples);
-        ts.sort(Comparator.comparingLong(t -> t.get(1)));
+        ts.sort(Comparator.comparingLong(t -> t.get(1)));               // run order
         List<List<Long>> keep = new ArrayList<>();
-        long lastEnd = Long.MIN_VALUE;
         for (List<Long> t : ts) {
-            long run = t.get(1), end = run + t.get(0);
-            if (run >= lastEnd) { keep.add(t); lastEnd = end; }
+            long size = t.get(0), run = t.get(1), load = t.get(2);
+            boolean disjoint = true;
+            for (List<Long> k : keep) {
+                long ks = k.get(0), kr = k.get(1), kl = k.get(2);
+                boolean runOverlap  = run  < kr + ks && kr < run  + size;
+                boolean loadOverlap = load < kl + ks && kl < load + size;
+                if (runOverlap || loadOverlap) { disjoint = false; break; }
+            }
+            if (disjoint) keep.add(t);
         }
         return keep;
     }
