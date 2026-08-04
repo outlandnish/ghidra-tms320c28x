@@ -97,8 +97,20 @@ script on the Swing/EDT thread cannot force):
    on a fresh dir_26_65_2 import: 69 ramfuncs materialized, **0 marked non-returning, 0 `CALL_RETURN`
    overrides anywhere in flash** (was 94 peak / 35 residual before), and this pass-2 finds nothing to
    repair. Bare-metal DSP firmware has few genuine non-returning functions; if a specific image needs
-   the detection, re-enable the two analyzers per-program in *Analysis Options*. Pass 2 below remains
-   as a belt-and-suspenders repair for exactly that case (it is a no-op in the default configuration).
+   the detection, re-enable the two analyzers per-program in *Analysis Options*. Pass 2 remains as a
+   belt-and-suspenders repair for exactly that case (a near no-op in the default configuration). It now
+   covers **flash functions as well as RAM ramfuncs** — a stale no-return flag can ride in via a
+   fresh-import+**merge** onto a flash function (the way precious hand-RE'd programs get updated), which
+   the old RAM-only scope missed (e.g. `FUN_0008d934` on 12603 pmr: 1 flag + 29 truncated callers).
+
+3. **Disassembly conflicts — repaired (looped with pass 2).** A multi-word instruction whose trailing
+   operand word is *also* a valid standalone opcode (common in the FPU float code — `MOV32 mem32`
+   operand words) gets truncated when an errant flow decodes that operand word first: *"Failed to
+   disassemble at A due to conflicting instruction at B"*. Pass 3 clears `[A,B]` and re-disassembles
+   `A` so it reclaims the operand word (restoring `B` on failure). Because pass 2's fall-through
+   re-disassembly can itself spawn new conflicts, **passes 2 and 3 run in a loop until neither changes
+   anything**, then stale flow bookmarks are re-cleared. (12603: `0x8a661`, `0x9e84f` reclaimed as
+   `MOV32`.)
 
 ## Step 6 — RetypeWideMemory
 

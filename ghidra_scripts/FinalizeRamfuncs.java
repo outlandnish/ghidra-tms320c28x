@@ -29,13 +29,22 @@
 //     non-returning (its call-site heuristic misfires while the flash fall-through is not yet laid
 //     down) and "Shared Return Calls" re-stamps CALL_RETURN on the same LCRs, deleting the flash
 //     fall-through into `??` data (~94 sites for two ramfuncs on dir_26_65_2). Repair = for every
-//     RAM-resident function that actually RETURNS (emits a RETURN p-code op), clear the false flag +
-//     the CALL_RETURN overrides on its callers and re-disassemble the truncated flash. A post-hoc
-//     script cannot beat the analyzers while they are LIVE (they re-fire and oscillate) — the pspec
-//     opt-out is the real fix; with the analyzers off, this one-time repair holds. It's an analyzer
-//     artifact; the LCR/LRETR SLEIGH is correct (emits call/return).
+//     function that actually RETURNS (emits a RETURN p-code op) — RAM ramfunc OR FLASH function, since
+//     a stale flag can ride in via a merge onto either — clear the false flag + the CALL_RETURN
+//     overrides on its callers and re-disassemble the truncated flash. A post-hoc script cannot beat
+//     the analyzers while they are LIVE (they re-fire and oscillate) — the pspec opt-out is the real
+//     fix; with the analyzers off, this repair holds. It's an analyzer artifact; the LCR/LRETR SLEIGH
+//     is correct (emits call/return).
 //
-// Both passes are RAM-scoped (function entry outside the flash image block), additive and idempotent.
+// (3) REPAIR DISASSEMBLY CONFLICTS. A multi-word instruction whose trailing operand word is ALSO a
+//     valid standalone opcode can be truncated when an errant flow decodes that operand word first —
+//     Ghidra leaves "Failed to disassemble at A due to conflicting instruction at B". Common in the
+//     FPU float code (MOV32 mem32 operand words). Clear [A,B] and re-disassemble A so it reclaims the
+//     operand word. Because (2)'s fall-through re-disassembly can CREATE such conflicts, (2) and (3)
+//     run together in a LOOP until neither changes anything. Happens on fresh imports too (ordering).
+//
+// Passes (2)+(3) cover BOTH RAM and flash (function entry no longer restricted to RAM), additive and
+// idempotent; a normal import with no damage is a near no-op.
 //
 // Properties (-Dname=value):
 //   c28x.finalize.dryRun  (bool, default false) report what would change; make no edits
@@ -83,33 +92,8 @@ public class FinalizeRamfuncs extends GhidraScript {
         }
         if (imageBlk == null) { println("no initialized block"); return; }
 
-        // Detect pre-existing no-return truncation (present only on a program imported BEFORE the pspec
-        // disabled the two analyzers, or where they were manually re-enabled — a normal import has
-        // none). Scan BEFORE any edit so we can decide whether to touch the analyzer options at all,
-        // and collect by ADDRESS: pass 1 may delete+recreate a RAM stub, invalidating cached handles.
-        List<Address> truncCallers = new ArrayList<>();   // flash LCR sites: CALL_RETURN -> a returning ramfunc
-        List<Address> falseNoReturn = new ArrayList<>();  // ramfunc entries that RETURN yet are marked non-returning
-        for (Function f : fm.getFunctions(true)) {
-            Address entry = f.getEntryPoint();
-            if (imageBlk.contains(entry)) continue;
-            if (!functionReturns(f)) continue;            // genuinely non-returning ramfunc — leave it
-            if (f.hasNoReturn()) falseNoReturn.add(entry);
-            for (var ri = rm.getReferencesTo(entry); ri.hasNext(); ) {
-                Reference r = ri.next();
-                if (!r.getReferenceType().isCall()) continue;
-                Instruction ci = listing.getInstructionAt(r.getFromAddress());
-                if (ci != null && ci.getFlowOverride() == FlowOverride.CALL_RETURN) truncCallers.add(r.getFromAddress());
-            }
-        }
-        boolean damage = !truncCallers.isEmpty() || !falseNoReturn.isEmpty();
-
-        // Touch the analyzer options ONLY when there is damage to repair: disable BOTH now (before
-        // pass 1's rebuild can re-trigger them) so the repair holds. A normal import has no damage, so
-        // this leaves the analysis options exactly as the user set them (the pspec keeps them off).
-        if (damage && !dryRun) {
-            setAnalysisOption(currentProgram, "Non-Returning Functions - Discovered", "false");
-            setAnalysisOption(currentProgram, "Shared Return Calls", "false");
-        }
+        // (No-return + conflict detection has moved into the looped pass 2 below — the two repairs
+        // interact, so they are detected and applied iteratively rather than scanned once up front.)
 
         // --- pass 1: rebuild stubbed RAM function bodies -----------------------------------------
         // Collect first (mutating the function set mid-iteration is unsafe); then delete ALL stubs,
@@ -138,37 +122,124 @@ public class FinalizeRamfuncs extends GhidraScript {
         // --- pass 1b: clear stale flow-error bookmarks left by pre-materialization auto-analysis ----
         clearStaleFlowBookmarks(dryRun);
 
-        // --- pass 2: one-time repair of the pre-existing no-return truncation found above ---------
-        // A no-op on a normal import (the pspec keeps the analyzers off, so `damage` is false). When
-        // damage IS present, the analyzers were disabled above, so clearing the overrides + re-
-        // disassembling the fall-through HOLDS — they will not re-fire and re-truncate.
-        if (!damage) {
-            println("pass 2 (no-return): nothing to repair (analyzers disabled by pspec — expected on a normal import)");
-            return;
-        }
+        // --- pass 2: repair no-return truncation + disassembly conflicts (looped; they interact) --
+        // Two analyzer artifacts, both cleaned up here. On a normal fresh import the pspec keeps the
+        // no-return analyzers off so there is no truncation, and this is a near no-op; conflicts can
+        // still arise from disassembly ordering. Repairing a no-return fall-through re-disassembles
+        // flash that may flow into an operand word already mis-decoded as a standalone instruction —
+        // creating a NEW conflict — so the two repairs run in a loop until neither changes anything.
         if (dryRun) {
-            println(String.format("pass 2 (no-return): would clear %d false no-return mark(s) + repair %d "
-                + "truncated flash call site(s)", falseNoReturn.size(), truncCallers.size()));
+            println(String.format("pass 2 (dryRun): %d falsely-non-returning function(s), %d disassembly "
+                + "conflict(s) would be repaired", detectFalseNoReturn().size(), countConflictBookmarks()));
             return;
         }
-        for (Address entry : falseNoReturn) {
-            Function f = fm.getFunctionAt(entry);
-            if (f != null) { try { f.setNoReturn(false); } catch (Exception e) {} }
-        }
-        int sites = 0;
-        for (Address from : truncCallers) {
-            Instruction ci = listing.getInstructionAt(from);
-            if (ci == null || ci.getFlowOverride() != FlowOverride.CALL_RETURN) continue;
-            ci.setFlowOverride(FlowOverride.NONE);
-            Address ft = ci.getMaxAddress().add(1);                // the truncated fall-through
-            if (listing.getInstructionAt(ft) == null) {
-                try { listing.clearCodeUnits(ft, ft, false); } catch (Exception e) {}
-                new DisassembleCommand(ft, null, true).applyTo(currentProgram, monitor);
+        boolean analyzersOff = false;
+        int totFlags = 0, totSites = 0, totConf = 0;
+        for (int iter = 0; iter < 8; iter++) {
+            List<Address> falseNR = detectFalseNoReturn();
+            if (falseNR.isEmpty() && countConflictBookmarks() == 0) break;
+            if (!analyzersOff) {   // disable the two culprit analyzers once, before repairing, so a
+                setAnalysisOption(currentProgram, "Non-Returning Functions - Discovered", "false");
+                setAnalysisOption(currentProgram, "Shared Return Calls", "false");   // later re-analyze can't re-truncate
+                analyzersOff = true;
             }
-            sites++;
+            int[] nr = repairNoReturn(falseNR);   // {flagsCleared, callSitesRepaired}
+            int conf = repairConflicts();
+            totFlags += nr[0]; totSites += nr[1]; totConf += conf;
+            if (nr[0] == 0 && nr[1] == 0 && conf == 0) break;   // converged
         }
-        println(String.format("pass 2 (no-return): cleared %d false no-return mark(s), repaired %d truncated "
-            + "flash call site(s)", falseNoReturn.size(), sites));
+        // repairs can materialize code that resolves earlier "uninitialized"/"non-existing" marks
+        if (totFlags + totSites + totConf > 0) clearStaleFlowBookmarks(false);
+        println(String.format("pass 2 (repair): %d false no-return flag(s), %d truncated call site(s), "
+            + "%d disassembly conflict(s) repaired", totFlags, totSites, totConf));
+    }
+
+    // Functions currently flagged non-returning that actually emit a RETURN — the false-no-return set.
+    // RAM ramfuncs OR flash functions (a stale flag can ride in via a merge onto either; the original
+    // analyzer misfire targets freshly-materialized RAM). Gated on hasNoReturn() so the expensive body
+    // scan runs only for the few flagged functions.
+    List<Address> detectFalseNoReturn() {
+        List<Address> out = new ArrayList<>();
+        for (Function f : currentProgram.getFunctionManager().getFunctions(true))
+            if (f.hasNoReturn() && functionReturns(f)) out.add(f.getEntryPoint());
+        return out;
+    }
+
+    // Clear each false no-return flag and un-truncate its callers: drop the CALL_RETURN flow override
+    // and re-disassemble the deleted fall-through. Returns {flagsCleared, callSitesRepaired}.
+    int[] repairNoReturn(List<Address> falseNR) {
+        Listing listing = currentProgram.getListing();
+        FunctionManager fm = currentProgram.getFunctionManager();
+        ReferenceManager rm = currentProgram.getReferenceManager();
+        int flags = 0, sites = 0;
+        for (Address entry : falseNR) {
+            Function f = fm.getFunctionAt(entry);
+            if (f == null) continue;
+            try { f.setNoReturn(false); flags++; } catch (Exception e) {}
+            for (var ri = rm.getReferencesTo(entry); ri.hasNext(); ) {
+                Reference r = ri.next();
+                if (!r.getReferenceType().isCall()) continue;
+                Instruction ci = listing.getInstructionAt(r.getFromAddress());
+                if (ci == null || ci.getFlowOverride() != FlowOverride.CALL_RETURN) continue;
+                ci.setFlowOverride(FlowOverride.NONE);
+                Address ft = ci.getMaxAddress().add(1);               // the truncated fall-through
+                if (listing.getInstructionAt(ft) == null) {
+                    try { listing.clearCodeUnits(ft, ft, false); } catch (Exception e) {}
+                    new DisassembleCommand(ft, null, true).applyTo(currentProgram, monitor);
+                }
+                sites++;
+            }
+        }
+        return new int[]{flags, sites};
+    }
+
+    int countConflictBookmarks() {
+        int n = 0;
+        for (var it = currentProgram.getBookmarkManager().getBookmarksIterator(); it.hasNext(); ) {
+            Bookmark b = it.next();
+            if ("Error".equalsIgnoreCase(b.getTypeString()) && b.getComment() != null
+                && b.getComment().contains("conflicting instruction")) n++;
+        }
+        return n;
+    }
+
+    // Repair "Failed to disassemble at A due to conflicting instruction at B" marks: a multi-word
+    // instruction at A whose trailing operand word (== B) was already mis-decoded as a standalone
+    // instruction (its bytes are ALSO a valid opcode). Clear [A, endof(B)] and re-disassemble A; if A
+    // now spans past B it absorbed the operand word — keep it and drop the mark. Otherwise restore B's
+    // decode and leave the mark (don't leave the region worse than we found it).
+    int repairConflicts() {
+        Listing listing = currentProgram.getListing();
+        BookmarkManager bm = currentProgram.getBookmarkManager();
+        var sp = currentProgram.getAddressFactory().getDefaultAddressSpace();
+        List<Bookmark> conflicts = new ArrayList<>();
+        for (var it = bm.getBookmarksIterator(); it.hasNext(); ) {
+            Bookmark b = it.next();
+            if ("Error".equalsIgnoreCase(b.getTypeString()) && b.getComment() != null
+                && b.getComment().contains("conflicting instruction")) conflicts.add(b);
+        }
+        int fixed = 0;
+        for (Bookmark b : conflicts) {
+            java.util.regex.Matcher m = java.util.regex.Pattern.compile("([0-9a-fA-F]{8})").matcher(b.getComment());
+            List<Long> hx = new ArrayList<>();
+            while (m.find()) hx.add(Long.parseLong(m.group(1), 16));
+            Address A = b.getAddress();
+            Address B = hx.size() >= 2 ? sp.getAddress(hx.get(1) * 2) : null;   // getOffset = word*2
+            Address clearEnd = B;
+            Instruction bi = (B != null) ? listing.getInstructionAt(B) : null;
+            if (bi != null) clearEnd = bi.getMaxAddress();
+            if (clearEnd == null) clearEnd = A.add(2);
+            listing.clearCodeUnits(A, clearEnd, false);
+            new DisassembleCommand(A, null, true).applyTo(currentProgram, monitor);
+            Instruction i1 = listing.getInstructionAt(A);
+            boolean good = i1 != null && !i1.getMnemonicString().equals("??")
+                && (B == null || i1.getMaxAddress().getOffset() >= B.getOffset());
+            if (good) { bm.removeBookmark(b); fixed++; }
+            else if (B != null && listing.getInstructionAt(B) == null) {
+                new DisassembleCommand(B, null, true).applyTo(currentProgram, monitor);  // restore, leave mark
+            }
+        }
+        return fixed;
     }
 
     // Clear stale "uninitialized memory block" / "non-existing memory" flow-error bookmarks whose
