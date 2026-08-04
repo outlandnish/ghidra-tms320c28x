@@ -392,3 +392,10 @@ attach variables [ p_rf ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 #   The ||SUBF32 sibling (sub-nibble 0101 vs ||ADDF32's 0100). Surfaced in the PCS411 image
 #   (words 0xe751/0xe753 at 0x8837f / 0x94df6 / 0x94e19). Same flow-preserving p_rd touch.
 :MPYF32 p_rd, "||SUBF32"  is op_hi8=0xE7 & loc_hi4=0b0101 ; p_rd { p_rd = p_rd; }
+#   MACF32 R7H,R6H,RdH,ReH,RfH — alias for MPYF32 RdH,ReH,RfH || ADDF32 R7H,R7H,R6H (multiply +
+#   accumulate into R7H). Distinct opcode from the R3H,R2H-accumulator MACF32 alias (the ||ADDF32 at
+#   0xE74x above). LSW: 1110 0011 1100 00ff (op_hi8=0xE3, loc_hi4=0b1100). RdH = p_rd (MSW[13:11]); the
+#   R7H/R6H accumulator pair is fixed by this opcode; ReH/RfH are bit-packed (not cleanly decoded, per
+#   the family convention). Was UNDEF -> halted the whole FPU block. Confirmed via TI dis2000: word pair
+#   e3cb/2e94 @ word 0xa20c1 = "MACF32 R7H, R6H, R5H, R4H, R5H".
+:MACF32 "R7H,R6H,"^p_rd  is op_hi8=0xE3 & loc_hi4=0b1100 ; p_rd { p_rd = p_rd; }
