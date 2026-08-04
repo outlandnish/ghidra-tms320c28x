@@ -116,6 +116,26 @@
 }
 
 # =============================================================================
+# 1-word 0x56 forms: SAT64 (saturate the 64-bit ACC:P) + NORM ACC,<indirect>.
+# asm2000/dis2000-confirmed single-word encodings. These are SPECIFIC op16 matches
+# (NOT a broad op_hi8=0x56 & loc16 fallback -- that would mis-claim SAT64 and every
+# other undecoded 0x56xx word). Decode-focused p-code so the linear sweep doesn't
+# dead-end (SAT64 = the plan target @ ramfunc 0x9429; NORM appears in the mixed
+# code/data math region ~0xb5xxx).
+# =============================================================================
+# SAT64 ACC:P  0x563e  (signed-saturate the 64-bit ACC:P value into ACC's 32-bit
+# range). Modelled as an ACC touch, matching the file's SAT ACC (0xFF57) convention.
+:SAT64 "ACC:P"  is op16=0x563e { ACC = ACC; }
+# NORM ACC,<ind>  1-word; the low byte is the loc16 addressing selector for the
+# indirect forms (*, *++, *--, *0++, *0--). NORM normalizes ACC + adjusts T + modifies
+# the AR; decode-only here (the AR post-modify/exponent update is not modelled).
+:NORM "ACC,*"     is op16=0x5624 { }
+:NORM "ACC,*++"   is op16=0x565a { }
+:NORM "ACC,*--"   is op16=0x5620 { }
+:NORM "ACC,*0++"  is op16=0x5677 { }
+:NORM "ACC,*0--"  is op16=0x5630 { }
+
+# =============================================================================
 # 32x32 multiplies (IMPYL/QMPYL family) -- real semantics into ACC or P.
 # word1=0x56<sub>, word2=loc32 (the 32-bit source); XT is the other operand.
 # =============================================================================
