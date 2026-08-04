@@ -83,8 +83,14 @@ separate it from the embedded data tables. Run them in this order after **import
 5. **`FinalizeRamfuncs.java`** — run **after** auto-analysis settles: rebuilds ramfunc bodies that
    were bound before analysis finished decoding them.
 
+> **Note:** the module disables Ghidra's **"Non-Returning Functions - Discovered"** and **"Shared
+> Return Calls"** analyzers by default (via `enableNoReturnAnalysis` / `enableSharedReturnAnalysis` in
+> the `.pspec`). On these images those heuristics falsely mark flash→RAM copied functions
+> (`.ramfunc`) non-returning and delete their real flash callers. Re-enable per-program in *Analysis
+> Options* if you want genuine non-returning detection on a specific image.
+
 See **[docs/C28X_IMAGE_SETUP.md](docs/C28X_IMAGE_SETUP.md)** for the full pipeline, the section-copy
-mechanism, and the known ramfunc no-return / flash-truncation caveat (an auto-analysis artifact).
+mechanism, and details of the no-return analyzer opt-out.
 
 ### Optional: label the device peripherals
 

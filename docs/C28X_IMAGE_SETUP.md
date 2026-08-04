@@ -70,19 +70,26 @@ script on the Swing/EDT thread cannot force):
    each default-named stub once decoded, binding the full body (dir_26_65_2: 65/65 full,
    `fixedPointDivide` = 0x47 words). **This holds.**
 
-2. **False no-return truncation** — two heuristic analyzers, **"Non-Returning Functions - Discovered"**
-   and **"Shared Return Calls"**, falsely mark the RAM ramfuncs non-returning and stamp a `CALL_RETURN`
-   override on every flash `LCR` to them, deleting the flash fall-through into `??` data (e.g.
-   `0xa82d2`, `0xa6511`). **This is an analyzer artifact, NOT a SLEIGH bug** — `LCR`/`LRETR` emit
-   correct `call` / `return [ret]` p-code. Pass 2 disables both analyzers and clears the flag +
-   overrides, but **the repair does not reliably hold from a script**: pass-1's rebuilds re-trigger
-   analysis that re-applies the overrides, and they oscillate. Re-running the script converges them
-   down but not cleanly to zero.
+2. **False no-return truncation — SOLVED at the source (pspec).** Two heuristic analyzers,
+   **"Non-Returning Functions - Discovered"** and **"Shared Return Calls"**, used to falsely mark the
+   RAM ramfuncs non-returning and stamp a `CALL_RETURN` override on every flash `LCR` to them, deleting
+   the flash fall-through into `??` data (e.g. `0xa82d2`, `0xa6511`). Mechanism (confirmed against
+   Ghidra's `FindNoReturnFunctionsAnalyzer` source): the discovered analyzer runs early
+   (`DISASSEMBLY.after().after()`), sees the not-yet-laid-down flash fall-through after ≥3 `LCR`s to
+   the same freshly-materialized ramfunc as *"data after call"*, marks it non-returning, and
+   `ClearFlowAndRepairCmd` deletes the fall-through — **self-reinforcing** (now it really *is* data
+   after the call). It is an analyzer artifact, **NOT a SLEIGH bug** — `LCR`/`LRETR` emit correct
+   `call` / `return [ret]` p-code.
 
-   **Durable fix (planned): a module `AbstractAnalyzer`.** Running inside the analysis pipeline (off
-   the Swing thread, at a late priority) it can undo the two heuristics' damage deterministically each
-   session instead of racing them post-hoc. Until it exists, treat the truncated flash callers as a
-   known cosmetic artifact, or disable those two analyzers in *Analysis Options* before importing.
+   **The module now disables both analyzers by default** via language properties in `tms320c28x.pspec`
+   (`enableNoReturnAnalysis=false`, `enableSharedReturnAnalysis=false`) — the exact opt-out both
+   analyzers read in `getDefaultEnablement()` (ARM's own pspec disables shared-return the same way).
+   This is deterministic and cannot oscillate, unlike a post-hoc script racing the analyzers. Verified
+   on a fresh dir_26_65_2 import: 69 ramfuncs materialized, **0 marked non-returning, 0 `CALL_RETURN`
+   overrides anywhere in flash** (was 94 peak / 35 residual before), and this pass-2 finds nothing to
+   repair. Bare-metal DSP firmware has few genuine non-returning functions; if a specific image needs
+   the detection, re-enable the two analyzers per-program in *Analysis Options*. Pass 2 below remains
+   as a belt-and-suspenders repair for exactly that case (it is a no-op in the default configuration).
 
 ## Step 6 — RetypeWideMemory
 

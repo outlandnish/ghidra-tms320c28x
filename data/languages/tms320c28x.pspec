@@ -11,6 +11,22 @@
   <properties>
     <property key="emulateInstructionStateModifierClass"
               value="ghidra.program.emulation.TMS320C28xEmulateInstructionStateModifier"/>
+
+    <!-- Disable Ghidra's heuristic no-return / shared-return analyzers for this processor.
+         On TI-RTS C28x images, time-critical code (.ramfunc) is copied from flash to RAM by
+         the app's own startup; the flash callers are LCRs into that RAM. When those RAM
+         functions are materialized (MaterializeSections.java), "Non-Returning Functions -
+         Discovered" sees the not-yet-laid-down flash fall-through after >=3 LCRs to the same
+         ramfunc as "data after call", marks the ramfunc non-returning, stamps CALL_RETURN on
+         every LCR, and deletes the real flash fall-through into ?? data (self-reinforcing,
+         and destructive to genuine code across hundreds of call sites. Both stock analyzers
+         read these language properties in getDefaultEnablement() (ARM's own pspec disables
+         shared-return the same way), so turning them off here is the deterministic, in-module
+         opt-out, strictly better than fighting them post-hoc. Bare-metal DSP firmware has
+         few genuine non-returning functions; re-enable per-program in Analysis Options if a
+         specific image needs it. -->
+    <property key="enableNoReturnAnalysis"     value="false"/>
+    <property key="enableSharedReturnAnalysis" value="false"/>
   </properties>
 
   <!-- AMODE context bit: 0 = C28x addressing modes (compiler default). Decode in

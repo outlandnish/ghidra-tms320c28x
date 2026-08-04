@@ -9,15 +9,22 @@
 //     (verified: 0x9669 1->0x47, 0xb779 1->0x23, 0x9856 1->0x16 — exactly the ground-truth sizes).
 //     Only DEFAULT-named (FUN_xxx) stubs are touched; a user-renamed function is never disturbed.
 //
-// (2) UNDO FALSE NO-RETURN + REPAIR FLASH. Two heuristic analyzers falsely truncate the flash callers
-//     of the ramfuncs: "Non-Returning Functions - Discovered" flags a ramfunc non-returning (its
-//     call-site heuristic misfires while the body is uninitialized RAM) and "Shared Return Calls"
-//     re-stamps CALL_RETURN on the same LCRs (reads the data-looking fall-through as a tail call),
-//     deleting the flash fall-through into `??` data (~94 sites for two ramfuncs on dir_26_65_2).
-//     This pass disables BOTH (they re-fire and undo the clear otherwise), then for every RAM-
-//     resident function that actually RETURNS (emits a RETURN p-code op) clears the false flag +
-//     the CALL_RETURN overrides on its callers and re-disassembles the truncated flash. It's an
-//     analyzer artifact; the LCR/LRETR SLEIGH is correct (they emit call/return p-code).
+// (2) UNDO FALSE NO-RETURN + REPAIR FLASH — now a BELT-AND-SUSPENDERS fallback. The module's
+//     tms320c28x.pspec disables the two culprit analyzers BY DEFAULT (enableNoReturnAnalysis=false,
+//     enableSharedReturnAnalysis=false), so on a normal import this pass finds nothing to repair (a
+//     no-op that leaves the analysis options untouched). Its one real job is a ONE-TIME MIGRATION of a
+//     program that already carries the truncation — one imported before the pspec change (its stored
+//     options still have the analyzers on), or where they were manually re-enabled. It scans for the
+//     damage first and only when it finds some does it disable BOTH analyzers again (so the repair
+//     holds) and then repair. Background: "Non-Returning Functions - Discovered" flags a ramfunc
+//     non-returning (its call-site heuristic misfires while the flash fall-through is not yet laid
+//     down) and "Shared Return Calls" re-stamps CALL_RETURN on the same LCRs, deleting the flash
+//     fall-through into `??` data (~94 sites for two ramfuncs on dir_26_65_2). Repair = for every
+//     RAM-resident function that actually RETURNS (emits a RETURN p-code op), clear the false flag +
+//     the CALL_RETURN overrides on its callers and re-disassemble the truncated flash. A post-hoc
+//     script cannot beat the analyzers while they are LIVE (they re-fire and oscillate) — the pspec
+//     opt-out is the real fix; with the analyzers off, this one-time repair holds. It's an analyzer
+//     artifact; the LCR/LRETR SLEIGH is correct (emits call/return).
 //
 // Both passes are RAM-scoped (function entry outside the flash image block), additive and idempotent.
 //
@@ -55,15 +62,6 @@ public class FinalizeRamfuncs extends GhidraScript {
         FunctionManager fm = currentProgram.getFunctionManager();
         ReferenceManager rm = currentProgram.getReferenceManager();
 
-        // Disable the two heuristics FIRST — before pass 1's rebuild can trigger analysis that would
-        // re-truncate — or the pass-2 clear does not stick. "Non-Returning Functions - Discovered"
-        // flags the ramfunc non-returning; "Shared Return Calls" independently re-stamps CALL_RETURN
-        // on the same LCRs. Disabling only one is not enough. Named/"Known" siblings are unaffected.
-        if (!dryRun) {
-            setAnalysisOption(currentProgram, "Non-Returning Functions - Discovered", "false");
-            setAnalysisOption(currentProgram, "Shared Return Calls", "false");
-        }
-
         // Flash image = largest initialized block; ramfuncs live in the OTHER (RAM) blocks.
         long bestLen = -1;
         for (MemoryBlock b : currentProgram.getMemory().getBlocks()) {
@@ -72,6 +70,34 @@ public class FinalizeRamfuncs extends GhidraScript {
             if (len > bestLen) { bestLen = len; imageBlk = b; }
         }
         if (imageBlk == null) { println("no initialized block"); return; }
+
+        // Detect pre-existing no-return truncation (present only on a program imported BEFORE the pspec
+        // disabled the two analyzers, or where they were manually re-enabled — a normal import has
+        // none). Scan BEFORE any edit so we can decide whether to touch the analyzer options at all,
+        // and collect by ADDRESS: pass 1 may delete+recreate a RAM stub, invalidating cached handles.
+        List<Address> truncCallers = new ArrayList<>();   // flash LCR sites: CALL_RETURN -> a returning ramfunc
+        List<Address> falseNoReturn = new ArrayList<>();  // ramfunc entries that RETURN yet are marked non-returning
+        for (Function f : fm.getFunctions(true)) {
+            Address entry = f.getEntryPoint();
+            if (imageBlk.contains(entry)) continue;
+            if (!functionReturns(f)) continue;            // genuinely non-returning ramfunc — leave it
+            if (f.hasNoReturn()) falseNoReturn.add(entry);
+            for (var ri = rm.getReferencesTo(entry); ri.hasNext(); ) {
+                Reference r = ri.next();
+                if (!r.getReferenceType().isCall()) continue;
+                Instruction ci = listing.getInstructionAt(r.getFromAddress());
+                if (ci != null && ci.getFlowOverride() == FlowOverride.CALL_RETURN) truncCallers.add(r.getFromAddress());
+            }
+        }
+        boolean damage = !truncCallers.isEmpty() || !falseNoReturn.isEmpty();
+
+        // Touch the analyzer options ONLY when there is damage to repair: disable BOTH now (before
+        // pass 1's rebuild can re-trigger them) so the repair holds. A normal import has no damage, so
+        // this leaves the analysis options exactly as the user set them (the pspec keeps them off).
+        if (damage && !dryRun) {
+            setAnalysisOption(currentProgram, "Non-Returning Functions - Discovered", "false");
+            setAnalysisOption(currentProgram, "Shared Return Calls", "false");
+        }
 
         // --- pass 1: rebuild stubbed RAM function bodies -----------------------------------------
         // Collect first (mutating the function set mid-iteration is unsafe); then delete ALL stubs,
@@ -97,35 +123,37 @@ public class FinalizeRamfuncs extends GhidraScript {
         println(String.format("pass 1 (stub bodies): %d stub(s) %s", stubs.size(),
             dryRun ? "would be rebuilt" : ("-> " + rebuilt + " rebuilt to full bodies")));
 
-        // --- pass 2: undo false no-return + repair truncated flash callers (analyzers off above) --
-        int fns = 0, sites = 0;
-        for (Function f : fm.getFunctions(true)) {
-            Address entry = f.getEntryPoint();
-            if (imageBlk.contains(entry)) continue;
-            if (!functionReturns(f)) continue;          // genuinely non-returning ramfunc — leave it
-            int siteN = 0;
-            for (var ri = rm.getReferencesTo(entry); ri.hasNext(); ) {
-                Reference r = ri.next();
-                if (!r.getReferenceType().isCall()) continue;
-                Instruction ci = listing.getInstructionAt(r.getFromAddress());
-                if (ci == null || ci.getFlowOverride() != FlowOverride.CALL_RETURN) continue;
-                if (!dryRun) {
-                    ci.setFlowOverride(FlowOverride.NONE);
-                    Address ft = ci.getMaxAddress().add(1);            // the truncated fall-through
-                    if (listing.getInstructionAt(ft) == null) {
-                        try { listing.clearCodeUnits(ft, ft, false); } catch (Exception e) {}
-                        new DisassembleCommand(ft, null, true).applyTo(currentProgram, monitor);
-                    }
-                }
-                siteN++;
-            }
-            if (siteN > 0 || f.hasNoReturn()) {
-                if (!dryRun && f.hasNoReturn()) { try { f.setNoReturn(false); } catch (Exception e) {} }
-                if (siteN > 0) { fns++; sites += siteN; }
-            }
+        // --- pass 2: one-time repair of the pre-existing no-return truncation found above ---------
+        // A no-op on a normal import (the pspec keeps the analyzers off, so `damage` is false). When
+        // damage IS present, the analyzers were disabled above, so clearing the overrides + re-
+        // disassembling the fall-through HOLDS — they will not re-fire and re-truncate.
+        if (!damage) {
+            println("pass 2 (no-return): nothing to repair (analyzers disabled by pspec — expected on a normal import)");
+            return;
         }
-        println(String.format("pass 2 (no-return): %d returning ramfunc(s) had truncated callers; %d flash "
-            + "call site(s) %s", fns, sites, dryRun ? "would be re-disassembled" : "re-disassembled"));
+        if (dryRun) {
+            println(String.format("pass 2 (no-return): would clear %d false no-return mark(s) + repair %d "
+                + "truncated flash call site(s)", falseNoReturn.size(), truncCallers.size()));
+            return;
+        }
+        for (Address entry : falseNoReturn) {
+            Function f = fm.getFunctionAt(entry);
+            if (f != null) { try { f.setNoReturn(false); } catch (Exception e) {} }
+        }
+        int sites = 0;
+        for (Address from : truncCallers) {
+            Instruction ci = listing.getInstructionAt(from);
+            if (ci == null || ci.getFlowOverride() != FlowOverride.CALL_RETURN) continue;
+            ci.setFlowOverride(FlowOverride.NONE);
+            Address ft = ci.getMaxAddress().add(1);                // the truncated fall-through
+            if (listing.getInstructionAt(ft) == null) {
+                try { listing.clearCodeUnits(ft, ft, false); } catch (Exception e) {}
+                new DisassembleCommand(ft, null, true).applyTo(currentProgram, monitor);
+            }
+            sites++;
+        }
+        println(String.format("pass 2 (no-return): cleared %d false no-return mark(s), repaired %d truncated "
+            + "flash call site(s)", falseNoReturn.size(), sites));
     }
 
     // Does the function body emit a RETURN p-code op (LRETR/LRET/IRET)?
