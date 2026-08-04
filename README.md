@@ -76,6 +76,15 @@ separate it from the embedded data tables. Run them in this order after **import
 3. **`MarkDataTables.java`** — **float-constant tables** (gain curves, LUTs, calibration)
    likewise decode as garbage; this marks high-confidence (`≥90%` sane-float) runs as
    `Float4` arrays and removes the 0-xref false-seeds they spawned.
+4. **`MaterializeSections.java`** — replays the C-runtime startup's flash→RAM section copies
+   (`.ramfunc` / `.cinit`) so the **RAM-resident code** the app runs from LS/D/GS RAM becomes real
+   and its flash callers resolve. Also marks the flash **load images** back to data (dropping the
+   phantom duplicate functions decoded from them).
+5. **`FinalizeRamfuncs.java`** — run **after** auto-analysis settles: rebuilds ramfunc bodies that
+   were bound before analysis finished decoding them.
+
+See **[docs/C28X_IMAGE_SETUP.md](docs/C28X_IMAGE_SETUP.md)** for the full pipeline, the section-copy
+mechanism, and the known ramfunc no-return / flash-truncation caveat (an auto-analysis artifact).
 
 ### Optional: label the device peripherals
 
