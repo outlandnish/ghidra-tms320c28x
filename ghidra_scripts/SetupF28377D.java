@@ -500,11 +500,18 @@ public class SetupF28377D extends GhidraScript {
 
     @Override
     public void run() throws Exception {
-        // Prompt for CPU core — determines which peripheral frames are visible.
-        String cpuChoice = askChoice("CPU Core",
-            "Which CPU core is this firmware for?",
-            java.util.Arrays.asList("CPU1", "CPU2"), "CPU1");
-        boolean isCPU1 = "CPU1".equals(cpuChoice);
+        // CPU core — determines which peripheral frames are visible. Take it from the script argument
+        // or the -Dc28x.setup.cpu property so MCP/headless runs don't BLOCK on a GUI dialog; prompt
+        // interactively only when neither gives a valid CPU1/CPU2. (MCP: run with args "CPU2".)
+        String cpuChoice = null;
+        String[] a = getScriptArgs();
+        if (a != null && a.length > 0) cpuChoice = a[0];
+        if (cpuChoice == null) cpuChoice = System.getProperty("c28x.setup.cpu");
+        if (cpuChoice == null || !(cpuChoice.equalsIgnoreCase("CPU1") || cpuChoice.equalsIgnoreCase("CPU2"))) {
+            cpuChoice = askChoice("CPU Core", "Which CPU core is this firmware for?",
+                java.util.Arrays.asList("CPU1", "CPU2"), "CPU1");
+        }
+        boolean isCPU1 = "CPU1".equalsIgnoreCase(cpuChoice);
         println("Setting up for " + (isCPU1 ? "CPU1" : "CPU2"));
 
         // 0. Map + label peripheral frames (common to both cores, plus CPU1-only).
@@ -542,6 +549,43 @@ public class SetupF28377D extends GhidraScript {
             } catch (Exception e) { println("skip RAM " + name + ": " + e.getMessage()); }
         }
         println("mapped " + rn + " RAM regions");
+
+        // 0c. Fill flash + OTP the imported image doesn't cover. A DIR image based at 0x82000 omits
+        // sector S0 (0x80000-0x81FFF) and any tail past its last word; the CRC table at 0x80010 and S0
+        // code/data are then referenced but flagged "non-existing memory". Map the uncovered parts of
+        // the CPU flash bank (0x80000-0xBFFFF) + the OTP regions as UNINITIALIZED read-only (+execute
+        // for flash) — deliberately NOT placeholder-filled: the real bytes are unknown until dumped from
+        // the device, and faking them 0x00/0xFF would poison the CRC table / real code with wrong
+        // constants (0xFF is only correct for a genuinely erased sector). Once dumped, convertToInitialized
+        // + setBytes the true content. A full-flash dump already covers 0x80000-0xBFFFF so nothing is
+        // added (idempotent — only genuine gaps are filled).
+        try {
+            Memory mem = currentProgram.getMemory();
+            int gaps = 0;
+            long spanStart = -1;
+            for (long w = 0x80000L; w <= 0xC0000L; w++) {
+                boolean covered = (w <= 0xBFFFFL) && mem.getBlock(wAddr(w)) != null;
+                if (!covered && spanStart < 0 && w <= 0xBFFFFL) {
+                    spanStart = w;
+                } else if ((covered || w > 0xBFFFFL) && spanStart >= 0) {
+                    MemoryBlock b = mem.createUninitializedBlock(
+                        "FLASH_" + Long.toHexString(spanStart), wAddr(spanStart), (w - spanStart) * 2, false);
+                    b.setRead(true); b.setWrite(false); b.setExecute(true);
+                    println("mapped flash gap FLASH_" + Long.toHexString(spanStart) + " (0x"
+                        + Long.toHexString(spanStart) + "-0x" + Long.toHexString(w - 1) + ", not in dump)");
+                    gaps++; spanStart = -1;
+                }
+            }
+            // OTP (never present in a flash dump): TI OTP 0x70000-0x703FF, user DCSM OTP 0x78000-0x783FF.
+            for (long[] otp : new long[][]{{0x70000L, 0x703FFL}, {0x78000L, 0x783FFL}}) {
+                if (mem.getBlock(wAddr(otp[0])) == null) {
+                    MemoryBlock b = mem.createUninitializedBlock(
+                        "OTP_" + Long.toHexString(otp[0]), wAddr(otp[0]), (otp[1] - otp[0] + 1) * 2, false);
+                    b.setRead(true); b.setWrite(false);
+                }
+            }
+            println("flash/OTP gap fill: " + gaps + " flash gap block(s) mapped uninitialized (bytes unknown until dumped)");
+        } catch (Exception e) { println("skip flash gap fill: " + e.getMessage()); }
 
         // 1. D_CAN field-level labels (CAN kept as-is, now uses generic labeler).
         // CanaRegs 0x48000-0x481FF, CanbRegs 0x4A000-0x4A1FF (C2000Ware F2837xD_Headers_nonBIOS .cmd:
