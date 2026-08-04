@@ -418,71 +418,84 @@ public class SetupF28377D extends GhidraScript {
         }
     }
 
-    // Peripheral frames shared by both CPU1 and CPU2.
-    // Addresses verified against F2837xD_Headers_nonBIOS_cpu{1,2}.cmd (C2000Ware 26.01.00.00).
+    // Peripheral frames shared by both CPU1 and CPU2. Format: {startWord, endWord (inclusive), name}.
+    // Each span is the FULL datasheet frame from SPRS880P Table 7-5; the map loop passes
+    // (end - start + 1) * 2 bytes to createUninitializedBlock (word-addressed space, 1 word = 2 bytes),
+    // so blocks cover the whole frame and references to any register in it resolve. Do NOT enter a byte
+    // length here — enter the datasheet START/END word addresses verbatim.
     private static final Object[][] PERIPHS_COMMON = {
-        {0x000B00L, 0x020L, "ADCARESULT"},  {0x000B20L, 0x020L, "ADCBRESULT"},
-        {0x000B40L, 0x020L, "ADCCRESULT"},  {0x000B60L, 0x020L, "ADCDRESULT"},
-        {0x000C00L, 0x008L, "CPU_TIMER0"},  {0x000C08L, 0x008L, "CPU_TIMER1"},
-        {0x000C10L, 0x008L, "CPU_TIMER2"},
-        {0x000CE0L, 0x020L, "PIE_CTRL"},    {0x000D00L, 0x200L, "PIE_VECT"},
-        {0x001000L, 0x200L, "DMA"},
-        {0x004000L, 0x100L, "EPWM1"},       {0x004100L, 0x100L, "EPWM2"},
-        {0x004200L, 0x100L, "EPWM3"},       {0x004300L, 0x100L, "EPWM4"},
-        {0x004400L, 0x100L, "EPWM5"},       {0x004500L, 0x100L, "EPWM6"},
-        {0x004600L, 0x100L, "EPWM7"},       {0x004700L, 0x100L, "EPWM8"},
-        {0x004800L, 0x100L, "EPWM9"},       {0x004900L, 0x100L, "EPWM10"},
-        {0x004A00L, 0x100L, "EPWM11"},      {0x004B00L, 0x100L, "EPWM12"},
-        {0x005000L, 0x020L, "ECAP1"},       {0x005020L, 0x020L, "ECAP2"},
-        {0x005040L, 0x020L, "ECAP3"},       {0x005060L, 0x020L, "ECAP4"},
-        {0x005080L, 0x020L, "ECAP5"},       {0x0050A0L, 0x020L, "ECAP6"},
-        {0x005100L, 0x044L, "EQEP1"},       {0x005140L, 0x044L, "EQEP2"},
-        {0x005180L, 0x044L, "EQEP3"},
-        {0x006100L, 0x010L, "SPIA"},        {0x006110L, 0x010L, "SPIB"},
-        {0x006120L, 0x010L, "SPIC"},
-        {0x007200L, 0x010L, "SCIA"},        {0x007210L, 0x010L, "SCIB"},
-        {0x007220L, 0x010L, "SCIC"},        {0x007230L, 0x010L, "SCID"},
-        {0x007300L, 0x044L, "I2CA"},        {0x007340L, 0x044L, "I2CB"},
-        {0x007400L, 0x080L, "ADCA"},        {0x007480L, 0x080L, "ADCB"},
-        {0x007500L, 0x080L, "ADCC"},        {0x007580L, 0x080L, "ADCD"},
-        {0x007F00L, 0x030L, "GPIO_DATA"},
-        {0x0005D200L, 0x032L, "CLK_CFG"},   {0x0005D300L, 0x082L, "CPU_SYS"},
-        {0x050000L, 0x048L, "IPC"},
+        {0x000B00L, 0x000B1FL, "ADCARESULT"}, {0x000B20L, 0x000B3FL, "ADCBRESULT"},
+        {0x000B40L, 0x000B5FL, "ADCCRESULT"}, {0x000B60L, 0x000B7FL, "ADCDRESULT"},
+        {0x000C00L, 0x000C07L, "CPU_TIMER0"}, {0x000C08L, 0x000C0FL, "CPU_TIMER1"},
+        {0x000C10L, 0x000C17L, "CPU_TIMER2"},
+        {0x000CE0L, 0x000CFFL, "PIE_CTRL"},   {0x000D00L, 0x000EFFL, "PIE_VECT"},  // vect table = 0x200 words
+        {0x001000L, 0x0011FFL, "DMA"},
+        {0x001400L, 0x00147FL, "CLA1"},       // Cla1Regs (CLA<->CPU MSGRAM is RAM, see RAM_REGIONS)
+        {0x003000L, 0x003FFFL, "CLB"},        // Clb1-4 Logic/Ctrl/DataExch tiles
+        {0x004000L, 0x0040FFL, "EPWM1"},      {0x004100L, 0x0041FFL, "EPWM2"},
+        {0x004200L, 0x0042FFL, "EPWM3"},      {0x004300L, 0x0043FFL, "EPWM4"},
+        {0x004400L, 0x0044FFL, "EPWM5"},      {0x004500L, 0x0045FFL, "EPWM6"},
+        {0x004600L, 0x0046FFL, "EPWM7"},      {0x004700L, 0x0047FFL, "EPWM8"},
+        {0x004800L, 0x0048FFL, "EPWM9"},      {0x004900L, 0x0049FFL, "EPWM10"},
+        {0x004A00L, 0x004AFFL, "EPWM11"},     {0x004B00L, 0x004BFFL, "EPWM12"},
+        {0x005000L, 0x00501FL, "ECAP1"},      {0x005020L, 0x00503FL, "ECAP2"},
+        {0x005040L, 0x00505FL, "ECAP3"},      {0x005060L, 0x00507FL, "ECAP4"},
+        {0x005080L, 0x00509FL, "ECAP5"},      {0x0050A0L, 0x0050BFL, "ECAP6"},
+        {0x005100L, 0x00513FL, "EQEP1"},      {0x005140L, 0x00517FL, "EQEP2"},
+        {0x005180L, 0x0051BFL, "EQEP3"},
+        {0x005C00L, 0x005C2FL, "DAC"},        // Daca/Dacb/Dacc
+        {0x005C80L, 0x005D7FL, "CMPSS"},      // Cmpss1-8
+        {0x005E00L, 0x005EFFL, "SDFM"},       // Sdfm1-2
+        {0x006000L, 0x00607FL, "MCBSP"},      // McBSPa/b
+        {0x006100L, 0x00610FL, "SPIA"},       {0x006110L, 0x00611FL, "SPIB"},
+        {0x006120L, 0x00612FL, "SPIC"},
+        {0x007000L, 0x00703FL, "WD"},         // Watchdog
+        {0x007060L, 0x00706FL, "NMI"},        {0x007070L, 0x00707FL, "XINT"},
+        {0x007200L, 0x00720FL, "SCIA"},       {0x007210L, 0x00721FL, "SCIB"},
+        {0x007220L, 0x00722FL, "SCIC"},       {0x007230L, 0x00723FL, "SCID"},
+        {0x007300L, 0x00733FL, "I2CA"},       {0x007340L, 0x00737FL, "I2CB"},
+        {0x007400L, 0x00747FL, "ADCA"},       {0x007480L, 0x0074FFL, "ADCB"},
+        {0x007500L, 0x00757FL, "ADCC"},       {0x007580L, 0x0075FFL, "ADCD"},
+        {0x007F00L, 0x007F2FL, "GPIO_DATA"},
+        {0x047000L, 0x0477FFL, "EMIF1"},
+        {0x050000L, 0x050025L, "IPC"},        // IpcRegs + FlashPumpSemaphoreRegs
+        {0x05D200L, 0x05D2FFL, "CLK_CFG"},    {0x05D300L, 0x05D3FFL, "CPU_SYS"},
+        {0x05F000L, 0x05F07FL, "DCSM"},       // DcsmZ1/Z2/Common
+        {0x05F400L, 0x05F541L, "MEM_CFG"},    // MemCfg/Emif1-2Cfg/AccessProtection/MemoryError/RomWaitState
+        {0x05F800L, 0x05FB3FL, "FLASH_CTRL"}, // Flash0CtrlRegs + Flash0EccRegs (used by .ramfunc pgm/erase)
     };
 
-    // Peripheral frames accessible from CPU1 only.
+    // Peripheral frames accessible from CPU1 only (SPRS880P Table 7-5 note 3).
     private static final Object[][] PERIPHS_CPU1_ONLY = {
-        {0x007900L, 0x020L, "INPUT_XBAR"},  {0x007920L, 0x020L, "XBAR"},
-        {0x007C00L, 0x180L, "GPIO_CTRL"},
-        {0x0005D000L, 0x130L, "DEV_CFG"},
+        {0x006200L, 0x0062FFL, "UPP"},
+        {0x007900L, 0x00791FL, "INPUT_XBAR"}, {0x007920L, 0x00793FL, "XBAR"},
+        {0x007940L, 0x00794FL, "TRIG_XBAR"},  {0x007A00L, 0x007A3FL, "EPWM_XBAR"},
+        {0x007A80L, 0x007ABFL, "OUTPUT_XBAR"},
+        {0x007C00L, 0x007D7FL, "GPIO_CTRL"},
+        {0x040000L, 0x040FFFL, "USBA"},
+        {0x047800L, 0x047FFFL, "EMIF2"},
+        {0x05D000L, 0x05D17FL, "DEV_CFG"},    {0x05D180L, 0x05D1FFL, "ANALOG_SUBSYS"},
+        {0x05E608L, 0x05E60BL, "ROM_PREFETCH"},
     };
 
-    // Dual-core RAM regions (word addresses). Verified against the device datasheet
-    // SPRS880P Table 7-1 (C28x Memory Map). These are RAM at runtime but ABSENT from a
-    // static flash-only dump — mapping them as uninitialized blocks lets Ghidra resolve
-    // references into them (e.g. LCR into D0/D1 RAM, which holds `.ramfunc` RAM-resident
-    // code copied from flash at boot) instead of flagging "non-existing memory".
-    //   M0 0x0000-0x03FF, M1 0x0400-0x07FF
-    //   LS0-LS5 0x8000-0xAFFF (2K each)
-    //   D0 0xB000-0xB7FF, D1 0xB800-0xBFFF  (← .ramfunc lives here; was MISSING before)
-    //   GS0-GS15 0xC000-0x1BFFF (4K each)
-    //   MSGRAM CPU2->CPU1 0x3F800, CPU1->CPU2 0x3FC00
-    // NOTE: createUninitializedBlock() takes the length in BYTES, and the C28x space is
-    // word-addressed (1 word = 2 bytes). To span N words, pass N*2 bytes. (The peripheral
-    // *_REGS tables already follow this — e.g. 0x200 bytes = 0x100 words.) The lengths below
-    // are word_count*2 so each block covers the full sector from Table 7-1.
+    // Dual-core RAM regions. Format: {startWord, endWord (inclusive), name} — same convention as the
+    // peripheral tables above (the loop passes (end-start+1)*2 bytes). Verified against SPRS880P
+    // Table 7-1 (C28x Memory Map) + the C2000Ware 2837xD_RAM_lnk .cmd files. These are RAM but ABSENT
+    // from a static flash-only dump — mapping them as uninitialized blocks lets Ghidra resolve
+    // references into them (e.g. LCR into D0/D1 RAM, which holds `.ramfunc` RAM-resident code copied
+    // from flash at boot) instead of flagging "non-existing memory".
     private static final Object[][] RAM_REGIONS = {
-        {0x000000L, 0x001000L, "M0M1_RAM"},          // M0+M1   = 0x0800 words → 0x1000 bytes (0x0000-0x07FF)
-        {0x008000L, 0x006000L, "LS0_5_RAM"},         // LS0-LS5 = 0x3000 words → 0x6000 bytes (0x8000-0xAFFF)
-        {0x00B000L, 0x002000L, "D0D1_RAM"},          // D0+D1   = 0x1000 words → 0x2000 bytes (0xB000-0xBFFF) — .ramfunc
-        {0x00C000L, 0x020000L, "GS0_15_RAM"},        // GS0-15  = 0x10000 words → 0x20000 bytes (0xC000-0x1BFFF)
-        {0x03F800L, 0x000800L, "MSGRAM_CPU2_TO_CPU1"}, // 0x400 words → 0x800 bytes
-        {0x03FC00L, 0x000800L, "MSGRAM_CPU1_TO_CPU2"}, // 0x400 words → 0x800 bytes
-        // On-chip ROM (datasheet Table 7-1). Mapped so LCR/branch targets into the boot
-        // ROM / secure ROM (e.g. TI-RTOS, boot loader, reset vectors at 0x3FFFC0) resolve
-        // instead of "non-existing memory". Empty (uninitialized) in a flash-only dump.
-        {0x3F0000L, 0x010000L, "SECURE_ROM"},          // 0x8000 words → 0x10000 bytes (0x3F0000-0x3F7FFF)
-        {0x3F8000L, 0x010000L, "BOOT_ROM"},            // 0x8000 words → 0x10000 bytes (0x3F8000-0x3FFFFF)
+        {0x000000L, 0x0007FFL, "M0M1_RAM"},            // M0 0x0-0x3FF + M1 0x400-0x7FF
+        {0x001480L, 0x00157FL, "CLA1_MSGRAM"},         // CLA<->CPU message RAM (Table 7-1)
+        {0x008000L, 0x00AFFFL, "LS0_5_RAM"},           // LS0-LS5, 2K each
+        {0x00B000L, 0x00BFFFL, "D0D1_RAM"},            // D0+D1 — .ramfunc RAM-resident code lives here
+        {0x00C000L, 0x01BFFFL, "GS0_15_RAM"},          // GS0-15, 4K each
+        {0x03F800L, 0x03FBFFL, "MSGRAM_CPU2_TO_CPU1"},
+        {0x03FC00L, 0x03FFFFL, "MSGRAM_CPU1_TO_CPU2"},
+        // On-chip ROM (Table 7-1). Mapped so LCR/branch targets into the boot ROM / secure ROM
+        // (TI-RTOS, boot loader, reset vectors at 0x3FFFC0) resolve. Empty in a flash-only dump.
+        {0x3F0000L, 0x3F7FFFL, "SECURE_ROM"},
+        {0x3F8000L, 0x3FFFFFL, "BOOT_ROM"},
     };
 
     @Override
@@ -497,20 +510,20 @@ public class SetupF28377D extends GhidraScript {
         // 0. Map + label peripheral frames (common to both cores, plus CPU1-only).
         int n = 0;
         for (Object[] p : PERIPHS_COMMON) {
-            long base = (Long) p[0], size = (Long) p[1];
+            long base = (Long) p[0], end = (Long) p[1];
             String name = (String) p[2];
             try {
-                ensureBlock(name + "_REGS", base, size);
+                ensureBlock(name + "_REGS", base, (end - base + 1) * 2);   // word span -> bytes
                 createLabel(wAddr(base), name, true, SourceType.USER_DEFINED);
                 n++;
             } catch (Exception e) { println("skip " + name + ": " + e.getMessage()); }
         }
         if (isCPU1) {
             for (Object[] p : PERIPHS_CPU1_ONLY) {
-                long base = (Long) p[0], size = (Long) p[1];
+                long base = (Long) p[0], end = (Long) p[1];
                 String name = (String) p[2];
                 try {
-                    ensureBlock(name + "_REGS", base, size);
+                    ensureBlock(name + "_REGS", base, (end - base + 1) * 2);   // word span -> bytes
                     createLabel(wAddr(base), name, true, SourceType.USER_DEFINED);
                     n++;
                 } catch (Exception e) { println("skip " + name + ": " + e.getMessage()); }
@@ -521,18 +534,21 @@ public class SetupF28377D extends GhidraScript {
         // 0b. Map dual-core RAM regions.
         int rn = 0;
         for (Object[] r : RAM_REGIONS) {
-            long base = (Long) r[0], size = (Long) r[1];
+            long base = (Long) r[0], end = (Long) r[1];
             String name = (String) r[2];
             try {
-                ensureRam(name, base, size);
+                ensureRam(name, base, (end - base + 1) * 2);   // word span -> bytes
                 createLabel(wAddr(base), name, true, SourceType.USER_DEFINED); rn++;
             } catch (Exception e) { println("skip RAM " + name + ": " + e.getMessage()); }
         }
         println("mapped " + rn + " RAM regions");
 
         // 1. D_CAN field-level labels (CAN kept as-is, now uses generic labeler).
-        ensureBlock("CANA_REGS", 0x048000L, 0x0200);
-        ensureBlock("CANB_REGS", 0x04A000L, 0x0200);
+        // CanaRegs 0x48000-0x481FF, CanbRegs 0x4A000-0x4A1FF (C2000Ware F2837xD_Headers_nonBIOS .cmd:
+        // CANA/CANB length=0x200). The DCAN accesses its mailboxes via the IF registers INSIDE this
+        // block — there is no separate message-RAM window (0x49000 is the older eCAN layout, not DCAN).
+        ensureBlock("CANA_REGS", 0x048000L, (0x0481FFL - 0x048000L + 1) * 2);
+        ensureBlock("CANB_REGS", 0x04A000L, (0x04A1FFL - 0x04A000L + 1) * 2);
         labelRegs("CANA", 0x048000L, CAN_REGS);
         labelRegs("CANB", 0x04A000L, CAN_REGS);
 
@@ -643,6 +659,28 @@ public class SetupF28377D extends GhidraScript {
                 createLabel(resetVec, "RESET", true, SourceType.USER_DEFINED);
             }
         } catch (Exception e) { /* region not in this image */ }
+
+        // 16. Permissions. The flash image is immutable executable code — mark it read-only + execute
+        // so the decompiler constant-folds reads of flash constant tables (a writable block is treated
+        // as potentially-changing, so const lookups don't resolve). ROM likewise. The flash block is
+        // the largest INITIALIZED block (the imported .bin); ROM blocks are matched by name.
+        try {
+            Memory mem = currentProgram.getMemory();
+            MemoryBlock flash = null; long best = -1;
+            for (MemoryBlock b : mem.getBlocks()) {
+                if (!b.isInitialized()) continue;
+                long len = b.getEnd().getOffset() - b.getStart().getOffset() + 1;
+                if (len > best) { best = len; flash = b; }
+            }
+            if (flash != null) {
+                flash.setRead(true); flash.setWrite(false); flash.setExecute(true);
+                println("flash block " + flash.getName() + " -> read-only + execute");
+            }
+            for (String rom : new String[]{"SECURE_ROM", "BOOT_ROM"}) {
+                MemoryBlock b = mem.getBlock(rom);
+                if (b != null) { b.setWrite(false); b.setExecute(true); }
+            }
+        } catch (Exception e) { println("skip permissions: " + e.getMessage()); }
 
         println("F28377D setup complete: all peripheral registers labeled.");
     }
