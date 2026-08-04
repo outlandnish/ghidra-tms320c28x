@@ -14,6 +14,17 @@
 <processor_spec>
   <programcounter register="PC"/>
 
+  <!-- Disable Ghidra's heuristic no-return / shared-return analyzers for this processor.
+       Same rationale as the F28377D pspec: on C28x images the heuristic "Non-Returning
+       Functions - Discovered" mis-marks flash-to-RAM copied functions (.ramfunc) as
+       non-returning and truncates their genuine flash callers into ?? data. Both stock
+       analyzers honor these language properties in getDefaultEnablement() (ARM's pspec does
+       the same). Re-enable per-program in Analysis Options if a specific image needs it. -->
+  <properties>
+    <property key="enableNoReturnAnalysis"     value="false"/>
+    <property key="enableSharedReturnAnalysis" value="false"/>
+  </properties>
+
   <!-- AMODE context bit: 0 = C28x addressing modes (compiler default). -->
   <context_data>
     <context_set space="ram">

@@ -14,15 +14,29 @@
 // scores far lower (opcodes/operands rarely land in normal-float exponent territory). So a
 // long run with a high sane-float fraction is a data table.
 //
+// POOL EXTENSION. A real compiler literal pool interleaves float constants with FIXED-POINT
+// (Q-format) constants and zero padding — e.g. a 32-bit Q value like 0xFA25E350 reads as a
+// huge/tiny "float" (exponent outside the sane range), so a float-only scan stops at every
+// fixed-point word and leaves those sub-runs decoding as bogus code (Ghidra `halt_baddata`).
+// So, once a sane-float run ANCHORS a pool, we grow the span in both directions across floats
+// and across SMOOTH runs of fixed-point/zero constants — a run is "smooth" if its consecutive
+// 32-bit values mostly repeat or change by <=40% (coefficient tables / LUTs), which UNdecoded
+// code does not (its words jump erratically). Growth stops at a real instruction, inf/NaN,
+// uninitialized memory, or a non-smooth (code-like) run. Float words are marked Float4, the
+// rest Undefined4. Requires SeedFunctions first so genuine code is disassembled (a stop); the
+// smoothness gate is what keeps undecoded/missing-opcode code regions from being eaten.
+//
 // CONSERVATIVE BY DESIGN. Marking real code as data is much worse than leaving a table
-// unmarked, so this requires a HIGH sane-float fraction over a real-length run AND that the
-// run is NOT inside a defined function. Defaults err toward false negatives. Use dryRun first.
+// unmarked, so a pool must be ANCHORED by a real sane-float run (minRun) and must not contain
+// a referenced function's entry. Defaults err toward false negatives. Use dryRun first.
 //
 // Properties (-Dname=value):
-//   c28x.dtbl.minRun     (int,   default 8)    min consecutive sane-float word-pairs
-//   c28x.dtbl.minFrac    (double,default 0.90) min sane-float fraction over the run
+//   c28x.dtbl.minRun     (int,   default 8)    min consecutive sane-float pairs to anchor a pool
+//   c28x.dtbl.minFrac    (double,default 0.90) legacy sane-float fraction (unused when extend=true)
+//   c28x.dtbl.extend     (bool,  default true) grow the pool across fixed-point/zero constants
+//   c28x.dtbl.maxPool    (int,   default 8192) safety cap on pool length in word-pairs
 //   c28x.dtbl.dryRun     (bool,  default false) report only; make no changes
-//   c28x.dtbl.clearCode  (bool,  default true)  clear bogus instructions over the table
+//   c28x.dtbl.clearCode  (bool,  default true)  clear bogus instructions over the pool
 //
 // Pairs well with MarkJumpTables.java (pointer/jump tables) and SeedFunctions.java (which
 // has an entropy gate but can't catch a low-entropy float table — this script is that gap).
@@ -61,6 +75,57 @@ public class MarkDataTables extends GhidraScript {
         return exp >= 0x40 && exp <= 0x9e;            // ~1e-19..1e19, excludes 0/denorm/inf/nan
     }
 
+    // Finite constant word-pair: any float bits except inf/NaN (so it INCLUDES zero padding,
+    // denormals, and the huge/tiny magnitudes a fixed-point / Q-format value shows as when
+    // read as a float). This is the "still inside a literal pool" test used to grow a float
+    // table across its fixed-point and zero neighbours (see run()).
+    boolean finiteConst(long w) {
+        long sb = (w - base) * 2;
+        int loW = wordAt(sb), hiW = wordAt(sb + 2);
+        if (loW < 0 || hiW < 0) return false;         // uninitialized -> stop the pool
+        long bits = (((long) hiW) << 16) | (loW & 0xffff);
+        int exp = (int) ((bits >> 23) & 0xff);
+        return exp != 0xff;                           // finite; inf/NaN ends the pool
+    }
+
+    // Any DEFINED instruction stops pool growth, so genuine code is never absorbed — including
+    // unreferenced functions (real C28x functions frequently have 0 xrefs: indirect/vectored
+    // calls). This relies on SeedFunctions having disassembled real code first, so it presents
+    // as instructions while a true literal pool remains undefined bytes. Bogus float-seed
+    // "functions" are handled separately: their bytes are sane floats, so they fall inside the
+    // anchor run and are cleared/removed there, not reached by extension.
+    boolean realCode(long w) {
+        return currentProgram.getListing().getInstructionContaining(addr(w)) != null;
+    }
+
+    // Signed 32-bit value of the word-pair (lo@w, hi@w+1).
+    long signedVal(long w) {
+        long sb = (w - base) * 2;
+        int loW = wordAt(sb), hiW = wordAt(sb + 2);
+        long bits = (((long) (hiW & 0xffff)) << 16) | (loW & 0xffff);
+        return (int) bits;
+    }
+
+    // Is the non-float run [a,b) (word indices, step 2) "table-like"? Fixed-point coefficient
+    // tables / LUTs vary SMOOTHLY (small relative deltas) or REPEAT; (undecoded) code decoded
+    // as 32-bit values jumps erratically. This is what lets extension absorb a fixed-point
+    // sub-table without also swallowing an undecoded-opcode code region. A lone value counts
+    // as smooth (it is pool padding between float runs).
+    boolean smoothRun(long a, long b) {
+        int n = 0, ok = 0; long prev = 0; boolean have = false;
+        for (long w = a; w + 1 < b; w += 2) {
+            long v = signedVal(w);
+            if (have) {
+                long d = Math.abs(v - prev);
+                long mag = Math.max(Math.abs(prev), Math.abs(v));
+                if (d == 0 || d <= 0x20000L || d * 5 <= 2 * mag) ok++;  // repeat, small abs, or <=40%
+                n++;
+            }
+            prev = v; have = true;
+        }
+        return n == 0 || ok * 4 >= n * 3;      // >=75% smooth transitions (or a single value)
+    }
+
     @Override
     public void run() throws Exception {
         int minRun = Integer.getInteger("c28x.dtbl.minRun", 8);
@@ -96,38 +161,55 @@ public class MarkDataTables extends GhidraScript {
         lo = base; hi = base + nwords - 1;
 
         DataType f4 = new Float4DataType();
+        DataType u4 = ghidra.program.model.data.Undefined4DataType.dataType;
+        int maxPool = Integer.getInteger("c28x.dtbl.maxPool", 8192);
+        boolean extend = Boolean.parseBoolean(System.getProperty("c28x.dtbl.extend", "true"));
         int tables = 0, entriesMarked = 0;
         var fm = currentProgram.getFunctionManager();
         var listing = currentProgram.getListing();
 
-        long w = base;
+        long w = base, floor = lo;                      // floor = end of last pool (no re-entry)
         while (w + 1 <= hi) {
-            // extend a run of sane-float pairs from w
+            // ANCHOR: a pure run of sane IEEE-754 floats proves a real constant pool is here.
             int run = 0; long p = w;
             while (p + 1 <= hi && saneFloat(p)) { run++; p += 2; }
             if (run >= minRun) {
-                // tolerance pass: allow a few non-sane within the span but require minFrac overall.
-                // (We already counted a pure run; extend over small gaps.)
-                long spanEnd = p;                       // exclusive (word index past run)
-                // try to absorb a trailing few words if the overall fraction stays high
-                int sane = run, total = run;
-                long q = p;
-                while (q + 1 <= hi) {
-                    boolean s = saneFloat(q);
-                    if ((sane + (s?1:0)) < minFrac * (total + 1)) break;
-                    total++; if (s) { sane++; spanEnd = q + 2; }
-                    q += 2;
+                long tableStart = w, spanEnd = p;       // [tableStart, spanEnd) sane floats so far
+                if (extend) {
+                    // A compiler literal pool interleaves floats with fixed-point / Q-format
+                    // constants and zero padding. Anchored on the confirmed float run, grow the
+                    // span across floats and SMOOTH fixed-point/zero runs. Stop at a real
+                    // instruction, inf/NaN, uninitialized memory, or a NON-smooth fixed-point
+                    // run (erratic = undecoded code, must not be marked as data).
+                    boolean grow = true;                // right
+                    while (grow && spanEnd + 1 <= hi && (spanEnd - tableStart) < (long) maxPool * 2) {
+                        if (realCode(spanEnd)) break;
+                        if (saneFloat(spanEnd)) { spanEnd += 2; continue; }
+                        if (!finiteConst(spanEnd)) break;
+                        long r = spanEnd;
+                        while (r + 1 <= hi && finiteConst(r) && !saneFloat(r) && !realCode(r)) r += 2;
+                        if (smoothRun(spanEnd, r)) spanEnd = r; else grow = false;
+                    }
+                    boolean grow2 = true;               // left (never below floor)
+                    while (grow2 && tableStart - 2 >= floor) {
+                        long c = tableStart - 2;
+                        if (realCode(c)) break;
+                        if (saneFloat(c)) { tableStart = c; continue; }
+                        if (!finiteConst(c)) break;
+                        long l = c;
+                        while (l - 2 >= floor && finiteConst(l - 2) && !saneFloat(l - 2) && !realCode(l - 2)) l -= 2;
+                        if (smoothRun(l, c + 2)) tableStart = l; else grow2 = false;
+                    }
                 }
-                long tableStart = w, tableWords = spanEnd - w;
-                // SAFETY: skip only if a REAL (referenced) function overlaps the run. A
-                // function with 0 xrefs inside the run is itself a data false-seed (the
-                // call-byte-scan mistook float bytes for an LCR), so it must NOT block
-                // marking — those are exactly the bogus seeds we want to replace with data.
+                int sane = 0, total = 0;
+                for (long e = tableStart; e + 1 < spanEnd; e += 2) { total++; if (saneFloat(e)) sane++; }
+                // SAFETY: if a REAL (referenced) function's ENTRY sits inside the span we grew
+                // into code — back off and leave it. 0-xref seeds don't count (bogus float seeds).
                 boolean realCodeInside = false;
                 for (var fn = fm.getFunctions(addr(tableStart), true); fn.hasNext(); ) {
                     Function f = fn.next();
                     long fe = f.getEntryPoint().getOffset() / 2;
-                    if (fe >= spanEnd) break;            // past the run
+                    if (fe >= spanEnd) break;            // past the span
                     if (fe < tableStart) continue;
                     int xr = 0;
                     for (var ri = currentProgram.getReferenceManager()
@@ -135,11 +217,26 @@ public class MarkDataTables extends GhidraScript {
                     if (xr > 0) { realCodeInside = true; break; }   // a genuinely-called fn = real code
                 }
                 if (!realCodeInside) {
+                    // Also back off if any referenced function's INSTRUCTIONS reach into the span
+                    // (a real function whose sane-float-looking body words landed in the anchor
+                    // run). Entry-only checking misses those; this protects the function body.
+                    for (var ii = listing.getInstructions(
+                            currentProgram.getAddressFactory().getAddressSet(addr(tableStart), addr(spanEnd - 1)), true);
+                            ii.hasNext(); ) {
+                        Function f = fm.getFunctionContaining(ii.next().getAddress());
+                        if (f == null) continue;                 // stray/bogus instruction — ok to clear
+                        int xr = 0;
+                        for (var ri = currentProgram.getReferenceManager()
+                                .getReferencesTo(f.getEntryPoint()); ri.hasNext() && xr < 1; ) { ri.next(); xr++; }
+                        if (xr > 0) { realCodeInside = true; break; }
+                    }
+                }
+                if (!realCodeInside) {
                     tables++;
-                    println(String.format("float-table @0x%x  %d words  (%.0f%% sane over %d pairs)",
-                        tableStart, tableWords, 100.0*sane/total, total));
+                    println(String.format("pool @0x%x  %d words  (%d float / %d fixed-or-zero)",
+                        tableStart, (spanEnd - tableStart), sane, total - sane));
                     if (!dryRun) {
-                        // remove any bogus (0-xref) false-seed functions sitting in the table
+                        // remove any bogus (0-xref) false-seed functions sitting in the pool
                         java.util.List<Address> kill = new java.util.ArrayList<>();
                         for (var fn = fm.getFunctions(addr(tableStart), true); fn.hasNext(); ) {
                             Function f = fn.next();
@@ -148,21 +245,23 @@ public class MarkDataTables extends GhidraScript {
                         }
                         for (Address k : kill) fm.removeFunction(k);
                         if (clearCode) listing.clearCodeUnits(addr(tableStart), addr(spanEnd - 1), false);
-                        // define as Float4 array (each = 2 words)
+                        // floats -> Float4; fixed-point / zero -> Undefined4 (each = 2 words)
                         for (long e = tableStart; e + 1 < spanEnd; e += 2) {
-                            try { listing.createData(addr(e), f4); entriesMarked++; } catch (Exception ex) {}
+                            try { listing.createData(addr(e), saneFloat(e) ? f4 : u4); entriesMarked++; }
+                            catch (Exception ex) {}
                         }
                         try { currentProgram.getSymbolTable().createLabel(addr(tableStart),
-                            String.format("ftbl_%06x", tableStart), ghidra.program.model.symbol.SourceType.USER_DEFINED); }
+                            String.format("ctbl_%06x", tableStart), ghidra.program.model.symbol.SourceType.USER_DEFINED); }
                         catch (Exception ex) {}
                     }
                 }
-                w = spanEnd;
+                floor = spanEnd;                        // don't let a later pool re-enter this one
+                w = Math.max(spanEnd, w + 1);
             } else {
                 w++;
             }
         }
-        println(String.format("%s: %d float tables, %d Float4 entries%s",
+        println(String.format("%s: %d constant pools, %d entries marked%s",
             dryRun ? "DRY RUN" : "done", tables, entriesMarked, dryRun ? " (no changes)" : ""));
     }
 }
