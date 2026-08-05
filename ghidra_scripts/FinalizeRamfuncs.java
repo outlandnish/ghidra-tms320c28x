@@ -229,6 +229,10 @@ public class FinalizeRamfuncs extends GhidraScript {
             Instruction bi = (B != null) ? listing.getInstructionAt(B) : null;
             if (bi != null) clearEnd = bi.getMaxAddress();
             if (clearEnd == null) clearEnd = A.add(2);
+            // The "conflicting instruction at B" can end BEFORE the mark A (adjacent/reversed), which
+            // would make clearCodeUnits(A, clearEnd) throw start>end. Such a conflict is malformed/
+            // spurious (A does not actually overlap B) -- skip it and leave the mark for the cleanup pass.
+            if (clearEnd.getOffset() < A.getOffset()) continue;
             listing.clearCodeUnits(A, clearEnd, false);
             new DisassembleCommand(A, null, true).applyTo(currentProgram, monitor);
             Instruction i1 = listing.getInstructionAt(A);
