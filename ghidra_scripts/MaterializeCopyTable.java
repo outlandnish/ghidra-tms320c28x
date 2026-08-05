@@ -143,7 +143,7 @@ public class MaterializeCopyTable extends GhidraScript {
         println(String.format("flash 0x%05x-0x%05x ; copy table @ 0x%05x", fStart, fEnd, tbase));
 
         boolean dry = Boolean.getBoolean("c28x.ct.dryRun");
-        ArrayList<long[]> codeRuns = new ArrayList<>();  // {run, words}
+        ArrayList<long[]> allRuns = new ArrayList<>();   // {run, words} for every materialized record
         ArrayList<long[]> loadImgs = new ArrayList<>();  // {load, words}
         int nrec = 0; long totalWords = 0; long lastRec = tbase;
         for (int i = 0; i < 256; i++) {
@@ -160,9 +160,8 @@ public class MaterializeCopyTable extends GhidraScript {
                 out = lzOut; loadWords = lzSrcEnd - load;
                 if (out.isEmpty()) { println(String.format("  rec %2d run=%05x handler=%d -> 0 words, SKIP", i, run, h)); continue; }
             }
-            boolean code = run >= 0x8000 && run < 0xc000;
-            println(String.format("  rec %2d: %s size=%08x load=%05x run=%05x len=0x%x%s",
-                    i, (size != 0 ? "RAW " : "LZSS"), size, load, run, out.size(), code ? " [CODE]" : ""));
+            println(String.format("  rec %2d: %s size=%08x load=%05x run=%05x len=0x%x",
+                    i, (size != 0 ? "RAW " : "LZSS"), size, load, run, out.size()));
             if (!dry) {
                 for (long w = run; w < run + out.size() + 1; w += 0x100) ensureInit(w);
                 // clear any prior code/data in the run region so the bytes can be (re)written
@@ -170,45 +169,73 @@ public class MaterializeCopyTable extends GhidraScript {
                 for (int k = 0; k < out.size(); k++) mem.setShort(wa(run + k), (short) (int) out.get(k));
             }
             nrec++; totalWords += out.size();
-            if (code) codeRuns.add(new long[]{run, out.size()});
+            allRuns.add(new long[]{run, out.size()});
             loadImgs.add(new long[]{load, loadWords});
             lastRec = a + 6;
         }
         println("materialized " + nrec + " record(s), 0x" + Long.toHexString(totalWords) + " words");
         if (dry) return;
 
-        // disassemble CODE run regions at their flash call/jump targets, then bind functions
+        // Classify + handle each materialized RUN region. A run holds CODE iff at least one address
+        // in it has an incoming CALL/JUMP reference (from a flash LCR or another ramfunc) -- NOT by
+        // address range. Sections copied into LS/D RAM can be float CONST POOLS or .cinit DATA with
+        // zero code refs (e.g. an IEEE-754 pool copied to a run at 0x9200); disassembling those
+        // yields halt_baddata / phantom functions. So: code runs are cleared and disassembled at
+        // every call/jump target then bound to functions (following flow covers the bodies); data
+        // runs are marked undefined2[] so they stay data.
         ReferenceManager rm = currentProgram.getReferenceManager();
         FunctionManager fm = currentProgram.getFunctionManager();
-        TreeSet<Long> targets = new TreeSet<>();
-        for (long[] cr : codeRuns) {
-            AddressSet set = new AddressSet(wa(cr[0]), wa(cr[0] + cr[1] - 1));
-            AddressIterator it = rm.getReferenceDestinationIterator(set, true);
+        int codeRuns = 0, dataRuns = 0, made = 0, totTargets = 0;
+        for (long[] cr : allRuns) {
+            long lo = cr[0], hi = cr[0] + cr[1] - 1;
+            TreeSet<Long> entries = new TreeSet<>();
+            AddressIterator it = rm.getReferenceDestinationIterator(new AddressSet(wa(lo), wa(hi)), true);
             while (it.hasNext()) {
                 Address d = it.next();
                 for (Reference r : rm.getReferencesTo(d)) {
                     RefType t = r.getReferenceType();
-                    if (t.isCall() || t.isJump()) { targets.add(d.getOffset()); break; }
+                    if (t.isCall() || t.isJump()) { entries.add(d.getOffset()); break; }
                 }
             }
+            if (entries.isEmpty()) { markData(lo, cr[1]); dataRuns++; continue; }  // DATA run (pool/.cinit)
+            try { currentProgram.getListing().clearCodeUnits(wa(lo), wa(hi), false); } catch (Exception ex) {}
+            for (long off : entries) new DisassembleCommand(space.getAddress(off), null, true).applyTo(currentProgram);
+            for (long off : entries) {
+                Address addr = space.getAddress(off);
+                if (fm.getFunctionAt(addr) == null && new CreateFunctionCmd(addr).applyTo(currentProgram)) made++;
+            }
+            codeRuns++; totTargets += entries.size();
         }
-        for (long off : targets) new DisassembleCommand(space.getAddress(off), null, true).applyTo(currentProgram);
-        int made = 0;
-        for (long off : targets) {
-            Address addr = space.getAddress(off);
-            if (fm.getFunctionAt(addr) == null && new CreateFunctionCmd(addr).applyTo(currentProgram)) made++;
-        }
-        println("code call/jump targets: " + targets.size() + ", functions created: " + made);
+        println(String.format("run regions: %d code (%d call/jump targets, %d functions bound), %d data",
+                codeRuns, totTargets, made, dataRuns));
 
-        // Mark the flash tail as data. The copy/handler code all lives BELOW the copy table; from the
-        // table to flash-end is copy table + const pools + (LZSS) load images + handler tables -> all
-        // data that otherwise decodes as tangled phantom functions ("unreachable block" / halt_baddata).
-        // Disable with -Dc28x.ct.noTailData=true if a specific image places real code above the table.
-        if (!Boolean.getBoolean("c28x.ct.noTailData")) markData(tbase, fEnd - tbase + 1);
-        // any load image BELOW the table (e.g. a raw .ramfunc chunk) is marked individually
-        for (long[] li : loadImgs) if (li[0] < tbase) markData(li[0], li[1]);
-        println("marked flash tail [0x" + Long.toHexString(tbase) + "-0x" + Long.toHexString(fEnd)
-                + "] + below-table load images as data");
+        // Mark the copy table + each record's flash LOAD image as data so they stop decoding as
+        // tangled phantom functions ("unreachable block" / halt_baddata).
+        //
+        // Two layouts occur. When the table sits near flash-END (e.g. dir2026 @0xb7752), EVERYTHING
+        // from the table to flash-end is data (table + const pools + LZSS load images + handler
+        // tables) and there is NO executable flash beyond it -> a single blanket [table..end] mark is
+        // both correct and maximally clean. But when the table sits EARLY (e.g. dir_pedal_dit0
+        // @0x81f94), the bulk of executable flash lives BETWEEN the table and the tail load images,
+        // so a blanket mark would ERASE all of it. Detect the layout by where the table sits: only
+        // blanket-mark when the table is in the last 1/8 of flash; otherwise mark precisely (the
+        // table extent + each record's own load-image extent), which never touches the executable
+        // flash between load images. -Dc28x.ct.noTailData=true disables all of this.
+        if (!Boolean.getBoolean("c28x.ct.noTailData")) {
+            long flashLen = fEnd - fStart + 1;
+            boolean tableNearEnd = (tbase - fStart) > (flashLen * 7L) / 8L;
+            if (tableNearEnd) {
+                markData(tbase, fEnd - tbase + 1);
+                for (long[] li : loadImgs) if (li[0] < tbase) markData(li[0], li[1]);
+                println("marked flash tail [0x" + Long.toHexString(tbase) + "-0x" + Long.toHexString(fEnd)
+                        + "] + below-table load images as data (table near flash-end)");
+            } else {
+                markData(tbase, 6L * nrec + 6);                       // copy table records + terminator
+                for (long[] li : loadImgs) markData(li[0], li[1]);    // each record's load image, precisely
+                println("marked copy table @0x" + Long.toHexString(tbase) + " + " + loadImgs.size()
+                        + " load image(s) as data (table early in flash; executable flash preserved)");
+            }
+        }
         println("NOTE: run FinalizeRamfuncs.java after analysis settles.");
     }
 }

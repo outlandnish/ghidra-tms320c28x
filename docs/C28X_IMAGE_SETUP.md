@@ -77,17 +77,51 @@ The table (auto-detected by a structural scan, or forced with `-Dc28x.ct.base=0x
   (if `len==0x11`, `len = nextWord + 0x11`) and `off=(W>>4)&0xfff` (if `off==0xfff`, END) — copy
   `len` words from `dest-1-off`.
 
-It writes each section into RAM (splitting across the LS/D seam), disassembles the CODE run regions
-at their flash call-targets, and marks the flash **tail** (`[table … flash-end]` = copy table + const
-pools + LZSS load images + handler tables) as `undefined2[]` so that data stops decoding as tangled
-phantom functions / `halt_baddata`. Disable the tail marking with `-Dc28x.ct.noTailData=true`.
-Run FinalizeRamfuncs afterwards. Detection is conservative (requires the terminator + a valid handler
-index), so on an image that has **no** copy table (e.g. the 2026 **PMR / CPU1**, which still uses the
-memcpy-const startup) it finds nothing and you fall back to MaterializeSections.
+It writes each section into RAM (splitting across the LS/D seam), then **classifies each run region
+by incoming CALL/JUMP references, not by address**: a run is code iff at least one address in it has
+a call/jump ref (from a flash `LCR` or another ramfunc). Code runs are disassembled at every
+call/jump target and bound to functions; **data runs — float const pools or `.cinit` copied into LS/D
+RAM with zero code refs — are marked `undefined2[]`**. This matters: a naive address-range rule
+(`0x8000 ≤ run < 0xc000 ⇒ code`) disassembles an IEEE-754 pool copied to e.g. `run 0x9200` and
+produces `halt_baddata`; classifying by refs avoids it and also picks up **M0-RAM** code runs
+(`run < 0x8000`, e.g. an ISR block at `0x122`) that the range rule skips.
 
-Validated on dir2026 (CPU2): copy table @ `0xb7752`, 6 records incl the LZSS `.ramfunc`
-`load 0xbc036 → run 0x9300` (0x1088 words) + `0xbcd54 → 0xa388`; 156 flash callers resolved, 434→2
-residual markers.
+**Flash-tail marking is position-aware.** The copy table + const pools + load images are marked as
+`undefined2[]` so they stop decoding as phantom functions. When the table sits near flash-**end** (all
+load images clustered after it — e.g. dir2026 @`0xb7752`), a single blanket `[table … flash-end]`
+mark is used. But when the table sits **early** (e.g. dir_pedal_dit0 @`0x81f94`, client_dir @`0x81f76`)
+the bulk of executable flash lies **between** the table and the tail load images, so a blanket mark
+would erase it — the script detects this (table not in the last ⅛ of flash) and instead marks only the
+table extent + each record's own load-image extent. `-Dc28x.ct.noTailData=true` disables all marking.
+Run FinalizeRamfuncs afterwards. Detection is conservative (terminator + valid handler index), so on a
+memcpy-const image (e.g. 2026/client **PMR / CPU1**) it finds nothing and you fall back to
+MaterializeSections.
+
+Two on-disk copy-table **variants** have been seen; both are auto-detected as "compressed copy
+table" images by MaterializeSections printing "NO copy routine found":
+
+- **LZSS `{size,load,run}`, 6-word records** (the form above): 2026 DIR, dir_pedal_dit0, client_dir.
+- **RAW `{load,run,size,flags}`, 8-word records**, all raw copies (no LZSS handler, so
+  `MaterializeCopyTable`'s handler-requiring detector skips it): dir_can_dit1. Materialize inline by
+  walking the 8-word records (terminated by `0xffffffff`) and copying `size` words `load→run`, then
+  applying the same ref-based run classification. (Generalizing the detector to this variant is a
+  TODO.)
+
+Validated on dir2026 (CPU2): copy table @ `0xb7752`, 156 flash callers resolved, 434→2 markers.
+Validated on dir_pedal_dit0 / client_dir (CPU2, early table @`0x81f94`/`0x81f76`): 4 code + 2 data
+runs classified, **0** residual markers.
+
+### Bootloader / boot-updater images (pmrbl, pmrbu) — LS-RAM section NOT auto-materialized
+
+The small PM-family `*bl`/`*bu` images (`client_pmrbl` @0x82000, `client_pmrbu` @0x88000) copy a
+**flash-write ramfunc to D0 RAM** (`run ~0xb101/0xb107`, found by `MaterializeSections
+-Dc28x.mat.minSites=1` since it's a single section) **and** a larger **helper code section into LS
+RAM** (`run ~0x8000-0x8fff`) that is invoked through **D0-RAM function pointers**
+(`DAT_b040/b042/b044/b054`) set up at C-startup. That LS copy is neither memcpy-const nor a copy
+table, so it is **not auto-materialized**; flash code calling those LS addresses leaves
+"flow into uninitialized memory" marks. The flash-resident code + the D0 flash-write ramfunc are fully
+analyzed; the LS section is a known gap (pinning its load/run/size needs tracing the `_c_int00`
+pointer-dispatch). `_c_int00` is annotated with this note in each program.
 
 ## Step 5 — FinalizeRamfuncs (run AFTER analysis settles)
 
