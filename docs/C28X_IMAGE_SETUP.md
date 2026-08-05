@@ -60,6 +60,35 @@ Validated on dir_26_65_2: copy routine `memcpyWords`, 5 disjoint sections incl `
 `0x82f2c→0x9300` (0x260c words, CODE, 59 targets) + `.cinit` `0xb9d00→0xdf80` (DATA); RAM == flash
 byte-for-byte including across the LS→D seam.
 
+## Step 4b — MaterializeCopyTable (newer compressed `__TI_auto_init` copy-table images)
+
+Newer C28x builds (e.g. the **2026 DIR / CPU2** image) copy `.ramfunc`/`.cinit` via a **compressed
+copy table** instead of the memcpy-with-constant-args startup MaterializeSections reads. The tell:
+MaterializeSections prints **"NO copy routine found"** yet the image still has hundreds of flash
+`LCR`s into uninitialized RAM (a real ramfunc). Use `MaterializeCopyTable.java`.
+
+The table (auto-detected by a structural scan, or forced with `-Dc28x.ct.base=0xWORD`) is a run of
+6-word records `{size:u32, load:u32, run:u32}` terminated by an all-`0xffffffff` record:
+
+- `size != 0` → **raw copy**: `size` words from flash `load` to RAM `run`.
+- `size == 0` → **handler dispatch**: `*load` is a handler index; the payload starts at `load+1`.
+  The script implements the TI **LZSS** handler: read a 16-bit control word (LSB first); for each bit,
+  `1` = copy one literal word from src, `0` = back-reference word `W` with `len=(W&0xf)+2`
+  (if `len==0x11`, `len = nextWord + 0x11`) and `off=(W>>4)&0xfff` (if `off==0xfff`, END) — copy
+  `len` words from `dest-1-off`.
+
+It writes each section into RAM (splitting across the LS/D seam), disassembles the CODE run regions
+at their flash call-targets, and marks the flash **tail** (`[table … flash-end]` = copy table + const
+pools + LZSS load images + handler tables) as `undefined2[]` so that data stops decoding as tangled
+phantom functions / `halt_baddata`. Disable the tail marking with `-Dc28x.ct.noTailData=true`.
+Run FinalizeRamfuncs afterwards. Detection is conservative (requires the terminator + a valid handler
+index), so on an image that has **no** copy table (e.g. the 2026 **PMR / CPU1**, which still uses the
+memcpy-const startup) it finds nothing and you fall back to MaterializeSections.
+
+Validated on dir2026 (CPU2): copy table @ `0xb7752`, 6 records incl the LZSS `.ramfunc`
+`load 0xbc036 → run 0x9300` (0x1088 words) + `0xbcd54 → 0xa388`; 156 flash callers resolved, 434→2
+residual markers.
+
 ## Step 5 — FinalizeRamfuncs (run AFTER analysis settles)
 
 Two artifacts of Ghidra's auto-analysis, both needing background analysis to have run first (which a
