@@ -9,20 +9,21 @@ at startup. Every step is a script in the **TMS320C28x** Script-Manager category
 | # | Step | What it does |
 |---|------|--------------|
 | 0 | **Import + set base** | Load the raw `.bin` as `TMS320C28x:LE:32:default` (F28377D) or `…:f2812`. Set the image base to the flash word address (e.g. `0x82000` for a DIR, `0x88000` for a PMR). See below on the byte-swap. |
-| 1 | `SetupF28377D.java` (or `SetupF2812.java`) | Map the device memory — peripheral MMIO frames **and the on-chip RAM regions**, split into their datasheet banks (`M0`/`M1`, `LS0`…`LS5`, `D0`/`D1`, `GS0-15`, CLA/CPU MSGRAMs) with correct perms (SARAM → **RWX** since ramfuncs run there; ROM → RX; message RAM → RW). Also maps the DCAN `CANA`/`CANB` message RAM (`0x49000`/`0x4b000`) and (CPU1) the uPP message RAM. Mapping RAM is what lets calls into it resolve later. |
+| 1 | `SetupF28377D.java` (or `SetupF2812.java`) | Map the device memory — peripheral MMIO frames **and the on-chip RAM regions**, split into their datasheet banks (`M0`/`M1`, `LS0`…`LS5`, `D0`/`D1`, `GS0-15`, CLA/CPU MSGRAMs) with correct perms (SARAM → **RWX** since ramfuncs run there; ROM → RX; message RAM → RW). Also maps the DCAN `CANA`/`CANB` message RAM (`0x49000`/`0x4b000`) and (CPU1) the uPP message RAM. Mapping RAM is what lets calls into it resolve later. **Pass the CPU as the script arg: `CPU1` for PMR / bootloader (`*bl`) / boot-updater (`*bu`), `CPU2` for DIR** — it selects the CPU1-only peripheral set (UPP/XBAR/USBA/DEV_CFG). |
 | 2 | `SeedFunctions.java` | Recover functions from the bytes (call targets + prologues) and add call-site→target refs. |
 | 3 | `MarkJumpTables.java`, `MarkDataTables.java` | Mark switch/pointer tables and float-constant pools as data so they stop decoding as garbage. |
-| 4 | **`MaterializeSections.java`** | Copy the flash **load images** into their RAM **run** addresses so the RAM-resident code/data becomes real. See below. |
+| 4 | **`MaterializeSections.java`** (or **`MaterializeCopyTable.java`**) | Copy the flash **load images** into their RAM **run** addresses so the RAM-resident code/data becomes real. Which one depends on the startup copy mechanism — see Step 4 / 4b and the decision note. |
 | 5 | **`FinalizeRamfuncs.java`** | Post-analysis cleanup of the materialized ramfuncs (rebuild bodies; repair flash callers). Run it **after** analysis has settled. See below. |
 | 6 | `RetypeWideMemory.java` | Retype 32/64-bit memory operands to kill `CONCAT22`/`CONCAT44` in the decompiler. |
+| 7 | **Residual-mark cleanup + verify** (inline recipe) | Sweep the leftover `Bad Instruction` marks and confirm the result against a known-good image. See Step 7. |
 
 ### The byte-swap
 
-Tesla PM/DI flash images are **byte-swapped**. Produce a swapped `.bin` first (`c28x_loadimg.py
---mode swap` in the tm3diag repo), import THAT, and set the base. In this `wordsize=2` space
-Ghidra's `Address.getOffset()` returns a **byte** offset (= word × 2) while TI's `dis2000` prints
-**word** addresses — divide by 2 when comparing. Scripts that walk the listing already account for
-this.
+Some C28x flash images ship byte-swapped (byte pairs reversed relative to the on-chip word
+layout). If yours is one of them, produce a swapped `.bin` first, import THAT, and set the
+base. In this `wordsize=2` space Ghidra's `Address.getOffset()` returns a **byte** offset
+(= word × 2) while TI's `dis2000` prints **word** addresses — divide by 2 when comparing.
+Scripts that walk the listing already account for this.
 
 ## Step 4 — MaterializeSections
 
@@ -111,6 +112,29 @@ Validated on dir2026 (CPU2): copy table @ `0xb7752`, 156 flash callers resolved,
 Validated on dir_pedal_dit0 / client_dir (CPU2, early table @`0x81f94`/`0x81f76`): 4 code + 2 data
 runs classified, **0** residual markers.
 
+### When neither materializer auto-detects the copy
+
+If MaterializeSections prints "NO copy routine found" **and** MaterializeCopyTable prints "copy-table
+not found", but the image still has flash `LCR`s into uninitialized RAM, work down this list:
+
+1. **Single-section image (bootloaders / boot-updaters).** The copier is often a general `memcpyWords`
+   called once with constant `(size, run, load)` — MaterializeSections needs ≥2 disjoint sections by
+   default. Re-run with **`-Dc28x.mat.minSites=1`** (and `-Dc28x.mat.copyfn=0xWORD` if the routine is
+   ambiguous). `client_pmrbl`/`pmrbu` copy a single flash-write `.ramfunc` to D0 RAM (`run ~0xb101`)
+   this way; the memcpy itself lives in the device-init function, not a section-copy dispatcher.
+2. **RAW `{load,run,size,flags}` 8-word table** (no LZSS handler → the auto-detector skips it): locate
+   it by scanning flash for a known RAM *run* address as a 32-bit value; the surrounding words are the
+   `{load,run,size}` triple. Materialize inline (copy `size` words `load→run`) then apply the same
+   ref-based run classification. (`dir_can_dit1`.)
+3. **It may be DEAD CODE, not a live section.** Before assuming a materialization gap, prove the run
+   region is actually used: (a) does anything **write/copy** into it (any write/data ref into the run
+   range)? (b) is the flash code that references it **reachable from `_c_int00`** (call-graph BFS —
+   and check indirect reach: stored function-pointers to it, jump-table entries)? If it is
+   **unreferenced AND never written**, it is orphaned/dead flash, not a section to materialize. The
+   `client_pmrbl` LS-RAM references (`0x8000-0x8fff`, 5 functions at `0x826bd-0x82ad7`) turned out to be
+   exactly this — zero refs, unreachable, no copy targets `0x8000` (all 4 real copies go to D0). Don't
+   chase it.
+
 ### Bootloader / boot-updater images (pmrbl, pmrbu) — LS-RAM section NOT auto-materialized
 
 The small PM-family `*bl`/`*bu` images (`client_pmrbl` @0x82000, `client_pmrbu` @0x88000) copy a
@@ -178,3 +202,47 @@ script on the Swing/EDT thread cannot force):
 ## Step 6 — RetypeWideMemory
 
 Unchanged; run last to clean up the decompiler's 32/64-bit reads. See its script header.
+
+## Step 7 — Residual-mark cleanup + verification (inline)
+
+After the pipeline a handful of `Error`/`Bad Instruction` bookmarks usually remain. There is no
+dedicated script yet — this is a short inline sweep. **Classify by the code unit under the mark:**
+
+- **Mark on a NON-instruction (data/undefined) unit** → a phantom decode on a const pool, a load
+  image, or padding. **Delete the bookmark.** (This is the bulk; a blanket tail-mark deletes them in
+  one shot on tail-table images, but early-table / memcpy-const images leave them scattered.)
+- **`Failed to resolve varnode <f_movf_reg>`** (loose, not in a function) → a committed-state
+  misalignment artifact (a `MOV32` operand word decoded standalone; `f_movf_reg` values 0/2/3 are
+  genuinely unused on the 8-reg FPU). A clean re-decode is fine — clear the loose unit and delete the
+  mark.
+- **Loose instruction that flows into uninitialized / non-existing memory** at a code↔data boundary
+  (e.g. a function's last "instruction" runs into a float pool) → clear that one unit + delete the
+  mark.
+- **`halt_baddata` inside a materialized RUN region** → a float const-pool copied into LS/D RAM that
+  got disassembled as code (e.g. an IEEE-754 pool at `run 0x9200`). Mark the run as data. (The current
+  MaterializeCopyTable avoids this via ref-based run classification; MaterializeSections and any manual
+  materialization can still hit it.)
+- **Tiny phantom function in a ramfunc run region that branches to a bogus address** (`0x2xxxxx`,
+  `0x3xxxxx` — outside the map) → embedded ramfunc data disassembled as code from a spurious ref.
+  Delete the phantom function + clear its body.
+
+**Calibrate — don't chase marks below a known-good baseline.** Run a coverage probe over the flash
+range and compare against a *blessed* clean image of the same family: instruction %, defined-data %,
+undefined %, and `Error`-mark count. A clean C28x DIR sits around **~84% insn / ~6% undef / ≤2 marks**
+(e.g. `dir2026_clean` = 3140 fns, 83.8% insn, 5.9% undef, 2 marks). If a fresh image already matches
+that envelope, the residual marks are cosmetic — stop. If undef% is much higher, a section is still
+un-materialized (go back to Step 4/4b — or the dead-code check).
+
+**Verify the point of it all:** count flash `LCR`/`SB` call sites into each ramfunc *run* region that
+now bind to a real function (`getReferenceDestinationIterator` over the run range → callers ≥ `0x80800`).
+Non-zero and matching the copy record's expected fan-in = the ramfunc is live and its callers resolve.
+
+## Per-CPU / bootloader notes
+
+- **CPU banks are separate, not aliased.** F28377D has a distinct 512KB flash bank *per CPU*, both at
+  logical `0x80000-0xBFFFF` (SPRS880P Table 7-2). So `0x82000` on a CPU1 image (PMR / bootloader) and
+  `0x82000` on a CPU2 image (DIR) are different physical sectors — set the base + run the CPU-correct
+  `SetupF28377D` arg and analyze them as separate programs.
+- **Sector map** (both banks): S0 `0x80000`, S1 `0x82000`, S2 `0x84000`, S3 `0x86000` (8KW each),
+  S4 `0x88000` (32KW), S5 `0x90000`, … A resident PM bootloader occupies **S1–S3** (`0x82000-0x87FFF`);
+  the CPU1 app starts at S4 (`0x88000`).

@@ -1,3 +1,7 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Nishanth Samala
+// Portions of this file originated in the Ghidra extension template (below);
+// the Ghidra copyright notice is retained per Apache-2.0 section 4(b).
 /* ###
  * IP: GHIDRA
  *
@@ -64,3 +68,15 @@ dependencies {
 
 // Exclude additional files from the built extension
 // Ex: buildExtension.exclude '.idea/**'
+
+// Apache-2.0 section 4(a) requires that recipients of a distribution receive a
+// copy of the License. Ghidra's default buildExtension copy spec doesn't
+// automatically pick up top-level LICENSE / NOTICE, so add them explicitly at
+// the module root of the produced zip.
+buildExtension {
+	from(projectDir) {
+		include 'LICENSE'
+		include 'NOTICE'
+		include 'THIRD-PARTY.md'
+	}
+}

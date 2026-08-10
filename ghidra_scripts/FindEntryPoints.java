@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Nishanth Samala
 // Find probable function entry points in a HEADERLESS C28x image.
 //
 // Headerless firmware (raw flash/RAM-app images) has no flow anchor: a linear sweep

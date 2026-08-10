@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Nishanth Samala
 // Retype 32-bit and 64-bit memory operands to eliminate CONCAT22/CONCAT44 in decompilation.
 //
 // THE PROBLEM. Ghidra renders a 4-byte read from memory as CONCAT22(hi, lo) when the base

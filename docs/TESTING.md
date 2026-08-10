@@ -6,7 +6,12 @@ the expected text.**
 
 ## Run it
 
+```sh
+# Linux / macOS
+GHIDRA_INSTALL_DIR=/path/to/ghidra tests/run_disasm_test.sh
+```
 ```powershell
+# Windows
 pwsh -File tests\run_disasm_test.ps1
 ```
 It (1) recompiles the `.sla`, (2) reinstalls into Ghidra, (3) headless-disassembles
@@ -43,13 +48,21 @@ run TI's `dis2000` on it for ground truth, extract its COFF2 `.text` to a raw bi
 (`.text` size is in **words**), import that bin (`TMS320C28x:LE:32:default`, base 0),
 disassemble linearly, and diff `<wordaddr> <mnemonic>` against the dis2000 lines.
 Bar: **0 wrong decodes** (a wrong decode is a spec bug); minimize UNDEFs (missing
-opcodes). The harness is `tests/run_ti_parity.ps1` + `ghidra_scripts/DumpParity.java`.
+opcodes). Baseline established at 2026-08 was **100% mnemonic agreement, 0 wrong,
+0 gaps** across five objects (3,638 instructions) from `rts2800_fpu32.lib` — three
+FPU-heavy (`k_expf`, `catrigf`, `c99_complex`) plus two integer (`memcpy_s`,
+`strcpy_s`). A mix of FPU and integer objects exercises disjoint decode paths.
 
-Current status: **100% mnemonic agreement, 0 wrong, 0 gaps** across five objects
-(3,638 instructions) from `rts2800_fpu32.lib` — three FPU-heavy (`k_expf`, `catrigf`,
-`c99_complex`) plus two integer (`memcpy_s`, `strcpy_s`); the `.text` bins are checked
-in as `tests/ti_*_text.bin`. Use a mix of FPU and integer objects — they exercise
-disjoint paths.
+The runtime-lib parity driver was previously shipped as `tests/run_ti_parity.ps1`
+but was removed to keep the repo free of TI-toolchain assumptions and TI-derived
+artifacts. Re-run parity manually against a local TI CGT install using
+`ghidra_scripts/DumpParity.java` as the headless post-script — see the deleted
+script in git history (before commit removing it) for the exact `ar2000` /
+`dis2000` COFF2 extraction sequence.
+
+For firmware-range parity (real image, not RTS objects), use
+`tests/run_fw_parity.ps1` / `tests/run_fw_parity.sh` — same idea, but slicing a
+word range out of an image and round-tripping through `asm2000` + `dis2000`.
 
 ## What parity does NOT prove — and the bug classes that hide behind it
 

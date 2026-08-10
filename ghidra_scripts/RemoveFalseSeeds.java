@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Nishanth Samala
 // Remove false-seed functions that a prologue/call scan placed on DATA.
 //
 // SeedFunctions (and Ghidra's own analysis) can create a function at an address that is

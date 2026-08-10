@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Nishanth Samala
 // Materialize copied-to-RAM sections (.ramfunc / .cinit / initialized data) in a C28x image.
 //
 // THE PROBLEM. On TI-RTS C28x images, time-critical code (`.ramfunc` — flash program/erase,

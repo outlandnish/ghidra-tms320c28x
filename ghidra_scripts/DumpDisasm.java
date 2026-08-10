@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Nishanth Samala
 // Headless test helper: disassemble the whole program linearly and print each
 // instruction as "<wordaddr>\t<bytes>\t<mnemonic+operands>". Compared against
 // tests/*.expected.txt by run_disasm_test.sh.

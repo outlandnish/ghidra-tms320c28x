@@ -100,8 +100,8 @@ Notes:
 
 ## Validating changes
 
-`tests/run_fw_parity.ps1` and `tests/run_ti_parity.ps1` check **decode** (mnemonic/length) against
-TI's `dis2000`. **Emulation** correctness is checked by stepping known inputs as above and comparing
+`tests/run_fw_parity.{ps1,sh}` checks **decode** (mnemonic/length) against TI's `dis2000`
+(the previous runtime-lib parity harness `run_ti_parity.ps1` was removed; see docs/TESTING.md). **Emulation** correctness is checked by stepping known inputs as above and comparing
 results — e.g. the VCU CRC ops are validated against the standard catalog check values
 (CRC-8/SMBUS, CRC-16/BUYPASS, CRC-32/MPEG-2), and the AES-128 immobilizer routine emulated on the
 FIPS-197 vector produces the bit-exact reference state (RPTB + MOVB byte-lane addressing). The

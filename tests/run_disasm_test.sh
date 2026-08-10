@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
-# Regression test for the C28x SLEIGH disassembler.
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Nishanth Samala
 #
-# Disassembles tests/addr_modes.bin with Ghidra (headless) and diffs the result
-# against tests/addr_modes.expected.txt. Run after any .sinc/.slaspec change.
+# C28x SLEIGH disassembler regression test.
 #
-# Because Ghidra lives on the Windows side and cmd.exe can't run from a WSL UNC
-# cwd, this driver is actually invoked from PowerShell (see docs/TESTING.md). This
-# script documents the expected-vs-actual comparison; the harness lives in
-# tests/run_disasm_test.ps1.
+# 1. Recompiles the .sla, 2. reinstalls it into Ghidra, 3. headless-disassembles
+# tests/addr_modes.bin, 4. diffs against tests/addr_modes.expected.txt.
+#
+# Env / args:
+#   GHIDRA_INSTALL_DIR  -- required. Root of Ghidra install.
 #
 # Expected output (verified 2026-06-22, all 14 cases pass):
 #   0x0000  0606      MOVL ACC,@0x6
@@ -24,4 +25,68 @@
 #   0x000b  04283412  MOV @0x4,#0x1234
 #   0x000d  0100      ABORTI
 #   0x000e  2176      IDLE
-echo "See tests/run_disasm_test.ps1 (Ghidra is Windows-side)."
+
+set -euo pipefail
+
+: "${GHIDRA_INSTALL_DIR:?set GHIDRA_INSTALL_DIR to your Ghidra install root}"
+
+module=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+lang="$module/data/languages"
+tmp=$(mktemp -d -t c28x-test-XXXXXX)
+trap 'rm -rf "$tmp"' EXIT
+
+# 1. compile the .sla
+(cd "$lang" && "$GHIDRA_INSTALL_DIR/support/sleigh" tms320c28x.slaspec)
+[ -f "$lang/tms320c28x.sla" ] || { echo "SLEIGH compile failed (no .sla)"; exit 1; }
+
+# 2. reinstall into Ghidra
+inst="$GHIDRA_INSTALL_DIR/Ghidra/Processors/TMS320C28x/data/languages"
+mkdir -p "$inst"
+cp "$lang"/* "$inst/"
+
+# 3. headless disassemble
+mkdir -p "$tmp/proj" "$tmp/scripts"
+cp "$module/tests/addr_modes.bin" "$tmp/addr_modes.bin"
+cp "$module/ghidra_scripts/DumpDisasm.java" "$tmp/scripts/DumpDisasm.java"
+raw=$("$GHIDRA_INSTALL_DIR/support/analyzeHeadless" "$tmp/proj" t \
+  -import "$tmp/addr_modes.bin" -processor "TMS320C28x:LE:32:default" \
+  -scriptPath "$tmp/scripts" -postScript DumpDisasm.java -noanalysis -overwrite 2>&1)
+
+# 4. compare. Pull "ADDR<tab>BYTES<tab>TEXT" lines from DumpDisasm's println output;
+# strip Ghidra's "<script>> " prefix + optional "<space>MEM:" address prefix, then
+# left-pad-strip leading zeros so "0000" -> "0x0" matches the "0x0" in expected.
+got=$(printf '%s\n' "$raw" \
+  | sed -n 's/.*DumpDisasm\.java> //p' \
+  | sed -E 's/ \(GhidraScript\)[[:space:]]*$//' \
+  | sed -E 's/^[A-Za-z]+:0*/0x/' \
+  | sed -E 's/^0*([0-9a-fA-F])/0x\1/' \
+  | grep -E '^0x[0-9a-fA-F]' || true)
+
+echo "--- GOT ---"
+printf '%s\n' "$got"
+
+exp="$module/tests/addr_modes.expected.txt"
+fail=0
+lineno=0
+while IFS= read -r e; do
+  lineno=$((lineno + 1))
+  g=$(printf '%s\n' "$got" | sed -n "${lineno}p")
+  [ -n "$g" ] || g="<missing>"
+  # 3rd tab-field (mnemonic + operands); strip "0x" so hex-formatting drift doesn't fail.
+  et=$(printf '%s' "$e" | awk -F'\t' '{print $3}')
+  gt=$(printf '%s' "$g" | awk -F'\t' '{print $3}')
+  etn=${et//0x/}
+  gtn=${gt//0x/}
+  if [ "$etn" != "$gtn" ]; then
+    printf 'FAIL line %d: expected [%s] got [%s]\n' "$lineno" "$et" "$gt" >&2
+    fail=$((fail + 1))
+  fi
+done < "$exp"
+
+total=$lineno
+if [ "$fail" -eq 0 ]; then
+  printf 'PASS: all %d cases\n' "$total"
+else
+  printf '%d FAILURES\n' "$fail" >&2
+  exit 1
+fi

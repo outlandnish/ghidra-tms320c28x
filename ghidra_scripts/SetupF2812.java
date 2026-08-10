@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Nishanth Samala
 // Post-import setup for a raw TMS320F2812 (F281x) firmware image:
 //   1. Map the F2812 device memory map — on-chip SARAM (M0/M1, L0/L1, H0), Flash, OTP,
 //      Boot ROM, the PIE vector RAM, and (optionally) the XINTF external-memory zones.

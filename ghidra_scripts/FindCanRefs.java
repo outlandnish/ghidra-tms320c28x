@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Nishanth Samala
 // After setup + disassembly, find references to the CANA/CANB register blocks and
 // print the instructions that touch them. This is the end-to-end proof that the
 // module + peripheral labels surface CAN access for RE.

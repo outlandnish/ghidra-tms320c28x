@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Nishanth Samala
 // TI parity dump: linearly disassemble the (small) imported .text bin and print
 //   <wordaddr>\t<MNEMONIC>
 // for each instruction-start word (wordaddr = byteOffset/2, matching dis2000's word

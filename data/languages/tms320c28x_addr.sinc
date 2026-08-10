@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Nishanth Samala
 # C28x loc16 / loc32 addressing-mode sub-tables.
 # Included by tms320c28x.sinc.
 #
