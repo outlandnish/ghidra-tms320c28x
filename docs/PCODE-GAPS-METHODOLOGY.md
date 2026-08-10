@@ -2,7 +2,6 @@
 
 A repeatable playbook for taking a "this function won't decompile / shows red
 `halt_baddata` / has unreachable blocks" report and turning it into a verified SLEIGH fix.
-Distilled from the PMR/DIR/PCS/bootloader gap-filling work.
 
 This doc is the *decision process*. For the *mechanics* — build/compile loop, headless
 decode-parity harnesses, and the byte-vs-word addressing model — see `docs/BUILDING.md`,
@@ -13,7 +12,7 @@ decode-parity harnesses, and the byte-vs-word addressing model — see `docs/BUI
 ## 0. The mental model — three classes of problem
 
 Every "bad decompilation" symptom is one of these. **Classify first; the fix is different for
-each.** Most wasted time this project came from assuming the wrong class.
+each.** Most wasted time comes from assuming the wrong class.
 
 | Class | Symptom | What's wrong | Fix lives in |
 |---|---|---|---|
@@ -70,16 +69,11 @@ For a reported address (or a sweep hit), find the FIRST undecodable/suspect word
    word count skews everything after.
 2. ⭐ **If the manual grep comes up empty OR ambiguous, run the word through TI `dis2000`.**
    It is the ground-truth oracle and has repeatedly been right where the manual grep was wrong
-   (rendering quirks, A-bit/condition placeholders, multi-line opcode wraps). Harness:
-   ```
-   BIN=C:\Users\nisha\Downloads\ti-cgt-c2000_25.11.0.LTS\bin
-   # write a .asm of .word probes (the LIVE image words, already byte-correct), then:
-   asm2000 -v28 probe.asm -o probe.obj ; dis2000 --all --data_as_text probe.obj
-   ```
-   Separate probes with a NOP (`0x7700`) — a 2-word op swallows the next probe as its operand.
-   ⚠️ The Bash tool's `wsl bash -s` pipe eats stdout / mangles `/tmp`; write the script to
-   `//wsl.localhost/.../tmp/x.sh`, run `wsl.exe -d Ubuntu-24.04 -- bash -lc 'bash /tmp/x.sh'`,
-   read the result file over the UNC path.
+   (rendering quirks, A-bit/condition placeholders, multi-line opcode wraps). The
+   `tests/run_fw_parity.sh` harness wraps the whole probe→assemble→dis2000 sequence over a
+   word range of a real image — use it. If you need a one-off probe for a bare encoding, feed
+   it a synthetic slice: separate probes with a NOP (`0x7700`), since a 2-word op swallows the
+   next probe as its operand.
 3. **dis2000 force-decodes data too** — so "dis2000 gave a mnemonic" does NOT prove it's code.
    Cross-check with the data test in §6.
 
@@ -96,16 +90,17 @@ For a reported address (or a sweep hit), find the FIRST undecodable/suspect word
   touch a reg so the op emits non-empty p-code and flow continues). An EMPTY `{ }` body
   truncates the decompiler — a "no-op" must still emit something.
 - **Back-fill the whole family in one pass.** TI packs siblings into adjacent encodings
-  (the `0xE7` parallel `||ADD/||SUB`, the `0x561x` mode cluster, the `*B AX,#imm8` family,
-  the QMPYL/QMPYUL/QMPYXUL/IMPYXUL multiplies). Adding one variant and stopping just means the
-  next image re-hits the sibling. Enumerate the encoding block and add all real members.
+  (e.g. the `0xE7` parallel `||ADD/||SUB`, the `0x561x` mode cluster, the `*B AX,#imm8`
+  family, the QMPYL/QMPYUL/QMPYXUL/IMPYXUL multiplies). Adding one variant and stopping just
+  means the next image re-hits the sibling. Enumerate the encoding block and add all real
+  members.
 
 ---
 
 ## 5. Class B — fix the dataflow/semantics (the subtle, invisible bugs)
 
 These disassemble fine, so they hide. Symptom is usually **"Removing unreachable block"**
-warnings + a missing body. Known failure modes from this project (audit for all of them):
+warnings + a missing body. Known failure modes (audit for all of them):
 
 1. **Self-reference.** A 2-op-er stubbed `dst = dst` (ignoring the real source reg) makes the
    decompiler constant-fold and prune. Fix: read the actual source field. (`ADDF32 RaH,#imm,RbH`
@@ -121,7 +116,8 @@ warnings + a missing body. Known failure modes from this project (audit for all 
 4. **Wrong word count / over-broad pattern** (the worst — silent corruption, no `halt_baddata`).
    A constructor that claims N words when the op is M, or whose pattern matches a *different*
    op, desyncs all following decode. (`MAX AX,loc16` claimed `FLIP` + ate a word.) Detect with
-   the dis2000 **length-differential** sweep (§7).
+   the dis2000 **length-differential** sweep — that's exactly what `run_fw_parity.sh` reports as
+   "length skew".
 
 For B, dump the **raw p-code** of the suspect instruction (`ins.getPcode()`) and read what it
 actually emits vs. what the op should do. The decompiled C's "unreachable block" warnings name
@@ -150,48 +146,37 @@ function so real code is never clobbered.
 
 ## 7. Compile, deploy, verify
 
-1. **Compile** (PowerShell; UNC can't host the `.bat`, copy to Windows temp):
-   ```
-   copy data/languages/* to %TEMP%\c28x-build\languages ; sleigh.bat tms320c28x.slaspec
+1. **Compile:**
+   ```sh
+   "$GHIDRA_INSTALL_DIR/support/sleigh" data/languages/tms320c28x.slaspec
    ```
    Clean = only NOP / extension / "wrote to temporaries not read" WARNs. **Any ERROR = no
    `.sla` written** — read the FIRST error (later cascade); see `docs/SLEIGH-IDIOMS.md`.
 2. **Verify the build took:** the `.sla` **size delta** is the only reliable signal (grep-by-
    mnemonic gives false negatives — mnemonics are tokenized). No growth = it didn't pick up the
    edit (often a stale copy compiling old source).
-3. **Deploy** to BOTH `data/languages/` (the repo) and the Ghidra `Processors/TMS320C28x/data/
-   languages/` dir.
+3. **Deploy** the fresh `.sla` into the installed processor module
+   (`$GHIDRA_INSTALL_DIR/Ghidra/Processors/TMS320C28x/data/languages/`). `tests/run_disasm_test.sh`
+   does exactly this and then runs the regression harness — use it.
 4. **Restart Ghidra** (ask the user), reconnect, **re-import the image fresh**, set base, seed.
 5. **Verify the fix:** for class A, the failing word now decodes + the function ends in
    `return` with no `halt_baddata`. For class B, the named "unreachable block" warnings are
    GONE and the pruned body appears in the C. Always re-check a **regression ref** stays clean
-   (`CAN_init`, the FPU function, or the TI `k_expf`/`catrigf` parity sweep).
+   (e.g. a known-good function plus one or two `run_fw_parity.sh` ranges you were tracking).
 6. **Sweep** for the next gap (full-body-range, branch-shadow-aware) and repeat. When the
    real-gap count is 0 and only 0-xref data false-seeds remain, the image is clean.
 
 ---
 
-## 8. Commit discipline
+## 8. The recurring lessons (don't re-learn these)
 
-- Module changes go to the PUBLIC `ghidra-tms320c28x` repo. Keep messages **Tesla-name-free**
-  ("a real F28377D production image", not the vehicle/ECU) per the repo-visibility rule.
-- Commit per fix/batch after the verify. `SetupF28377D.java` shows as modified from another
-  session — don't stage it unless you changed it. The `docs/PCODE-GAPS*.md` are gitignored —
-  don't commit them; update them in place to record OPEN→RESOLVED.
-- One commit per opcode family or per dataflow fix, with the dis2000-confirmed encoding and the
-  surfacing image/address in the message.
-
----
-
-## 9. The recurring lessons (don't re-learn these)
-
-- **dis2000 is the oracle.** When the manual is unclear, probe it. It corrected the manual grep
-  multiple times.
+- **dis2000 is the oracle.** When the manual is unclear, probe it. It has corrected the manual
+  grep multiple times.
 - **Back-fill families**, don't chase one sibling at a time.
 - **Branch shadows and stale flags hide bugs** that look fine in disassembly — a fix isn't done
   until the decompiled C is clean, not just the listing.
 - **`if(1)goto` ≠ goto; `dst=dst` ≠ identity-is-harmless; empty `{}` ≠ no-op** — each silently
   corrupts the decompiler.
 - **0-xref + table-bytes = data, not a missing opcode** — but reset/init routines are the
-  0-xref exception. Verify, don't assume (it was wrong both directions in this project).
+  0-xref exception. Verify, don't assume.
 - **Always re-import after a recompile**; never trust a stale loaded program or a same-size `.sla`.
