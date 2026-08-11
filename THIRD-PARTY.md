@@ -150,6 +150,12 @@ Files adapted so far:
   written result; ABSF32 and NEGF32 UNCF → `update_stf`; MOV32 UNCF loads
   (mem32, reg) → `update_stf_mov`; TMU inputs (MPY2PIF32, DIV2PIF32, DIVF32,
   SQRTF32) → `tmu_condition_operand`. See #17.
+  The `TESTTF CNDF` constructor mirrors mwdmwd's one-line `testtf`
+  (`STF_TF = cndf`), though the encoding was independently confirmed against
+  asm2000/dis2000. The `MOVST0` flag-mask decode (its own `movst0_flags` field
+  plus the 256-entry `attach names` list) and the `ctx_fimm16` display fix for
+  the `MAXF32` / `MINF32` `#16FHi` immediates are *not* adapted — mwdmwd renders
+  neither — and are original to this module.
 - **`data/languages/tms320c28x_ext56.sinc`** — *not adapted code*, noted for
   completeness: the `SETC` / `CLRC` mode-bit constructors (`OBJMODE`, `XF`, `OVC`,
   `M0M1MAP`) were wired to write the individual status registers introduced by the

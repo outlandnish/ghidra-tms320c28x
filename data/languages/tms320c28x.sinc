@@ -37,6 +37,9 @@ define token instr16 (16)
     arsel3    = (8,10)      # 3-bit AR selector (the 'nnn' in 0111 1nnn ....) -> AR view
     arsel3x   = (8,10)      # same 3 bits attached to XARn (32-bit) for MOVZ zero-extend
     imm8      = (0,7)       # 8-bit immediate (CCCC CCCC, low byte)
+    movst0_flags = (0,7)    # MOVST0's FLAG select mask. Its own field (not imm8) so that
+                            # `attach names` can render TI's flag list -- imm8 is shared by
+                            # dozens of unrelated instructions and must stay a plain number.
     simm8     = (0,7) signed # 8-bit signed offset (SB)
     cond4     = (0,3)       # 4-bit condition code (COND), low nibble (B/BF)
     cond4hi   = (8,11)      # COND in bits 8..11 (SB: 0110 COND CCCC CCCC)

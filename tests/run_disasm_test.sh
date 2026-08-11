@@ -4,13 +4,23 @@
 #
 # C28x SLEIGH disassembler regression test.
 #
-# 1. Recompiles the .sla, 2. reinstalls it into Ghidra, 3. headless-disassembles
-# tests/addr_modes.bin, 4. diffs against tests/addr_modes.expected.txt.
+# 1. Recompiles the .sla, 2. reinstalls it into Ghidra, then for each case in
+# $CASES: 3. headless-disassembles tests/<case>.bin, 4. diffs the mnemonic text
+# against tests/<case>.expected.txt.
+#
+# Cases:
+#   addr_modes   -- every AMODE=0 loc16/loc32 addressing mode (14 cases).
+#   fpu_display  -- FPU operand RENDERING, where our text has to match TI's own
+#                   assembler exactly: MOVST0's flag-select list, TESTTF's CNDF,
+#                   and the split-field #16FHi immediates (whose value is spread
+#                   across both instruction words, so a wrong reassembly prints a
+#                   plausible-looking but wrong constant). Every expected line was
+#                   verified against asm2000/dis2000 output for the same words.
 #
 # Env / args:
 #   GHIDRA_INSTALL_DIR  -- required. Root of Ghidra install.
 #
-# Expected output (verified 2026-06-22, all 14 cases pass):
+# Expected output (verified 2026-06-22, all 14 addr_modes cases pass):
 #   0x0000  0606      MOVL ACC,@0x6
 #   0x0001  8006      MOVL ACC,*XAR0++
 #   0x0002  8b06      MOVL ACC,*--XAR3
@@ -35,6 +45,8 @@ lang="$module/data/languages"
 tmp=$(mktemp -d -t c28x-test-XXXXXX)
 trap 'rm -rf "$tmp"' EXIT
 
+CASES="addr_modes fpu_display"
+
 # 1. compile the .sla
 (cd "$lang" && "$GHIDRA_INSTALL_DIR/support/sleigh" tms320c28x.slaspec)
 [ -f "$lang/tms320c28x.sla" ] || { echo "SLEIGH compile failed (no .sla)"; exit 1; }
@@ -51,52 +63,58 @@ mkdir -p "$inst"
 cp "$lang"/* "$inst/"
 cp "$module/Module.manifest" "$modroot/Module.manifest"
 
-# 3. headless disassemble
 mkdir -p "$tmp/proj" "$tmp/scripts"
-cp "$module/tests/addr_modes.bin" "$tmp/addr_modes.bin"
 cp "$module/ghidra_scripts/DumpDisasm.java" "$tmp/scripts/DumpDisasm.java"
-# `|| true`: don't let a headless failure abort under `set -e` before we can print
-# its output -- an empty $got below is reported as a diagnostic instead of a blank.
-raw=$("$GHIDRA_INSTALL_DIR/support/analyzeHeadless" "$tmp/proj" t \
-  -import "$tmp/addr_modes.bin" -processor "TMS320C28x:LE:32:default" \
-  -scriptPath "$tmp/scripts" -postScript DumpDisasm.java -noanalysis -overwrite 2>&1) || true
 
-# 4. compare. Pull "ADDR<tab>BYTES<tab>TEXT" lines from DumpDisasm's println output;
-# strip Ghidra's "<script>> " prefix + optional "<space>MEM:" address prefix, then
-# left-pad-strip leading zeros so "0000" -> "0x0" matches the "0x0" in expected.
-got=$(printf '%s\n' "$raw" \
-  | sed -n 's/.*DumpDisasm\.java> //p' \
-  | sed -E 's/ \(GhidraScript\)[[:space:]]*$//' \
-  | sed -E 's/^[A-Za-z]+:0*/0x/' \
-  | sed -E 's/^0*([0-9a-fA-F])/0x\1/' \
-  | grep -E '^0x[0-9a-fA-F]' || true)
-
-echo "--- GOT ---"
-printf '%s\n' "$got"
-if [ -z "$got" ]; then
-  echo "--- no disassembly parsed; raw analyzeHeadless output follows ---" >&2
-  printf '%s\n' "$raw" >&2
-fi
-
-exp="$module/tests/addr_modes.expected.txt"
 fail=0
-lineno=0
-while IFS= read -r e; do
-  lineno=$((lineno + 1))
-  g=$(printf '%s\n' "$got" | sed -n "${lineno}p")
-  [ -n "$g" ] || g="<missing>"
-  # 3rd tab-field (mnemonic + operands); strip "0x" so hex-formatting drift doesn't fail.
-  et=$(printf '%s' "$e" | awk -F'\t' '{print $3}')
-  gt=$(printf '%s' "$g" | awk -F'\t' '{print $3}')
-  etn=${et//0x/}
-  gtn=${gt//0x/}
-  if [ "$etn" != "$gtn" ]; then
-    printf 'FAIL line %d: expected [%s] got [%s]\n' "$lineno" "$et" "$gt" >&2
-    fail=$((fail + 1))
-  fi
-done < "$exp"
+total=0
+for name in $CASES; do
+  echo "=== $name ==="
 
-total=$lineno
+  # 3. headless disassemble
+  cp "$module/tests/$name.bin" "$tmp/$name.bin"
+  # `|| true`: don't let a headless failure abort under `set -e` before we can print
+  # its output -- an empty $got below is reported as a diagnostic instead of a blank.
+  raw=$("$GHIDRA_INSTALL_DIR/support/analyzeHeadless" "$tmp/proj" "t_$name" \
+    -import "$tmp/$name.bin" -processor "TMS320C28x:LE:32:default" \
+    -scriptPath "$tmp/scripts" -postScript DumpDisasm.java -noanalysis -overwrite 2>&1) || true
+
+  # 4. compare. Pull "ADDR<tab>BYTES<tab>TEXT" lines from DumpDisasm's println output;
+  # strip Ghidra's "<script>> " prefix + optional "<space>MEM:" address prefix, then
+  # left-pad-strip leading zeros so "0000" -> "0x0" matches the "0x0" in expected.
+  got=$(printf '%s\n' "$raw" \
+    | sed -n 's/.*DumpDisasm\.java> //p' \
+    | sed -E 's/ \(GhidraScript\)[[:space:]]*$//' \
+    | sed -E 's/^[A-Za-z]+:0*/0x/' \
+    | sed -E 's/^0*([0-9a-fA-F])/0x\1/' \
+    | grep -E '^0x[0-9a-fA-F]' || true)
+
+  echo "--- GOT ---"
+  printf '%s\n' "$got"
+  if [ -z "$got" ]; then
+    echo "--- no disassembly parsed; raw analyzeHeadless output follows ---" >&2
+    printf '%s\n' "$raw" >&2
+  fi
+
+  exp="$module/tests/$name.expected.txt"
+  lineno=0
+  while IFS= read -r e; do
+    lineno=$((lineno + 1))
+    g=$(printf '%s\n' "$got" | sed -n "${lineno}p")
+    [ -n "$g" ] || g="<missing>"
+    # 3rd tab-field (mnemonic + operands); strip "0x" so hex-formatting drift doesn't fail.
+    et=$(printf '%s' "$e" | awk -F'\t' '{print $3}')
+    gt=$(printf '%s' "$g" | awk -F'\t' '{print $3}')
+    etn=${et//0x/}
+    gtn=${gt//0x/}
+    if [ "$etn" != "$gtn" ]; then
+      printf 'FAIL %s line %d: expected [%s] got [%s]\n' "$name" "$lineno" "$et" "$gt" >&2
+      fail=$((fail + 1))
+    fi
+  done < "$exp"
+  total=$((total + lineno))
+done
+
 if [ "$fail" -eq 0 ]; then
   printf 'PASS: all %d cases\n' "$total"
 else

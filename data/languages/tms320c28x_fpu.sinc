@@ -61,6 +61,48 @@ attach variables [ p_rd p_ra ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 attach variables [ f_movf_reg ]
     [ _ _ _ _ R0H R1H R2H R3H R4H R5H R6H R7H _ _ _ _ ];
 
+# --- MOVST0 FLAG select mask ------------------------------------------------
+# The FLAG operand is an 8-bit mask, one bit per STF flag, and TI's assembler prints
+# the selected names in ascending bit order (`MOVST0 NF,ZF` for 0x14). Bit assignment
+# recovered from asm2000/dis2000 ground truth (SPRUHS1C documents the ST0 mapping but
+# not the mask encoding): LVF=0x01 LUF=0x02 NF=0x04 NI=0x08 ZF=0x10 ZI=0x20 TF=0x80.
+# Bit 6 is unused (`MOVST0 <all>` assembles to 0xBF), so it renders as rsvd6.
+# 256 entries because `attach names` must cover every value of the 8-bit field.
+attach names [ movst0_flags ] [
+    "0" "LVF" "LUF" "LVF,LUF" "NF" "LVF,NF" "LUF,NF" "LVF,LUF,NF"
+    "NI" "LVF,NI" "LUF,NI" "LVF,LUF,NI" "NF,NI" "LVF,NF,NI" "LUF,NF,NI" "LVF,LUF,NF,NI"
+    "ZF" "LVF,ZF" "LUF,ZF" "LVF,LUF,ZF" "NF,ZF" "LVF,NF,ZF" "LUF,NF,ZF" "LVF,LUF,NF,ZF"
+    "NI,ZF" "LVF,NI,ZF" "LUF,NI,ZF" "LVF,LUF,NI,ZF" "NF,NI,ZF" "LVF,NF,NI,ZF" "LUF,NF,NI,ZF" "LVF,LUF,NF,NI,ZF"
+    "ZI" "LVF,ZI" "LUF,ZI" "LVF,LUF,ZI" "NF,ZI" "LVF,NF,ZI" "LUF,NF,ZI" "LVF,LUF,NF,ZI"
+    "NI,ZI" "LVF,NI,ZI" "LUF,NI,ZI" "LVF,LUF,NI,ZI" "NF,NI,ZI" "LVF,NF,NI,ZI" "LUF,NF,NI,ZI" "LVF,LUF,NF,NI,ZI"
+    "ZF,ZI" "LVF,ZF,ZI" "LUF,ZF,ZI" "LVF,LUF,ZF,ZI" "NF,ZF,ZI" "LVF,NF,ZF,ZI" "LUF,NF,ZF,ZI" "LVF,LUF,NF,ZF,ZI"
+    "NI,ZF,ZI" "LVF,NI,ZF,ZI" "LUF,NI,ZF,ZI" "LVF,LUF,NI,ZF,ZI" "NF,NI,ZF,ZI" "LVF,NF,NI,ZF,ZI" "LUF,NF,NI,ZF,ZI" "LVF,LUF,NF,NI,ZF,ZI"
+    "rsvd6" "LVF,rsvd6" "LUF,rsvd6" "LVF,LUF,rsvd6" "NF,rsvd6" "LVF,NF,rsvd6" "LUF,NF,rsvd6" "LVF,LUF,NF,rsvd6"
+    "NI,rsvd6" "LVF,NI,rsvd6" "LUF,NI,rsvd6" "LVF,LUF,NI,rsvd6" "NF,NI,rsvd6" "LVF,NF,NI,rsvd6" "LUF,NF,NI,rsvd6" "LVF,LUF,NF,NI,rsvd6"
+    "ZF,rsvd6" "LVF,ZF,rsvd6" "LUF,ZF,rsvd6" "LVF,LUF,ZF,rsvd6" "NF,ZF,rsvd6" "LVF,NF,ZF,rsvd6" "LUF,NF,ZF,rsvd6" "LVF,LUF,NF,ZF,rsvd6"
+    "NI,ZF,rsvd6" "LVF,NI,ZF,rsvd6" "LUF,NI,ZF,rsvd6" "LVF,LUF,NI,ZF,rsvd6" "NF,NI,ZF,rsvd6" "LVF,NF,NI,ZF,rsvd6" "LUF,NF,NI,ZF,rsvd6" "LVF,LUF,NF,NI,ZF,rsvd6"
+    "ZI,rsvd6" "LVF,ZI,rsvd6" "LUF,ZI,rsvd6" "LVF,LUF,ZI,rsvd6" "NF,ZI,rsvd6" "LVF,NF,ZI,rsvd6" "LUF,NF,ZI,rsvd6" "LVF,LUF,NF,ZI,rsvd6"
+    "NI,ZI,rsvd6" "LVF,NI,ZI,rsvd6" "LUF,NI,ZI,rsvd6" "LVF,LUF,NI,ZI,rsvd6" "NF,NI,ZI,rsvd6" "LVF,NF,NI,ZI,rsvd6" "LUF,NF,NI,ZI,rsvd6" "LVF,LUF,NF,NI,ZI,rsvd6"
+    "ZF,ZI,rsvd6" "LVF,ZF,ZI,rsvd6" "LUF,ZF,ZI,rsvd6" "LVF,LUF,ZF,ZI,rsvd6" "NF,ZF,ZI,rsvd6" "LVF,NF,ZF,ZI,rsvd6" "LUF,NF,ZF,ZI,rsvd6" "LVF,LUF,NF,ZF,ZI,rsvd6"
+    "NI,ZF,ZI,rsvd6" "LVF,NI,ZF,ZI,rsvd6" "LUF,NI,ZF,ZI,rsvd6" "LVF,LUF,NI,ZF,ZI,rsvd6" "NF,NI,ZF,ZI,rsvd6" "LVF,NF,NI,ZF,ZI,rsvd6" "LUF,NF,NI,ZF,ZI,rsvd6" "LVF,LUF,NF,NI,ZF,ZI,rsvd6"
+    "TF" "LVF,TF" "LUF,TF" "LVF,LUF,TF" "NF,TF" "LVF,NF,TF" "LUF,NF,TF" "LVF,LUF,NF,TF"
+    "NI,TF" "LVF,NI,TF" "LUF,NI,TF" "LVF,LUF,NI,TF" "NF,NI,TF" "LVF,NF,NI,TF" "LUF,NF,NI,TF" "LVF,LUF,NF,NI,TF"
+    "ZF,TF" "LVF,ZF,TF" "LUF,ZF,TF" "LVF,LUF,ZF,TF" "NF,ZF,TF" "LVF,NF,ZF,TF" "LUF,NF,ZF,TF" "LVF,LUF,NF,ZF,TF"
+    "NI,ZF,TF" "LVF,NI,ZF,TF" "LUF,NI,ZF,TF" "LVF,LUF,NI,ZF,TF" "NF,NI,ZF,TF" "LVF,NF,NI,ZF,TF" "LUF,NF,NI,ZF,TF" "LVF,LUF,NF,NI,ZF,TF"
+    "ZI,TF" "LVF,ZI,TF" "LUF,ZI,TF" "LVF,LUF,ZI,TF" "NF,ZI,TF" "LVF,NF,ZI,TF" "LUF,NF,ZI,TF" "LVF,LUF,NF,ZI,TF"
+    "NI,ZI,TF" "LVF,NI,ZI,TF" "LUF,NI,ZI,TF" "LVF,LUF,NI,ZI,TF" "NF,NI,ZI,TF" "LVF,NF,NI,ZI,TF" "LUF,NF,NI,ZI,TF" "LVF,LUF,NF,NI,ZI,TF"
+    "ZF,ZI,TF" "LVF,ZF,ZI,TF" "LUF,ZF,ZI,TF" "LVF,LUF,ZF,ZI,TF" "NF,ZF,ZI,TF" "LVF,NF,ZF,ZI,TF" "LUF,NF,ZF,ZI,TF" "LVF,LUF,NF,ZF,ZI,TF"
+    "NI,ZF,ZI,TF" "LVF,NI,ZF,ZI,TF" "LUF,NI,ZF,ZI,TF" "LVF,LUF,NI,ZF,ZI,TF" "NF,NI,ZF,ZI,TF" "LVF,NF,NI,ZF,ZI,TF" "LUF,NF,NI,ZF,ZI,TF" "LVF,LUF,NF,NI,ZF,ZI,TF"
+    "rsvd6,TF" "LVF,rsvd6,TF" "LUF,rsvd6,TF" "LVF,LUF,rsvd6,TF" "NF,rsvd6,TF" "LVF,NF,rsvd6,TF" "LUF,NF,rsvd6,TF" "LVF,LUF,NF,rsvd6,TF"
+    "NI,rsvd6,TF" "LVF,NI,rsvd6,TF" "LUF,NI,rsvd6,TF" "LVF,LUF,NI,rsvd6,TF" "NF,NI,rsvd6,TF" "LVF,NF,NI,rsvd6,TF" "LUF,NF,NI,rsvd6,TF" "LVF,LUF,NF,NI,rsvd6,TF"
+    "ZF,rsvd6,TF" "LVF,ZF,rsvd6,TF" "LUF,ZF,rsvd6,TF" "LVF,LUF,ZF,rsvd6,TF" "NF,ZF,rsvd6,TF" "LVF,NF,ZF,rsvd6,TF" "LUF,NF,ZF,rsvd6,TF" "LVF,LUF,NF,ZF,rsvd6,TF"
+    "NI,ZF,rsvd6,TF" "LVF,NI,ZF,rsvd6,TF" "LUF,NI,ZF,rsvd6,TF" "LVF,LUF,NI,ZF,rsvd6,TF" "NF,NI,ZF,rsvd6,TF" "LVF,NF,NI,ZF,rsvd6,TF" "LUF,NF,NI,ZF,rsvd6,TF" "LVF,LUF,NF,NI,ZF,rsvd6,TF"
+    "ZI,rsvd6,TF" "LVF,ZI,rsvd6,TF" "LUF,ZI,rsvd6,TF" "LVF,LUF,ZI,rsvd6,TF" "NF,ZI,rsvd6,TF" "LVF,NF,ZI,rsvd6,TF" "LUF,NF,ZI,rsvd6,TF" "LVF,LUF,NF,ZI,rsvd6,TF"
+    "NI,ZI,rsvd6,TF" "LVF,NI,ZI,rsvd6,TF" "LUF,NI,ZI,rsvd6,TF" "LVF,LUF,NI,ZI,rsvd6,TF" "NF,NI,ZI,rsvd6,TF" "LVF,NF,NI,ZI,rsvd6,TF" "LUF,NF,NI,ZI,rsvd6,TF" "LVF,LUF,NF,NI,ZI,rsvd6,TF"
+    "ZF,ZI,rsvd6,TF" "LVF,ZF,ZI,rsvd6,TF" "LUF,ZF,ZI,rsvd6,TF" "LVF,LUF,ZF,ZI,rsvd6,TF" "NF,ZF,ZI,rsvd6,TF" "LVF,NF,ZF,ZI,rsvd6,TF" "LUF,NF,ZF,ZI,rsvd6,TF" "LVF,LUF,NF,ZF,ZI,rsvd6,TF"
+    "NI,ZF,ZI,rsvd6,TF" "LVF,NI,ZF,ZI,rsvd6,TF" "LUF,NI,ZF,ZI,rsvd6,TF" "LVF,LUF,NI,ZF,ZI,rsvd6,TF" "NF,NI,ZF,ZI,rsvd6,TF" "LVF,NF,NI,ZF,ZI,rsvd6,TF" "LUF,NF,NI,ZF,ZI,rsvd6,TF" "LVF,LUF,NF,NI,ZF,ZI,rsvd6,TF"
+];
+
 # --- mem32 destination on the MSW (0xE203 store) -----------------------------
 # The C28x `mem32` operand carried in the LOW 8 bits of the MSW. Only DP-direct mode
 # (@6bit, b76=00) is observed for these FPU stores (dis2000: `MOV32 @0xa,R1H`), and that
@@ -521,6 +563,14 @@ attach variables [ p_rf ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 :CMPF32 fimm_reg, "#0.0"  is op_hi8=0xE5 & loc_mode5=0b10100 & fimm_reg { local z:4 = 0; setFloatFlags(fimm_reg, z); }
 # ZERO RaH             LSW: 1110 0101 1001 0aaa  (single word)
 :ZERO fimm_reg            is op_hi8=0xE5 & loc_mode5=0b10010 & fimm_reg { fimm_reg = 0; }
+# TESTTF CNDF          LSW: 1110 0101 1000 CNDF  (single word)
+# Evaluate the float condition and latch it into STF's TF flag; a later
+# `MOV32/NEGF32/SWAPF ...,TF|NTF` or `MOVST0 TF` (-> C/TC) tests it. This is the only
+# writer of TF, so without it the TF/NTF conditions can never be anything but stale.
+# Encoding confirmed against asm2000/dis2000: 0xE580=NEQ 0xE581=EQ ... 0xE58E=UNC.
+# The selector must be loc_hi4, not loc_mode5: CNDF occupies bits 0-3 and loc_mode5
+# (bits 3-7) would slice through it.
+:TESTTF cndf              is op_hi8=0xE5 & loc_hi4=0b1000 & cndf { STF_TF = cndf; }
 # NEGF32 RaH,RbH{,CNDF} LSW: 1110 0110 1010 CNDF ; MSW: 0000 0000 00bb baaa
 # UNCF (0b1111): unconditional negate + update flags from the result.
 # Others: conditional; leave flags alone.
@@ -538,20 +588,54 @@ attach variables [ p_rf ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
     f_ra = val;
 }
 # MOVST0 FLAG          LSW: 1010 1101 FFFF FFFF  (copy selected STF flags into ST0)
-# ST0 holds the integer Z/N flags the SB ...,COND decoder reads; setFloatFlags puts the
-# float compare result in the STF_ZF / STF_NF sub-registers, so forward them into the
-# unpacked $(Z) / $(N) flag registers. (imm8 is the flag-select mask; Z+N covers every
-# CMPF32/MAXF32/MINF32 → SB EQ/NEQ/GT/GEQ/LT/LEQ idiom. C/V/TC are untouched — the
-# FPU compare path doesn't set them.)
-:MOVST0 "#"imm8        is op_hi8=0xAD & imm8 {
-    $(Z) = STF_ZF;   # float ZF -> integer Z (ST0[4])
-    $(N) = STF_NF;   # float NF -> integer N (ST0[5])
+# ST0 holds the integer Z/N flags the SB ...,COND decoder reads, so MOVST0 is the bridge
+# that keeps the CMPF32 -> MOVST0 -> SB(cond) idiom alive. Per SPRUHS1C the mapping is
+# NOT one flag per bit -- several STF flags fold into one ST0 bit:
+#     OV = LVF | LUF      N = NF | NI      Z = ZF | ZI      C = TF      TC = TF
+# and "if any STF flag is not specified, the corresponding ST0 register bit is not
+# modified", so each ST0 bit is a select-gated update rather than an unconditional write.
+# LVF/LUF are additionally auto-cleared in STF when selected.
+#
+# `movst0_flags` carries the display (attach names, above); `imm8` is the same 8 bits as a
+# plain number, because an attach-names field has no value usable in the semantic section.
+# Every sel_* below is a decode-time constant, so the decompiler folds this whole block
+# down to the one or two assignments the mask actually selects (mask 0x14 -> N/Z only,
+# which is what every CMPF32/MAXF32/MINF32 site in PMR/DIR uses).
+:MOVST0 movst0_flags   is op_hi8=0xAD & movst0_flags & imm8 {
+    local mask:1 = imm8;    # sized copy: a bare field has no size for the & below
+    local sel_lvf:1 = (mask & 0x01) != 0;
+    local sel_luf:1 = (mask & 0x02) != 0;
+    local sel_nf:1  = (mask & 0x04) != 0;
+    local sel_ni:1  = (mask & 0x08) != 0;
+    local sel_zf:1  = (mask & 0x10) != 0;
+    local sel_zi:1  = (mask & 0x20) != 0;
+    local sel_tf:1  = (mask & 0x80) != 0;
+
+    local sel_ov:1 = sel_lvf || sel_luf;
+    local ovval:1  = (sel_lvf && STF_LV) || (sel_luf && STF_LU);
+    $(V) = (sel_ov && ovval) || (!sel_ov && $(V));
+
+    local sel_n:1 = sel_nf || sel_ni;
+    local nval:1  = (sel_nf && STF_NF) || (sel_ni && STF_NI);
+    $(N) = (sel_n && nval) || (!sel_n && $(N));
+
+    local sel_z:1 = sel_zf || sel_zi;
+    local zval:1  = (sel_zf && STF_ZF) || (sel_zi && STF_ZI);
+    $(Z) = (sel_z && zval) || (!sel_z && $(Z));
+
+    $(C)  = (sel_tf && STF_TF) || (!sel_tf && $(C));
+    $(TC) = (sel_tf && STF_TF) || (!sel_tf && $(TC));
+
+    # "the LUF or LVF flags are automatically cleared if selected"
+    STF_LV = STF_LV && !sel_lvf;
+    STF_LU = STF_LU && !sel_luf;
 }
 
 # MAXF32 RaH, #16FHi   LSW: 1110 1000 0010 0III ; MSW: IIII IIII IIII Iaaa  (2-word)
 # RaH = max(RaH, imm). imm16 = (LSW[2:0] << 13) | MSW[15:3] (III = HIGH 3 bits; see CMPF32).
 # Compare updates ZF/NF; selected value flushed through fpu_minmax_output.
-:MAXF32 f_ra, "#"^fimm_hi13  is op_hi8=0xE8 & loc_mode5=0b00100 & fimm_lo3 ; f_ra & fimm_hi13 {
+:MAXF32 f_ra, "#"^ctx_fimm16  is op_hi8=0xE8 & loc_mode5=0b00100 & fimm_lo3 ; f_ra & fimm_hi13
+        [ ctx_fimm16 = (fimm_lo3 << 13) | fimm_hi13; ] {
     local imm:4 = (zext(fimm_lo3:4) << 13 | zext(fimm_hi13:4)) << 16;
     update_stf_cmp(f_ra, imm);
     if (f_ra f>= imm) goto <keep>;
@@ -560,7 +644,8 @@ attach variables [ p_rf ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
     fpu_minmax_output(f_ra);
 }
 # MINF32 RaH, #16FHi   LSW: 1110 1000 0011 0III ; MSW: IIII IIII IIII Iaaa  (2-word)
-:MINF32 f_ra, "#"^fimm_hi13  is op_hi8=0xE8 & loc_mode5=0b00110 & fimm_lo3 ; f_ra & fimm_hi13 {
+:MINF32 f_ra, "#"^ctx_fimm16  is op_hi8=0xE8 & loc_mode5=0b00110 & fimm_lo3 ; f_ra & fimm_hi13
+        [ ctx_fimm16 = (fimm_lo3 << 13) | fimm_hi13; ] {
     local imm:4 = (zext(fimm_lo3:4) << 13 | zext(fimm_hi13:4)) << 16;
     update_stf_cmp(f_ra, imm);
     if (f_ra f<= imm) goto <keep>;
