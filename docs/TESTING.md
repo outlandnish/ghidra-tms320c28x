@@ -1,8 +1,8 @@
 # Testing the disassembler
 
-Decode correctness is verified with a headless Ghidra regression test, not by
-eyeballing. **A constructor isn't done until a known-encoding byte disassembles to
-the expected text.**
+Decode correctness is verified by a headless Ghidra regression test, not by
+eyeballing. **A constructor isn't done until a known-encoding byte disassembles
+to the expected text.**
 
 ## Run it
 
@@ -14,74 +14,65 @@ GHIDRA_INSTALL_DIR=/path/to/ghidra tests/run_disasm_test.sh
 # Windows
 pwsh -File tests\run_disasm_test.ps1
 ```
+
 It (1) recompiles the `.sla`, (2) reinstalls into Ghidra, (3) headless-disassembles
-`tests/addr_modes.bin`, (4) diffs against `tests/addr_modes.expected.txt`, printing
-`PASS: all N cases` or per-line `FAIL`.
+`tests/addr_modes.bin`, (4) diffs against `tests/addr_modes.expected.txt`,
+printing `PASS: all N cases` or per-line `FAIL`.
 
 ## Files
 
 - `tests/addr_modes.bin` — hand-assembled bytes, one instruction per test.
 - `tests/addr_modes.expected.txt` — `wordaddr <tab> bytes <tab> expected text`.
-- `ghidra_scripts/DumpDisasm.java` — headless post-script: disassembles linearly
-  and prints `addr <tab> bytes <tab> mnemonic+operands`.
+- `ghidra_scripts/DumpDisasm.java` — headless post-script; dumps
+  `addr <tab> bytes <tab> mnemonic+operands`.
 
 ## Adding cases
 
 1. Work out the instruction word(s). The loc field is the LOW byte; the opcode
    group is the HIGH byte. Bytes are little-endian, so a word `0xHHLL` is `LL HH`.
-2. Append the bytes to `addr_modes.bin` (regenerate via the Python snippet in
-   git history / DESIGN notes) and a row to `addr_modes.expected.txt`.
+2. Append the bytes to `addr_modes.bin` and a row to `addr_modes.expected.txt`.
 3. Re-run. Comparison is on the mnemonic text, tolerant of `0x` formatting.
 
-## Verified baseline (2026-06-22): all 14 cases pass
-
-Covers every AMODE=0 loc16/loc32 addressing mode (direct `@6`, stack `*-SP`/`*SP++`/
-`*--SP`, indirect `*XARn++`/`*--XARn`/`*+XARn[AR0|AR1]`/`*+XARn[imm3]`, register-direct
+The 14-case baseline covers every AMODE=0 loc16/loc32 addressing mode (direct
+`@6`, stack `*-SP` / `*SP++` / `*--SP`, indirect
+`*XARn++` / `*--XARn` / `*+XARn[AR0|AR1]` / `*+XARn[imm3]`, register-direct
 `@XARn`), a multi-word instruction (`MOV @4,#0x1234`), and fixed opcodes
 (`ABORTI`, `IDLE`).
 
-## TI ground-truth parity (the strongest correctness check)
+## TI ground-truth parity
 
-The most powerful validation is to disassemble **real TI-compiled C28x code** and diff
-mnemonics against TI's own disassembler. Take an object out of a TI C2000 runtime lib,
-run TI's `dis2000` on it for ground truth, extract its COFF2 `.text` to a raw bin
-(`.text` size is in **words**), import that bin (`TMS320C28x:LE:32:default`, base 0),
-disassemble linearly, and diff `<wordaddr> <mnemonic>` against the dis2000 lines.
-Bar: **0 wrong decodes** (a wrong decode is a spec bug); minimize UNDEFs (missing
-opcodes). Baseline established at 2026-08 was **100% mnemonic agreement, 0 wrong,
-0 gaps** across five objects (3,638 instructions) from `rts2800_fpu32.lib` — three
-FPU-heavy (`k_expf`, `catrigf`, `c99_complex`) plus two integer (`memcpy_s`,
-`strcpy_s`). A mix of FPU and integer objects exercises disjoint decode paths.
+Disassemble **real TI-compiled C28x code** and diff mnemonics against TI's own
+disassembler `dis2000`. **Bar: 0 wrong decodes** (a wrong decode is a spec bug);
+minimize UNDEFs (missing opcodes).
 
-The runtime-lib parity driver was previously shipped as `tests/run_ti_parity.ps1`
-but was removed to keep the repo free of TI-toolchain assumptions and TI-derived
-artifacts. Re-run parity manually against a local TI CGT install using
-`ghidra_scripts/DumpParity.java` as the headless post-script — see the deleted
-script in git history (before commit removing it) for the exact `ar2000` /
-`dis2000` COFF2 extraction sequence.
+`tests/run_fw_parity.{ps1,sh}` slices a word range out of a firmware image,
+round-trips through `asm2000` + `dis2000` for the ground truth,
+headless-disassembles with our `.sla`, and reports agree / wrong / undef /
+length-skew. Requires `$GHIDRA_INSTALL_DIR` and `$C2000WARE`.
 
-For firmware-range parity (real image, not RTS objects), use
-`tests/run_fw_parity.ps1` / `tests/run_fw_parity.sh` — same idea, but slicing a
-word range out of an image and round-tripping through `asm2000` + `dis2000`.
+Runtime-library parity (extract `.text` sections from `rts2800_fpu32.lib`,
+compare against `dis2000`) has no in-tree driver — the toolchain-and-lib
+dependencies aren't redistributable. Build it around
+`ghidra_scripts/DumpParity.java` if you need to re-run.
 
-## What parity does NOT prove — and the bug classes that hide behind it
+## What parity does NOT prove
 
-Mnemonic parity compares only the **first token**, so a constructor with the right
-mnemonic but wrong operands/target/semantics passes silently. Real bugs found this way
-(each needed eyeballing operands or the decompiler, then cross-checking SPRU430F):
+Mnemonic parity compares only the **first token**, so a constructor with the
+right mnemonic but wrong operands or semantics passes silently. Bug classes to
+spot-check for after any spec change:
 
-- **Relative-vs-absolute targets** — a call/branch that should be absolute computed a
-  PC-relative one (e.g. it pointed at itself). Check every branch/call target value.
-- **Partial sub-register writes** — an instruction defined to zero/sign-extend into a
-  wider register that writes only the narrow half leaves the sibling half stale; the
-  decompiler then shows `CONCAT22(stale_hi, lo)` everywhere. Write the full register.
-- **Wrong token-field bit range** — an operand field whose `(lo,hi)` overlaps the wrong
-  bits. The mode name still renders, only the *value* is wrong (e.g. an index that
-  always equals the register number). Prefer regression vectors where the two differ
-  (index≠register) so `0==0` can't mask it.
-- **Wrong multi-word length** — a 2-word instruction decoded as 1 word desyncs the
-  entire downstream linear sweep; a greedy 1-word pattern can swallow a sibling opcode.
+- **Relative-vs-absolute branch targets.** Check every branch/call target value.
+- **Partial sub-register writes.** An op defined to zero/sign-extend into a
+  wider register that writes only the narrow half leaves the sibling half
+  stale; the decompiler then shows `CONCAT22(stale_hi, lo)` everywhere. Write
+  the full register.
+- **Wrong token-field bit range.** The mode name still renders, only the
+  *value* is wrong (e.g. an index that always equals the register number).
+  Prefer regression vectors where the two differ so `0==0` can't mask it.
+- **Wrong multi-word length.** A 2-word instruction decoded as 1 word desyncs
+  the entire downstream sweep; `run_fw_parity.{ps1,sh}` reports these as
+  "length skew".
 
-When adding constructors, spot-check the rendered operands (not just the mnemonic) and
-run the decompiler on a small function — ugly `CONCAT`/`ZEXT` noise often points at one
-of these.
+When adding constructors, spot-check the rendered operands (not just the
+mnemonic) and run the decompiler on a small function — ugly `CONCAT` / `ZEXT`
+noise usually points at one of these.
