@@ -25,10 +25,16 @@ param(
   [string]$Ghidra = $env:GHIDRA_INSTALL_DIR,
   [string]$Module = (Split-Path -Parent $PSScriptRoot)
 )
-if (-not $Ghidra) { throw "Set -Ghidra or the GHIDRA_INSTALL_DIR env var to your Ghidra install." }
+# Load this worktree's local config (.c28x.env), then re-resolve -Ghidra from it
+# when it was not passed explicitly. Absent file => no-op (CI is unaffected).
+. "$PSScriptRoot\_env.ps1"
+Import-C28xEnv $Module
+if (-not $PSBoundParameters.ContainsKey('Ghidra')) { $Ghidra = $env:GHIDRA_INSTALL_DIR }
+if (-not $Ghidra) { throw "Set -Ghidra, `$env:GHIDRA_INSTALL_DIR, or .c28x.env to your Ghidra install." }
 $ErrorActionPreference = "Stop"
 
-$ws = "$env:TEMP\c28x-emu"
+# Per-worktree scratch dir, so parallel worktrees do not collide.
+$ws = Get-C28xScratchRoot -Module $Module -Kind "emu"
 New-Item -ItemType Directory -Force -Path "$ws\proj","$ws\scripts" | Out-Null
 Copy-Item "$Module\ghidra_scripts\EmuFlagTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuFpuCondTest.java" "$ws\scripts\" -Force
