@@ -56,3 +56,16 @@ to that derived material:
     POSSIBILITY OF SUCH DAMAGE.
 
 See THIRD-PARTY.md for per-file provenance notes.
+
+-------------------------------------------------------------------------------
+
+Portions of this module are adapted from mwdmwd/ghidra-c28x
+(https://github.com/mwdmwd/ghidra-c28x), an independent C28x Ghidra processor
+module also licensed under the Apache License, Version 2.0. Reuse is per an
+explicit invitation from that project's maintainer
+(https://github.com/outlandnish/ghidra-tms320c28x/issues/12).
+
+Where a file in this repository is materially adapted from that project, its
+header retains the mwdmwd copyright line alongside this project's own copyright
+notice, per Apache-2.0 section 4(b). See THIRD-PARTY.md for the running catalog
+of adapted files.
