@@ -5,9 +5,9 @@
 # Portions adapted from mwdmwd/ghidra-c28x (Apache-2.0):
 #   * the `cndf` condition sub-table (12 conditions + UNC/UNCF);
 #   * the STF sub-register model (STF_ZF/NF/TF/LV/LU/NI/ZI defined in slaspec);
-#   * the operand-conditioning macros `fpu_cmp_operand` (denormal -> 0, NaN ->
-#     +inf) and `tmu_condition_operand` (TMU input canonicalisation) per
-#     SPRUHS1C §7.5.2;
+#   * the operand-conditioning macro `tmu_condition_operand` (TMU input
+#     canonicalisation) per SPRUHS1C §7.5.2 -- the compare-input analogue was
+#     ported too but is deliberately not wired up; see update_stf_cmp;
 #   * `fpu_minmax_output` (denormal/NaN flush on MAX/MIN result);
 #   * the flag-writing macros `update_stf` (arith 1-op), `update_stf_cmp`
 #     (compare, with conditioned operands), `update_stf_mov` (MOV loads: ZI/NI
@@ -105,6 +105,51 @@ define pcodeop QUADF32;
 define pcodeop IEXP2F32;
 define pcodeop LOG2F32;
 
+# Operand/result conditioning (SPRUHS1C §7.5.2). The C28x FPU is not IEEE-clean: it
+# treats denormals as ±0 and NaNs as ±infinity on compare and TMU inputs, and flushes
+# the MAX/MIN result the same way. See the macro comments below for why these are
+# intrinsics rather than inline p-code. Behaviours live in
+# TMS320C28xEmulateInstructionStateModifier.
+define pcodeop TMU_COND_OPERAND;   # TMU input:      denormal/±0 -> +0, NaN -> signed inf
+define pcodeop FPU_MINMAX_FLUSH;   # MAX/MIN result: denormal -> ±0 preserved, NaN -> +inf
+
+# Latched exception flags (SPRUHS1C 7.3.4 / 7.3.5). Underflow is "the operation generated
+# a value too small to represent" and overflow "too large" -- so neither is decidable from
+# the rounded result alone: 0.0 * 5.0 returns a zero that is not an underflow, and
+# Inf + 1.0 an infinity that is not an overflow. Both operands and the operation are
+# needed, which is exactly what an intrinsic can take and inline p-code cannot express
+# without recomputing the arithmetic at wider precision. The sticky OR is folded into the
+# behaviour, so each is one CALLOTHER and one register write.
+#   inputs: (kind, a, b, current-latch)   ->   new latch value
+define pcodeop FPU_UNDERFLOW;
+define pcodeop FPU_OVERFLOW;
+
+# Operation selectors for the two above. Must match FpuArithFlagBehavior.KIND_* in
+# TMS320C28xEmulateInstructionStateModifier.
+@define FPK_MPY   "0:1"
+@define FPK_ADD   "1:1"
+@define FPK_SUB   "2:1"
+@define FPK_DIV   "3:1"
+@define FPK_SQRT  "4:1"
+@define FPK_EINV  "5:1"
+@define FPK_EISQR "6:1"
+
+# Two-operand and one-operand latch updates. `b` is ignored by the one-operand kinds.
+macro fpu_latch2(kind, a, b) {
+    STF_LU = FPU_UNDERFLOW(kind, a, b, STF_LU);
+    STF_LV = FPU_OVERFLOW(kind, a, b, STF_LV);
+}
+macro fpu_latch1(kind, a) {
+    local zero:4 = 0;
+    STF_LU = FPU_UNDERFLOW(kind, a, zero, STF_LU);
+    STF_LV = FPU_OVERFLOW(kind, a, zero, STF_LV);
+}
+# Several TMU ops latch only one of the two (SPRUHS1C chapter 7 instruction tables):
+# MPY2PIF32 / SQRTF32 / ATANPUF32 set only LVF, DIV2PIF32 / IEXP2F32 only LUF.
+macro fpu_latch_lv2(kind, a, b) { STF_LV = FPU_OVERFLOW(kind, a, b, STF_LV); }
+macro fpu_latch_lu2(kind, a, b) { STF_LU = FPU_UNDERFLOW(kind, a, b, STF_LU); }
+macro fpu_latch_lv1(kind, a) { local zero:4 = 0; STF_LV = FPU_OVERFLOW(kind, a, zero, STF_LV); }
+
 # --- STF flag model (unpacked) -----------------------------------------------
 # CMPF32/MINF32/MAXF32 set ZF/NF from the comparison; the single-value flag ops
 # (ABSF32, NEGF32 UNCF, ...) set ZF/NF from the result's exponent/sign.
@@ -125,51 +170,17 @@ define pcodeop LOG2F32;
 # match silicon on the edge-case inputs (denormals are frequent in scaled fixed-
 # point-to-float conversions; NaNs surface in TMU divide-by-zero paths).
 #
-# fpu_cmp_operand: coerce an input for CMPF32/MAXF32/MINF32:
-#   exp == 0                 -> denormal or ±0 -> canonical +0
-#   exp == 0xFF, mantissa==0 -> ±inf           -> pass through
-#   exp == 0xFF, mantissa!=0 -> NaN            -> ±inf (sign preserved)
-#   otherwise (normal)                          -> pass through
-macro fpu_cmp_operand(out, in) {
-    local exp:4 = in & 0x7F800000;
-    out = in;
-    if (exp != 0) goto <not_zeroish>;
-    out = 0;
-    goto <done>;
-    <not_zeroish>
-    if (exp != 0x7F800000) goto <done>;
-    if ((in & 0x007FFFFF) == 0) goto <done>;
-    out = 0x7F800000;    # NaN -> +inf; sign bit is dropped (mwdmwd matches this)
-    <done>
-}
 
 # TMU input conditioning (SPRUHS1C §7.5.2): denormals/negative-zero -> +0,
 # NaN -> signed inf. Applied to DIVF32 / SQRTF32 / MPY2PIF32 / DIV2PIF32 inputs.
 macro tmu_condition_operand(out, in) {
-    local exp:4 = in & 0x7F800000;
-    if (exp != 0) goto <not_zeroish>;
-    out = 0;
-    goto <done>;
-    <not_zeroish>
-    out = in;
-    if (exp != 0x7F800000) goto <done>;
-    out = (in & 0x80000000) | 0x7F800000;
-    <done>
+    out = TMU_COND_OPERAND(in);
 }
 
 # MAX/MIN output conditioning: SPRUHS1C says the picked value is passed through
 # a denormal-flush + NaN-flush stage before being written to RaH.
 macro fpu_minmax_output(out) {
-    local exp:4 = out & 0x7F800000;
-    if (exp != 0) goto <not_denorm>;
-    if ((out & 0x007FFFFF) == 0) goto <done>;
-    out = 0;
-    goto <done>;
-    <not_denorm>
-    if (exp != 0x7F800000) goto <done>;
-    if ((out & 0x007FFFFF) == 0) goto <done>;
-    out = 0x7F800000;
-    <done>
+    out = FPU_MINMAX_FLUSH(out);
 }
 
 # --- Flag-writing macros (used by the FP instructions) -----------------------
@@ -177,13 +188,23 @@ macro fpu_minmax_output(out) {
 # 2-operand compare (CMPF32/MAXF32/MINF32): condition both operands first, then
 # set ZF/NF from the ordered comparison. `setFloatFlags` is kept as a thin alias
 # so existing call sites (below) don't have to change all at once.
+# Compare operands are deliberately NOT run through fpu_cmp_operand, though the FPU does
+# condition them. Three reasons, in order of weight:
+#   1. It cannot change a conclusion. The conditioning only differs from a plain compare
+#      when an operand is a denormal or a NaN, and for a threshold test the difference is
+#      "treated as 0" vs "treated as ~1e-38" -- it does not flip a real branch. SLEIGH's
+#      own f== / f< already return false for NaN, which is the IEEE answer.
+#   2. It costs the most of any conditioning site, because it touches BOTH operands of
+#      EVERY compare -- including every float constant. Routing constants through an
+#      opaque intrinsic loses their rendering: `if (0.002 < x)` becomes
+#      `t = FPU_CMP_OPERAND(0x3b03126f); if (t < ...)`.
+#   3. Measured on a real PMR function: conditioning both operands costs 79 decompiled
+#      lines against 55 without, for zero change in what the code is doing.
+# The conditioning that DOES survive is the kind that alters a value flowing onward --
+# TMU inputs and the MAX/MIN result -- where the difference is observable downstream.
 macro update_stf_cmp(lhs, rhs) {
-    local lhs_c:4;
-    local rhs_c:4;
-    fpu_cmp_operand(lhs_c, lhs);
-    fpu_cmp_operand(rhs_c, rhs);
-    STF_ZF = (lhs_c f== rhs_c);
-    STF_NF = (lhs_c f< rhs_c);
+    STF_ZF = (lhs f== rhs);
+    STF_NF = (lhs f< rhs);
 }
 macro setFloatFlags(a, b) {
     update_stf_cmp(a, b);
@@ -222,7 +243,10 @@ macro packstf(res) {
     local ni:4 = zext(STF_NI);
     local zi:4 = zext(STF_ZI);
     local tf:4 = zext(STF_TF);
-    res = lv | (lu << 1) | (nf << 2) | (zf << 3) | (ni << 4) | (zi << 5) | (tf << 6);
+    local rnd:4 = zext(STF_RND);
+    local shd:4 = zext(STF_SHDWS);
+    res = lv | (lu << 1) | (nf << 2) | (zf << 3) | (ni << 4) | (zi << 5) | (tf << 6)
+        | (rnd << 9) | (shd << 31);
 }
 macro unpackstf(in) {
     STF_LV = (in & 0x01) != 0;
@@ -232,6 +256,73 @@ macro unpackstf(in) {
     STF_NI = (in & 0x10) != 0;
     STF_ZI = (in & 0x20) != 0;
     STF_TF = (in & 0x40) != 0;
+    STF_RND = (in & 0x200) != 0;
+    STF_SHDWS = (in & 0x80000000) != 0;
+}
+
+# --- LUF / LVF: the latched exception flags -----------------------------------
+# Fully modelled: SETFLG / SAVE write them, RESTORE reloads them, MOVST0 folds them into
+# ST0's OV and auto-clears them, packstf / unpackstf round-trip them through memory, the
+# `LU` / `LV` cndf conditions read them, and -- via fpu_latch* above -- the arithmetic
+# instructions latch them.
+#
+# Per SPRUHS1C 7.3.4 / 7.3.5 (a section in the TMU chapter, which states its treatment
+# matches the FPU):
+#     underflow -- the operation generates a value too small to represent; zero is
+#                  returned. With 7.3.3 (a denormal is never generated) that means any
+#                  result that would have been denormal counts.
+#     overflow  -- the operation generates a value too large to represent; +/-Inf is
+#                  returned.
+# Neither is decidable from the rounded result alone -- 0.0 * 5.0 returns a zero that is
+# not an underflow, and Inf + 1.0 an infinity that is not an overflow -- so the operands
+# and the operation go to an intrinsic that recomputes the true result at double
+# precision. That is exact for every operation here on float inputs.
+#
+# Which instructions latch, and which flag, is not uniform. Chapter 1 names MPYF32,
+# ADDF32, SUBF32, MACF32, EINVF32 and EISQRTF32 for both flags; the chapter 7 TMU tables
+# add DIVF32 (both), MPY2PIF32 and SQRTF32 (LVF only) and DIV2PIF32 (LUF only). Chapter
+# 1's list simply predates the TMU. MACF32 latches on BOTH of its operations, per "LUF = 1
+# if MACF32 (add or multiply) generates an underflow condition".
+#
+# NOT latched here: the transcendental TMU estimates (IEXP2F32, LOG2F32, ATANPUF32,
+# QUADF32). Their results are pcodeops with no modelled value, so there is nothing to
+# compare a true result against; latching them would be invention rather than modelling.
+#
+# Cost, measured on a float-heavy PMR function: 55 decompiled lines without latching, 95
+# with. The intrinsics cannot be eliminated even where nothing reads LUF/LVF -- each takes
+# the previous latch value and returns the new one, so they form a dependency chain, and
+# Ghidra treats CALLOTHER as having side effects regardless. They also serialise the
+# surrounding arithmetic, which costs some expression folding. That is the price of having
+# the flags be correct; if a future reader wants the cheaper decompile back, deleting the
+# fpu_latch* call sites is a mechanical change and the emulation tests will show exactly
+# what stops being modelled.
+
+# --- SETFLG / SAVE flag write ------------------------------------------------
+# Both instructions carry an 11-bit FLAG mask ("which flags to change") and an 11-bit
+# VALUE ("what to change them to"); a flag whose mask bit is 0 keeps its current value.
+# FLAG's bit order is the STF register's own (SPRUHS1C Table 1-2), which is NOT the
+# order MOVST0's mask uses -- MOVST0 swaps ZF/NI and puts TF at bit 7. Do not share
+# tables between the two.
+#   0 LVF   1 LUF   2 NF   3 ZF   4 NI   5 ZI   6 TF   7,8 rsvd   9 RND32   10 rsvd
+# Both operands are decode-time constants, so the decompiler folds this down to just
+# the flags the mask actually names.
+macro apply_setflg(fl, va) {
+    local s_lv:1 = (fl & 0x001) != 0;
+    local s_lu:1 = (fl & 0x002) != 0;
+    local s_nf:1 = (fl & 0x004) != 0;
+    local s_zf:1 = (fl & 0x008) != 0;
+    local s_ni:1 = (fl & 0x010) != 0;
+    local s_zi:1 = (fl & 0x020) != 0;
+    local s_tf:1 = (fl & 0x040) != 0;
+    local s_rn:1 = (fl & 0x200) != 0;
+    STF_LV    = (s_lv && ((va & 0x001) != 0)) || (!s_lv && STF_LV);
+    STF_LU    = (s_lu && ((va & 0x002) != 0)) || (!s_lu && STF_LU);
+    STF_NF    = (s_nf && ((va & 0x004) != 0)) || (!s_nf && STF_NF);
+    STF_ZF    = (s_zf && ((va & 0x008) != 0)) || (!s_zf && STF_ZF);
+    STF_NI    = (s_ni && ((va & 0x010) != 0)) || (!s_ni && STF_NI);
+    STF_ZI    = (s_zi && ((va & 0x020) != 0)) || (!s_zi && STF_ZI);
+    STF_TF    = (s_tf && ((va & 0x040) != 0)) || (!s_tf && STF_TF);
+    STF_RND   = (s_rn && ((va & 0x200) != 0)) || (!s_rn && STF_RND);
 }
 
 # --- cndf: FPU condition-code sub-table --------------------------------------
@@ -261,9 +352,18 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
 # =============================================================================
 # Register-register 3-operand FP ops:  LSW fixed, MSW = 0000 000c ccbb baaa
 # =============================================================================
-:ADDF32 f_ra, f_rb, f_rc  is op16=0xE710; f_rc & f_rb & f_ra { f_ra = f_rb f+ f_rc; }
-:SUBF32 f_ra, f_rb, f_rc  is op16=0xE720; f_rc & f_rb & f_ra { f_ra = f_rb f- f_rc; }
-:MPYF32 f_ra, f_rb, f_rc  is op16=0xE700; f_rc & f_rb & f_ra { f_ra = f_rb f* f_rc; }
+:ADDF32 f_ra, f_rb, f_rc  is op16=0xE710; f_rc & f_rb & f_ra {
+    fpu_latch2($(FPK_ADD), f_rb, f_rc);
+    f_ra = f_rb f+ f_rc;
+}
+:SUBF32 f_ra, f_rb, f_rc  is op16=0xE720; f_rc & f_rb & f_ra {
+    fpu_latch2($(FPK_SUB), f_rb, f_rc);
+    f_ra = f_rb f- f_rc;
+}
+:MPYF32 f_ra, f_rb, f_rc  is op16=0xE700; f_rc & f_rb & f_ra {
+    fpu_latch2($(FPK_MPY), f_rb, f_rc);
+    f_ra = f_rb f* f_rc;
+}
 
 # =============================================================================
 # Register-register 2-operand ops:  MSW = 0000 0000 00bb baaa
@@ -289,8 +389,16 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
     fpu_minmax_output(f_ra);
 }
 # SLEIGH has no float literals — use the IEEE-754 bit pattern (1.0f = 0x3F800000).
-:EINVF32 f_ra, f_rb    is op16=0xE693; f_rb & f_ra & f_msw_hi=0 { local one:4 = 0x3F800000; f_ra = one f/ f_rb; }       # reciprocal estimate
-:EISQRTF32 f_ra, f_rb  is op16=0xE692; f_rb & f_ra & f_msw_hi=0 { local one:4 = 0x3F800000; f_ra = one f/ sqrt(f_rb); } # 1/sqrt estimate
+:EINVF32 f_ra, f_rb    is op16=0xE693; f_rb & f_ra & f_msw_hi=0 {
+    local one:4 = 0x3F800000;
+    fpu_latch1($(FPK_EINV), f_rb);
+    f_ra = one f/ f_rb;
+}       # reciprocal estimate
+:EISQRTF32 f_ra, f_rb  is op16=0xE692; f_rb & f_ra & f_msw_hi=0 {
+    local one:4 = 0x3F800000;
+    fpu_latch1($(FPK_EISQR), f_rb);
+    f_ra = one f/ sqrt(f_rb);
+} # 1/sqrt estimate
 :FRACF32 f_ra, f_rb    is op16=0xE6F1; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb f- trunc(f_rb); } # fractional part (approx)
 
 # =============================================================================
@@ -304,11 +412,13 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
 :MPY2PIF32 f_ra, f_rb  is op16=0xE270; f_rb & f_ra & f_msw_hi=0 {
     local b:4; tmu_condition_operand(b, f_rb);
     local twopi:4 = 0x40C90FDB;
+    fpu_latch_lv2($(FPK_MPY), b, twopi);   # LVF only
     f_ra = b f* twopi;
 }
 :DIV2PIF32 f_ra, f_rb  is op16=0xE271; f_rb & f_ra & f_msw_hi=0 {
     local b:4; tmu_condition_operand(b, f_rb);
     local twopi:4 = 0x40C90FDB;
+    fpu_latch_lu2($(FPK_DIV), b, twopi);   # LUF only
     f_ra = b f/ twopi;
 }
 :IEXP2F32 f_ra, f_rb   is op16=0xE272; f_rb & f_ra & f_msw_hi=0 { f_ra = IEXP2F32(f_rb); }   # 1/2^x estimate
@@ -316,10 +426,12 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
 :DIVF32 f_ra, f_rb, f_rc  is op16=0xE274; f_rc & f_rb & f_ra & f_msw_hi=0 {
     local b:4; tmu_condition_operand(b, f_rb);
     local c:4; tmu_condition_operand(c, f_rc);
+    fpu_latch2($(FPK_DIV), b, c);
     f_ra = b f/ c;
 }
 :SQRTF32 f_ra, f_rb    is op16=0xE277; f_rb & f_ra & f_msw_hi=0 {
     local b:4; tmu_condition_operand(b, f_rb);
+    fpu_latch_lv1($(FPK_SQRT), b);         # LVF only
     f_ra = sqrt(b);
 }
 :SINPUF32 f_ra, f_rb   is op16=0xE278; f_rb & f_ra & f_msw_hi=0 { f_ra = SINPUF32(f_rb); }   # sin(2pi*x)
@@ -353,14 +465,59 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
 # RB is 32-bit; occupies 2 words on the 16-bit word-addressed stack.
 :PUSH "RB"   is op16=0xFFF0 { local a:4 = SP; *[ram]:4 a = RB; SP = SP + 2; }
 :POP "RB"    is op16=0xFFF1 { SP = SP - 2; local a:4 = SP; RB = *[ram]:4 a; }
-:RESTORE     is op16=0xE562 { }   # restores saved FP regs from stack frame — no-op stub
+# RESTORE   LSW: 1110 0101 0110 0010 (single word)
+# Copy R0H-R7H and STF back from the shadow register set, and clear SHDWS. Was a `{ }`
+# no-op, which made a SAVE/RESTORE-bracketed ISR look like it clobbered every float
+# register of the code it interrupted.
+:RESTORE     is op16=0xE562 {
+    R0H = R0H_s; R1H = R1H_s; R2H = R2H_s; R3H = R3H_s;
+    R4H = R4H_s; R5H = R5H_s; R6H = R6H_s; R7H = R7H_s;
+    STF = STF_s;
+    unpackstf(STF);
+    STF_SHDWS = 0;
+}
 :ZEROA       is op16=0xE563 { R0H=0; R1H=0; R2H=0; R3H=0; R4H=0; R5H=0; R6H=0; R7H=0; }
 
-# SETFLG FLAG,VALUE   LSW: 1110 0110 00FF FFFF ; MSW: FFFFF VVV VVVV VVVV  (2-word).
-# Set/clear selected FPU status flags per an 11-bit mask/value pair. The exact per-flag
-# scatter into STF isn't modeled; touch STF so the op emits non-empty p-code and flow
-# continues (7 sites — the dominant remaining FPU gap, e.g. word 0xe630).
-:SETFLG "#"setflg_m6  is op_hi8=0xE6 & lo_b76=0 & setflg_m6 ; imm16  { STF = STF; }
+# SETFLG FLAG,VALUE   LSW: 1110 0110 00FF FFFF ; MSW: FFFF FVVV VVVV VVVV  (2-word)
+# SAVE   FLAG,VALUE   LSW: 1110 0110 01FF FFFF ; MSW: FFFF FVVV VVVV VVVV  (2-word)
+# Set or clear selected FPU status flags. FLAG is split across both words (low 6 bits in
+# the LSW, high 5 in the MSW) so, like the #16FHi immediates, the display reassembles it
+# in a disassembly action rather than printing whichever half fits -- SETFLG's most
+# common real use is RND32, which is FLAG bit 9.
+#
+# Note the halves are the other way round from the #16FHi immediates: here the LSW holds
+# the HIGH 6 bits of FLAG and the MSW the low 5, i.e. FLAG = (m6 << 5) | f5. Confirmed
+# against asm2000: `SETFLG RNDF32=1` assembles to `e610 0200` -- m6 = 0b010000 puts the
+# set bit at FLAG[9], and reading the halves the other way round would land it on NI.
+#
+# SETFLG was `{ STF = STF; }` -- a placeholder that named flags it did not write, so
+# firmware clearing LUF/LVF or switching the rounding mode had no modelled effect at all.
+:SETFLG "#"^ctx_setflg_flag, "#"setflg_v11
+        is op_hi8=0xE6 & lo_b76=0 & setflg_m6 ; setflg_f5 & setflg_v11
+        [ ctx_setflg_flag = (setflg_m6 << 5) | setflg_f5; ] {
+    local f5:2 = setflg_f5;
+    local m6:2 = setflg_m6;
+    local fl:2 = (m6 << 5) | f5;
+    local va:2 = setflg_v11;
+    apply_setflg(fl, va);
+}
+# SAVE additionally copies the working register set to the shadows, in the same cycle.
+# Per SPRUHS1C the status register is copied BEFORE the flag values are changed, so the
+# packstf/copy happens first and SHDWS is set after it.
+:SAVE "#"^ctx_setflg_flag, "#"setflg_v11
+        is op_hi8=0xE6 & lo_b76=1 & setflg_m6 ; setflg_f5 & setflg_v11
+        [ ctx_setflg_flag = (setflg_m6 << 5) | setflg_f5; ] {
+    R0H_s = R0H; R1H_s = R1H; R2H_s = R2H; R3H_s = R3H;
+    R4H_s = R4H; R5H_s = R5H; R6H_s = R6H; R7H_s = R7H;
+    packstf(STF);
+    STF_s = STF;
+    STF_SHDWS = 1;
+    local f5:2 = setflg_f5;
+    local m6:2 = setflg_m6;
+    local fl:2 = (m6 << 5) | f5;
+    local va:2 = setflg_v11;
+    apply_setflg(fl, va);
+}
 
 # RPTB label, loc16 / #RC   LSW: 1011 0101 Rbbb bbbb ; MSW: (0000 0000 loc16) or (imm16).
 # Block-repeat (hardware loop over the following RSIZE words). The loop itself can't be
@@ -459,9 +616,11 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
 # operand pairing nor either destination.) When repeated under RPT the destinations
 # alternate R3H/R7H with R2H/R6H as the temporaries; only the standalone form is modelled.
 :MACF32 "R7H,R3H", loc32, "*XAR7++"  is op16=0xE250 ; op_hi8=0x1F & loc32 {
+    fpu_latch2($(FPK_ADD), R3H, R2H);
     R3H = R3H f+ R2H;
     local a:4 = XAR7;
     local m:4 = *[ram]:4 a;
+    fpu_latch2($(FPK_MPY), loc32, m);
     R2H = loc32 f* m;
     XAR7 = XAR7 + 2;
 }
@@ -558,16 +717,19 @@ p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
 :MPYF32 f_ra, "#"^ctx_fimm16, f_rb  is op_hi8=0xE8 & op_lo_76=0b01 & fimm_lo6 ; f_ra & f_rb & fimm_hi10
         [ ctx_fimm16 = (fimm_lo6 << 10) | fimm_hi10; ] {
     local imm:4 = (zext(fimm_lo6:4) << 10 | zext(fimm_hi10:4)) << 16;
+    fpu_latch2($(FPK_MPY), f_rb, imm);
     f_ra = f_rb f* imm;
 }
 :ADDF32 f_ra, "#"^ctx_fimm16, f_rb  is op_hi8=0xE8 & op_lo_76=0b10 & fimm_lo6 ; f_ra & f_rb & fimm_hi10
         [ ctx_fimm16 = (fimm_lo6 << 10) | fimm_hi10; ] {
     local imm:4 = (zext(fimm_lo6:4) << 10 | zext(fimm_hi10:4)) << 16;
+    fpu_latch2($(FPK_ADD), f_rb, imm);
     f_ra = f_rb f+ imm;
 }
 :SUBF32 f_ra, "#"^ctx_fimm16, f_rb  is op_hi8=0xE8 & op_lo_76=0b11 & fimm_lo6 ; f_ra & f_rb & fimm_hi10
         [ ctx_fimm16 = (fimm_lo6 << 10) | fimm_hi10; ] {
     local imm:4 = (zext(fimm_lo6:4) << 10 | zext(fimm_hi10:4)) << 16;
+    fpu_latch2($(FPK_SUB), f_rb, imm);
     f_ra = f_rb f- imm;
 }
 
@@ -731,92 +893,112 @@ p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
 #   MPYF32 RdH,ReH,RfH || MOV32 mem32, RaH   LSW: E000 sub 0b0000
 :MPYF32 p_rd, p_re_l, p_rf, "||MOV32", loc32, p_ra
         is op_hi8=0xE0 & loc_hi4=0b0000 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    fpu_latch2($(FPK_MPY), p_re_l, p_rf);
     p_rd = p_re_l f* p_rf;
     loc32 = p_ra;
 }
 :MPYF32 p_rd, p_re_h, p_rf, "||MOV32", loc32, p_ra
         is op_hi8=0xE0 & loc_hi4=0b0000 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    fpu_latch2($(FPK_MPY), p_re_h, p_rf);
     p_rd = p_re_h f* p_rf;
     loc32 = p_ra;
 }
 #   ADDF32 RdH,ReH,RfH || MOV32 mem32, RaH   LSW: E000 sub 0b0001
 :ADDF32 p_rd, p_re_l, p_rf, "||MOV32", loc32, p_ra
         is op_hi8=0xE0 & loc_hi4=0b0001 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    fpu_latch2($(FPK_ADD), p_re_l, p_rf);
     p_rd = p_re_l f+ p_rf;
     loc32 = p_ra;
 }
 :ADDF32 p_rd, p_re_h, p_rf, "||MOV32", loc32, p_ra
         is op_hi8=0xE0 & loc_hi4=0b0001 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    fpu_latch2($(FPK_ADD), p_re_h, p_rf);
     p_rd = p_re_h f+ p_rf;
     loc32 = p_ra;
 }
 #   SUBF32 RdH,ReH,RfH || MOV32 mem32, RaH   LSW: E000 sub 0b0010
 :SUBF32 p_rd, p_re_l, p_rf, "||MOV32", loc32, p_ra
         is op_hi8=0xE0 & loc_hi4=0b0010 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    fpu_latch2($(FPK_SUB), p_re_l, p_rf);
     p_rd = p_re_l f- p_rf;
     loc32 = p_ra;
 }
 :SUBF32 p_rd, p_re_h, p_rf, "||MOV32", loc32, p_ra
         is op_hi8=0xE0 & loc_hi4=0b0010 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    fpu_latch2($(FPK_SUB), p_re_h, p_rf);
     p_rd = p_re_h f- p_rf;
     loc32 = p_ra;
 }
 #   MPYF32 RdH,ReH,RfH || MOV32 RaH, mem32   LSW: E300 sub 0b0000
 :MPYF32 p_rd, p_re_l, p_rf, "||MOV32", p_ra, loc32
         is op_hi8=0xE3 & loc_hi4=0b0000 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    fpu_latch2($(FPK_MPY), p_re_l, p_rf);
     p_rd = p_re_l f* p_rf;
     p_ra = loc32;
 }
 :MPYF32 p_rd, p_re_h, p_rf, "||MOV32", p_ra, loc32
         is op_hi8=0xE3 & loc_hi4=0b0000 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    fpu_latch2($(FPK_MPY), p_re_h, p_rf);
     p_rd = p_re_h f* p_rf;
     p_ra = loc32;
 }
 #   ADDF32 RdH,ReH,RfH || MOV32 RaH, mem32   LSW: E300 sub 0b0001
 :ADDF32 p_rd, p_re_l, p_rf, "||MOV32", p_ra, loc32
         is op_hi8=0xE3 & loc_hi4=0b0001 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    fpu_latch2($(FPK_ADD), p_re_l, p_rf);
     p_rd = p_re_l f+ p_rf;
     p_ra = loc32;
 }
 :ADDF32 p_rd, p_re_h, p_rf, "||MOV32", p_ra, loc32
         is op_hi8=0xE3 & loc_hi4=0b0001 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    fpu_latch2($(FPK_ADD), p_re_h, p_rf);
     p_rd = p_re_h f+ p_rf;
     p_ra = loc32;
 }
 #   SUBF32 RdH,ReH,RfH || MOV32 RaH, mem32   LSW: E300 sub 0b0010
 :SUBF32 p_rd, p_re_l, p_rf, "||MOV32", p_ra, loc32
         is op_hi8=0xE3 & loc_hi4=0b0010 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    fpu_latch2($(FPK_SUB), p_re_l, p_rf);
     p_rd = p_re_l f- p_rf;
     p_ra = loc32;
 }
 :SUBF32 p_rd, p_re_h, p_rf, "||MOV32", p_ra, loc32
         is op_hi8=0xE3 & loc_hi4=0b0010 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    fpu_latch2($(FPK_SUB), p_re_h, p_rf);
     p_rd = p_re_h f- p_rf;
     p_ra = loc32;
 }
 #   MACF32 R3H,R2H,RdH,ReH,RfH || MOV32 RaH, mem32   LSW: E300 sub 0b0011
 :MACF32 "R3H,R2H", p_rd, p_re_l, p_rf, "||MOV32", p_ra, loc32
         is op_hi8=0xE3 & loc_hi4=0b0011 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    fpu_latch2($(FPK_ADD), R3H, R2H);
     R3H = R3H f+ R2H;
+    fpu_latch2($(FPK_MPY), p_re_l, p_rf);
     p_rd = p_re_l f* p_rf;
     p_ra = loc32;
 }
 :MACF32 "R3H,R2H", p_rd, p_re_h, p_rf, "||MOV32", p_ra, loc32
         is op_hi8=0xE3 & loc_hi4=0b0011 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    fpu_latch2($(FPK_ADD), R3H, R2H);
     R3H = R3H f+ R2H;
+    fpu_latch2($(FPK_MPY), p_re_h, p_rf);
     p_rd = p_re_h f* p_rf;
     p_ra = loc32;
 }
 #   MACF32 R7H,R6H,RdH,ReH,RfH || MOV32 RaH, mem32   LSW: E300 sub 0b1100
 :MACF32 "R7H,R6H", p_rd, p_re_l, p_rf, "||MOV32", p_ra, loc32
         is op_hi8=0xE3 & loc_hi4=0b1100 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    fpu_latch2($(FPK_ADD), R7H, R6H);
     R7H = R7H f+ R6H;
+    fpu_latch2($(FPK_MPY), p_re_l, p_rf);
     p_rd = p_re_l f* p_rf;
     p_ra = loc32;
 }
 :MACF32 "R7H,R6H", p_rd, p_re_h, p_rf, "||MOV32", p_ra, loc32
         is op_hi8=0xE3 & loc_hi4=0b1100 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    fpu_latch2($(FPK_ADD), R7H, R6H);
     R7H = R7H f+ R6H;
+    fpu_latch2($(FPK_MPY), p_re_h, p_rf);
     p_rd = p_re_h f* p_rf;
     p_ra = loc32;
 }
@@ -829,25 +1011,33 @@ p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
 # (p_rd9 / p_re12), and aaa/bbb/ccc are the ordinary f_ra/f_rb/f_rc.
 :MPYF32 f_ra, f_rb, f_rc, "||ADDF32", p_rd9, p_re12, p_rf7_0
         is op_hi8=0xE7 & loc_hi4=0b0100 & p_rf7_0 ; f_ra & f_rb & f_rc & p_rd9 & p_re12 & p_rf_lo1=0 {
+    fpu_latch2($(FPK_MPY), f_rb, f_rc);
     local prod:4 = f_rb f* f_rc;
+    fpu_latch2($(FPK_ADD), p_re12, p_rf7_0);
     p_rd9 = p_re12 f+ p_rf7_0;
     f_ra = prod;
 }
 :MPYF32 f_ra, f_rb, f_rc, "||ADDF32", p_rd9, p_re12, p_rf7_1
         is op_hi8=0xE7 & loc_hi4=0b0100 & p_rf7_1 ; f_ra & f_rb & f_rc & p_rd9 & p_re12 & p_rf_lo1=1 {
+    fpu_latch2($(FPK_MPY), f_rb, f_rc);
     local prod:4 = f_rb f* f_rc;
+    fpu_latch2($(FPK_ADD), p_re12, p_rf7_1);
     p_rd9 = p_re12 f+ p_rf7_1;
     f_ra = prod;
 }
 :MPYF32 f_ra, f_rb, f_rc, "||SUBF32", p_rd9, p_re12, p_rf7_0
         is op_hi8=0xE7 & loc_hi4=0b0101 & p_rf7_0 ; f_ra & f_rb & f_rc & p_rd9 & p_re12 & p_rf_lo1=0 {
+    fpu_latch2($(FPK_MPY), f_rb, f_rc);
     local prod:4 = f_rb f* f_rc;
+    fpu_latch2($(FPK_SUB), p_re12, p_rf7_0);
     p_rd9 = p_re12 f- p_rf7_0;
     f_ra = prod;
 }
 :MPYF32 f_ra, f_rb, f_rc, "||SUBF32", p_rd9, p_re12, p_rf7_1
         is op_hi8=0xE7 & loc_hi4=0b0101 & p_rf7_1 ; f_ra & f_rb & f_rc & p_rd9 & p_re12 & p_rf_lo1=1 {
+    fpu_latch2($(FPK_MPY), f_rb, f_rc);
     local prod:4 = f_rb f* f_rc;
+    fpu_latch2($(FPK_SUB), p_re12, p_rf7_1);
     p_rd9 = p_re12 f- p_rf7_1;
     f_ra = prod;
 }

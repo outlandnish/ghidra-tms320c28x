@@ -76,3 +76,33 @@ spot-check for after any spec change:
 When adding constructors, spot-check the rendered operands (not just the
 mnemonic) and run the decompiler on a small function — ugly `CONCAT` / `ZEXT`
 noise usually points at one of these.
+
+## Semantics: `tests/run_emu_test.{sh,ps1}`
+
+The disassembly test proves the *listing*; this proves the *p-code*. It emulates the FPU
+status-flag instructions (`SETFLG`, `SAVE`, `RESTORE`) and reads the STF sub-registers
+back, asserting both the flags a mask names and that the ones it does not name keep their
+previous values, plus the SAVE/RESTORE round trip through the shadow register set.
+
+This is the only test that can catch a wrong bit order *inside* a mask. `SETFLG`'s 11-bit
+FLAG field is split across both instruction words with the halves in the opposite order
+from the `#16FHi` immediates; swapping them silently moves `RND32` onto `NI` while the
+disassembly still reads as something entirely plausible. It caught exactly that during
+development.
+
+Run `run_disasm_test` first -- it is what compiles and installs the language.
+
+A second suite, `EmuFpuCondTest`, covers the `TMU_COND_OPERAND` / `FPU_MINMAX_FLUSH`
+conditioning intrinsics. Those are pcodeops, so their behaviour lives in the compiled
+`TMS320C28xEmulateInstructionStateModifier` and nothing else -- not the decompiler, not
+the decode tests -- can see it. Run `tests/build_modifier.*` first; the pspec names the
+modifier class, so without the jar the emulator refuses to start (verified: it dies with
+`ClassNotFoundException` rather than passing vacuously). A *misspelled pcodeop name* is
+the quieter failure -- `tryRegister` swallows it and the op stays opaque -- which is why
+every assertion checks a conditioned value rather than merely that stepping succeeded.
+
+It also covers `FPU_UNDERFLOW` / `FPU_OVERFLOW`, the LUF/LVF latching intrinsics. The two
+negative cases there are the whole point of the design: `0.0 / 5.0` produces a zero that
+is *not* an underflow and `Inf / 2.0` an infinity that is *not* an overflow, so neither
+verdict is reachable from the rounded result -- they only pass if the intrinsic is reading
+the operands.

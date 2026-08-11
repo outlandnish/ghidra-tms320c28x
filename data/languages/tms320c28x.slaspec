@@ -107,6 +107,20 @@ define register offset=0x90 size=4 [ STF RB ];
 # Field order matches STF bit numbering (SPRUHS1C Table 2-2):
 #   STF[0]=LVF STF[1]=LUF STF[2]=NF STF[3]=ZF STF[4]=NI STF[5]=ZI STF[6]=TF
 define register offset=0x124 size=1 [ STF_LV STF_LU STF_NF STF_ZF STF_NI STF_ZI STF_TF ];
+# The two non-condition STF bits, kept out of the run above because they are not
+# contiguous with it (SPRUHS1C Table 1-2): STF[9] = RND32 (0 = MPYF32/ADDF32/SUBF32
+# truncate, 1 = round to nearest even) and STF[31] = SHDWS (set by SAVE, cleared by
+# RESTORE). SETFLG can write RND32, so it needs somewhere to land.
+define register offset=0x12C size=1 [ STF_RND STF_SHDWS ];
+
+# --- FPU shadow register set (SAVE / RESTORE) --------------------------------
+# SAVE copies R0H-R7H and STF here in one cycle and RESTORE copies them back; it is
+# the register-preservation path for high-priority interrupts that cannot themselves
+# be interrupted (low-priority handlers push to the stack instead). Modelling them as
+# real registers rather than leaving SAVE/RESTORE as no-ops means an ISR that brackets
+# its body with SAVE/RESTORE no longer looks like it clobbers the interrupted code's
+# float registers.
+define register offset=0x140 size=4 [ R0H_s R1H_s R2H_s R3H_s R4H_s R5H_s R6H_s R7H_s STF_s ];
 
 # --- VCU-II registers (F2837x C28x+VCU, spruhs1c ch.5) ------------------------
 # General-purpose VR0-VR8, transition-bit regs, status, and the CRC result reg.
@@ -157,6 +171,11 @@ define context contextreg
   # disassembly action and prints the field. `noflow` keeps it local to the one
   # instruction. Display only -- the semantics still compute from the raw fields.
   ctx_fimm16 = (8,23) noflow
+  # Same trick for SETFLG / SAVE, whose 11-bit FLAG mask is split 6 bits in the LSW
+  # and 5 in the MSW. Deliberately shares bits with ctx_fimm16: both are noflow
+  # display scratch and no instruction is both an #16FHi form and a SETFLG form, so
+  # they can never be live at the same time.
+  ctx_setflg_flag = (8,18) noflow
 ;
 
 # Tokens and instruction constructors live in the .sinc include.

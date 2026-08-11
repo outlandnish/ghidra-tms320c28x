@@ -23,6 +23,11 @@
 #                   thing that decodes plausibly while naming the wrong register.
 #                   Assembled by asm2000 from the TI mnemonics, so the expected
 #                   registers are TI's, not ours.
+#   fpu_flags    -- SETFLG / SAVE / RESTORE. Their 11-bit FLAG mask is split across
+#                   both words with the HIGH 6 bits in the LSW and the low 5 in the
+#                   MSW -- the opposite order from the #16FHi immediates, and getting
+#                   it backwards silently moves RND32 onto NI. Assembled by asm2000
+#                   from TI mnemonics (`SETFLG RNDF32=1` -> e610 0200).
 #
 # Env / args:
 #   GHIDRA_INSTALL_DIR  -- required. Root of Ghidra install.
@@ -56,7 +61,7 @@ lang="$module/data/languages"
 tmp=$(mktemp -d -t c28x-test-XXXXXX)
 trap 'rm -rf "$tmp"' EXIT
 
-CASES="addr_modes fpu_display fpu_parallel"
+CASES="addr_modes fpu_display fpu_parallel fpu_flags"
 
 # 1. compile the .sla
 (cd "$lang" && "$GHIDRA_INSTALL_DIR/support/sleigh" tms320c28x.slaspec)

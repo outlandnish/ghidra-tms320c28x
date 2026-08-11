@@ -125,6 +125,21 @@ jobs:
       - name: Smoke test — language loads and disassembles (runtime cspec/pspec bind)
         run: bash tests/run_disasm_test.sh
 
+      # The conditioning intrinsics (TMU_COND_OPERAND / FPU_MINMAX_FLUSH) are pcodeops,
+      # so their behaviour lives in the compiled state modifier rather than the .sla. The
+      # semantics test below needs it installed -- and the pspec names the class, so
+      # without the jar the emulator will not start at all.
+      - name: Build the emulation state modifier
+        run: bash tests/build_modifier.sh
+
+      # The disassembly test above proves the listing; this proves the p-code. It
+      # emulates the FPU flag instructions and the conditioning intrinsics and reads the
+      # registers back, which is the only way to catch a wrong bit order inside a split
+      # mask, or an unregistered intrinsic -- both still disassemble to something
+      # entirely plausible.
+      - name: Semantics test — emulate the FPU flag and conditioning instructions
+        run: bash tests/run_emu_test.sh
+
       - name: Guard against a stale committed .sla
         run: |
           set -euo pipefail

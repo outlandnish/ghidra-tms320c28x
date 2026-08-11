@@ -76,7 +76,9 @@ define token instr16 (16)
     rptb_sel  = (7,7)       # RPTB form select (LSW 1011 0101 Rbbb bbbb): 0=loc16, 1=#RC
     rptb_rsz  = (0,6)       # RPTB block size RSIZE (low 7 bits of the LSW)
     norm_pm   = (3,3)       # NORM ACC,XARn: bit3 selects ++ (1) vs -- (0)
-    setflg_m6 = (0,5)       # SETFLG FPU flag-mask low 6 bits (LSW 1110 0110 00FF FFFF)
+    setflg_m6 = (0,5)       # SETFLG/SAVE FLAG mask, low 6 bits (LSW 1110 0110 0nFF FFFF)
+    setflg_f5 = (11,15)     # SETFLG/SAVE FLAG mask, high 5 bits (MSW FFFF FVVV VVVV VVVV)
+    setflg_v11 = (0,10)     # SETFLG/SAVE VALUE, all 11 bits (MSW low 11)
     lo_b76    = (6,7)        # top 2 bits of the low byte (SETFLG selector: 00)
 
     # --- FPU second-word (MSW) fields ----------------------------------------

@@ -85,6 +85,10 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 		tryRegister("VCRC16P1L", new VcrcBehavior(0x8005L, 16));
 		tryRegister("VCRC32L", new VcrcBehavior(0x04C11DB7L, 32));
 		tryRegister("countSignBits", new CountSignBitsBehavior());
+		tryRegister("TMU_COND_OPERAND", new FpuConditionBehavior(true, false));
+		tryRegister("FPU_MINMAX_FLUSH", new FpuConditionBehavior(false, true));
+		tryRegister("FPU_UNDERFLOW", new FpuArithFlagBehavior(false));
+		tryRegister("FPU_OVERFLOW", new FpuArithFlagBehavior(true));
 	}
 
 	private void tryRegister(String name, OpBehaviorOther behavior) {
@@ -182,6 +186,158 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 	// =========================================================================
 	// CALLOTHER behaviors
 	// =========================================================================
+
+	/**
+	 * FPU operand / result conditioning, SPRUHS1C §7.5.2. The C28x FPU is not IEEE-clean:
+	 * denormals are treated as zero and NaNs as infinity. The SLEIGH side calls these as
+	 * intrinsics rather than open-coding the bit tests, because inline they cost three
+	 * internal branches per invocation and land in the decompiled output; see the macro
+	 * comments in tms320c28x_fpu.sinc.
+	 *
+	 * <p>Two variants are wired up, differing in how they treat the sign and the ±0 case:
+	 * <ul>
+	 * <li><b>TMU input</b> (TMU_COND_OPERAND, {@code signedNaN}): denormal or ±0 becomes
+	 * +0, and a NaN keeps its sign, becoming ±inf.</li>
+	 * <li><b>MAX/MIN result</b> (FPU_MINMAX_FLUSH, {@code preserveZeroSign}): a true ±0
+	 * passes through unchanged (only a non-zero denormal is flushed), because this is a
+	 * value on its way to a register rather than an arithmetic input.</li>
+	 * </ul>
+	 *
+	 * <p>The compare-input variant ({@code signedNaN = false}, sign dropped on NaN) is what
+	 * the FPU applies to CMPF32/MAXF32/MINF32 operands, but the SLEIGH side deliberately
+	 * does not model it -- see the comment on {@code update_stf_cmp} in
+	 * tms320c28x_fpu.sinc. The parameterisation is kept so wiring it back up is a
+	 * one-line change here plus one in the sinc.
+	 */
+	private static final class FpuConditionBehavior implements OpBehaviorOther {
+		private static final long EXP_MASK = 0x7F800000L;
+		private static final long MANT_MASK = 0x007FFFFFL;
+		private static final long SIGN_MASK = 0x80000000L;
+
+		private final boolean signedNaN;
+		private final boolean preserveZeroSign;
+
+		FpuConditionBehavior(boolean signedNaN, boolean preserveZeroSign) {
+			this.signedNaN = signedNaN;
+			this.preserveZeroSign = preserveZeroSign;
+		}
+
+		@Override
+		public void evaluate(Emulate emu, Varnode out, Varnode[] inputs) {
+			if (out == null || inputs.length < 1) {
+				return;
+			}
+			MemoryState mem = emu.getMemoryState();
+			long v = mem.getValue(inputs[0]) & 0xFFFFFFFFL;
+			long exp = v & EXP_MASK;
+			long result;
+			if (exp == 0) {
+				// zero or denormal
+				result = (preserveZeroSign && (v & MANT_MASK) == 0) ? v : 0L;
+			}
+			else if (exp == EXP_MASK && (v & MANT_MASK) != 0) {
+				// NaN -> infinity
+				result = signedNaN ? ((v & SIGN_MASK) | EXP_MASK) : EXP_MASK;
+			}
+			else {
+				result = v;
+			}
+			mem.setValue(out, result);
+		}
+	}
+
+	/**
+	 * The latched exception flags LUF / LVF, SPRUHS1C 7.3.4 and 7.3.5.
+	 *
+	 * <p>Underflow is "the operation generated a value too small to represent in the given
+	 * format" (zero is returned) and overflow "too large" (±Inf is returned). Neither is
+	 * decidable from the rounded 32-bit result alone -- {@code 0.0f * 5.0f} returns a zero
+	 * that is not an underflow, and {@code Inf + 1.0f} an infinity that is not an
+	 * overflow. So the operands and the operation come in and the true result is recomputed
+	 * in double precision, which is exact for every one of these operations on float
+	 * inputs and cannot itself under- or overflow at these magnitudes.
+	 *
+	 * <p>Inputs are conditioned first: 7.3.3 makes a denormal operand read as zero and
+	 * 7.3.7 makes a NaN read as infinity, so an underflow verdict is decided on what the
+	 * hardware actually fed the multiplier, not on the raw register bits.
+	 *
+	 * <p>Because a denormal result is never generated (7.3.3), the underflow test is
+	 * "exact result is non-zero but smaller in magnitude than the smallest NORMAL float" --
+	 * a would-be-denormal is flushed to zero and counts. Overflow requires finite operands,
+	 * so an infinity merely propagating through does not latch.
+	 *
+	 * <p>inputs[0] = operation selector, [1] = a, [2] = b (ignored by 1-operand kinds),
+	 * [3] = the current latch. The sticky OR is applied here so the SLEIGH side is one
+	 * CALLOTHER and one register write per flag.
+	 */
+	private static final class FpuArithFlagBehavior implements OpBehaviorOther {
+		private static final int KIND_MPY = 0;
+		private static final int KIND_ADD = 1;
+		private static final int KIND_SUB = 2;
+		private static final int KIND_DIV = 3;
+		private static final int KIND_SQRT = 4;
+		private static final int KIND_EINV = 5;
+		private static final int KIND_EISQRT = 6;
+
+		/** Smallest positive NORMAL float; anything below is denormal and gets flushed. */
+		private static final double MIN_NORMAL = 1.17549435e-38;
+		private static final double MAX_FLOAT = 3.4028234663852886e38;
+
+		private final boolean overflow;
+
+		FpuArithFlagBehavior(boolean overflow) {
+			this.overflow = overflow;
+		}
+
+		@Override
+		public void evaluate(Emulate emu, Varnode out, Varnode[] inputs) {
+			if (out == null || inputs.length < 4) {
+				return;
+			}
+			MemoryState mem = emu.getMemoryState();
+			int kind = (int) mem.getValue(inputs[0]);
+			double a = condition((int) mem.getValue(inputs[1]));
+			double b = condition((int) mem.getValue(inputs[2]));
+			boolean latched = (mem.getValue(inputs[3]) & 1) != 0;
+
+			double exact;
+			switch (kind) {
+				case KIND_MPY: exact = a * b; break;
+				case KIND_ADD: exact = a + b; break;
+				case KIND_SUB: exact = a - b; break;
+				case KIND_DIV: exact = a / b; break;
+				case KIND_SQRT: exact = Math.sqrt(a); break;
+				case KIND_EINV: exact = 1.0 / a; break;
+				case KIND_EISQRT: exact = 1.0 / Math.sqrt(a); break;
+				default: mem.setValue(out, latched ? 1 : 0); return;
+			}
+
+			boolean set;
+			if (overflow) {
+				// A result that is infinite only because an operand already was is not an
+				// overflow -- the value was representable all along.
+				boolean operandsFinite = !Double.isInfinite(a) && !Double.isInfinite(b);
+				set = operandsFinite && !Double.isNaN(exact) && Math.abs(exact) > MAX_FLOAT;
+			}
+			else {
+				set = exact != 0.0 && !Double.isNaN(exact) && !Double.isInfinite(exact)
+					&& Math.abs(exact) < MIN_NORMAL;
+			}
+			mem.setValue(out, (latched || set) ? 1 : 0);
+		}
+
+		/** SPRUHS1C 7.3.3 / 7.3.7: denormal reads as zero, NaN reads as infinity. */
+		private static double condition(int bits) {
+			int exp = bits & 0x7F800000;
+			if (exp == 0) {
+				return 0.0;                       // zero or denormal
+			}
+			if (exp == 0x7F800000 && (bits & 0x007FFFFF) != 0) {
+				return (bits < 0) ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY;
+			}
+			return Float.intBitsToFloat(bits);
+		}
+	}
 
 	/**
 	 * VCU-II CRC accumulate: {@code VCRC = CRCwidth(VCRC, src[7:0])}, MSB-first, no reflection.
