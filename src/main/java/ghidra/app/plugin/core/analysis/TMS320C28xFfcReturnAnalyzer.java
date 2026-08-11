@@ -2,10 +2,13 @@
 // Copyright 2026 Nishanth Samala
 // Copyright the mwdmwd/ghidra-c28x contributors (https://github.com/mwdmwd/ghidra-c28x)
 //
-// Ported wholesale from mwdmwd/ghidra-c28x (Apache-2.0), per the reuse invitation
-// on https://github.com/outlandnish/ghidra-tms320c28x/issues/12. The only local
-// changes are the processor-name string ("TMS320C28x" here vs "TMS320C28" upstream)
-// and the class rename to match this module's naming convention. See THIRD-PARTY.md.
+// Ported from mwdmwd/ghidra-c28x (Apache-2.0). Local changes: the processor-name
+// string ("TMS320C28x" here vs "TMS320C28" upstream), the class rename, and the
+// FFC/LB detection in ffcTarget() / isXar7Branch(). Upstream matches XAR7 as
+// operand 0, but this module's SLEIGH renders "FFC XAR7,#t" and "LB *XAR7" with
+// XAR7 as a mnemonic-attached print literal (the FFC's operand 0 is the target;
+// "LB *XAR7" has no operand at all), so detection is by mnemonic + resolved call
+// flow and the *XAR7 print form instead. See THIRD-PARTY.md.
 package ghidra.app.plugin.core.analysis;
 
 import java.math.BigInteger;
@@ -267,8 +270,13 @@ public class TMS320C28xFfcReturnAnalyzer extends AbstractAnalyzer {
 	}
 
 	private static Address ffcTarget(Instruction instruction) {
-		if (!isMnemonic(instruction, "ffc") || !instruction.getFlowType().isCall() ||
-			!isRegisterOperand(instruction, 0, "XAR7")) {
+		// This module's SLEIGH renders "FFC XAR7,#target" with XAR7 as a mnemonic-
+		// attached print literal, so operand 0 is the target (not the XAR7 register)
+		// and the instruction carries exactly one resolved call flow. FFC is the sole
+		// user of this mnemonic, so mnemonic + call-flow uniquely identifies it; take
+		// the target from the resolved flow rather than an XAR7 operand (which upstream
+		// assumed and which does not exist in this module's operand model).
+		if (!isMnemonic(instruction, "ffc") || !instruction.getFlowType().isCall()) {
 			return null;
 		}
 		Address[] flows = instruction.getFlows();
@@ -276,7 +284,11 @@ public class TMS320C28xFfcReturnAnalyzer extends AbstractAnalyzer {
 	}
 
 	private static boolean isXar7Branch(Instruction instruction) {
-		return isMnemonic(instruction, "lb") && isRegisterOperand(instruction, 0, "XAR7");
+		// "LB *XAR7" (opcode 0x7620) renders *XAR7 as a print literal, so it carries
+		// zero operands -- distinct from the immediate long branch "LB <target>", which
+		// has one. Match the indirect form on that shape rather than an XAR7 operand.
+		return isMnemonic(instruction, "lb") && instruction.getNumOperands() == 0 &&
+			instruction.toString().toUpperCase().endsWith("*XAR7");
 	}
 
 	private static boolean hasNonFallthroughFlow(Instruction instruction) {
