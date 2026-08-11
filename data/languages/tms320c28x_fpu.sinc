@@ -2,10 +2,19 @@
 # Copyright 2026 Nishanth Samala
 # Copyright the mwdmwd/ghidra-c28x contributors (https://github.com/mwdmwd/ghidra-c28x)
 #
-# Portions adapted from mwdmwd/ghidra-c28x (Apache-2.0): the `cndf` condition
-# sub-table (12 conditions plus UNC/UNCF), the STF sub-register updates in
-# `setFloatFlags` / `update_stf`, and the UNCF-vs-conditional split on MOV32 /
-# NEGF32 / SWAPF ... cndf. See THIRD-PARTY.md.
+# Portions adapted from mwdmwd/ghidra-c28x (Apache-2.0):
+#   * the `cndf` condition sub-table (12 conditions + UNC/UNCF);
+#   * the STF sub-register model (STF_ZF/NF/TF/LV/LU/NI/ZI defined in slaspec);
+#   * the operand-conditioning macros `fpu_cmp_operand` (denormal -> 0, NaN ->
+#     +inf) and `tmu_condition_operand` (TMU input canonicalisation) per
+#     SPRUHS1C §7.5.2;
+#   * `fpu_minmax_output` (denormal/NaN flush on MAX/MIN result);
+#   * the flag-writing macros `update_stf` (arith 1-op), `update_stf_cmp`
+#     (compare, with conditioned operands), `update_stf_mov` (MOV loads: ZI/NI
+#     alongside ZF/NF);
+#   * `packstf` / `unpackstf` for the packed-STF sync on STF <-> memory moves;
+#   * the UNCF-vs-conditional split on MOV32 / NEGF32 / SWAPF ... cndf.
+# See THIRD-PARTY.md.
 #
 # C28x FPU (F2837x / FPU32) instructions.
 # Included by tms320c28x.sinc. Encodings verified against docs/c28x/fpu_instructions.txt
@@ -89,16 +98,94 @@ define pcodeop LOG2F32;
 # be genuinely conditional in p-code.
 # Adapted from mwdmwd/ghidra-c28x (Apache-2.0). See THIRD-PARTY.md.
 
-# 2-operand compare: set ZF/NF from the ordered comparison of two floats.
-macro setFloatFlags(a, b) {
-    STF_ZF = (a f== b);
-    STF_NF = (a f< b);
+# --- Operand conditioning ----------------------------------------------------
+# Per SPRUHS1C §7.5.2 the FPU treats denormals as ±0 and NaNs as ±infinity in
+# compares and TMU inputs. Modeling this explicitly is what makes CMPF32/MAXF32
+# match silicon on the edge-case inputs (denormals are frequent in scaled fixed-
+# point-to-float conversions; NaNs surface in TMU divide-by-zero paths).
+#
+# fpu_cmp_operand: coerce an input for CMPF32/MAXF32/MINF32:
+#   exp == 0                 -> denormal or ±0 -> canonical +0
+#   exp == 0xFF, mantissa==0 -> ±inf           -> pass through
+#   exp == 0xFF, mantissa!=0 -> NaN            -> ±inf (sign preserved)
+#   otherwise (normal)                          -> pass through
+macro fpu_cmp_operand(out, in) {
+    local exp:4 = in & 0x7F800000;
+    out = in;
+    if (exp != 0) goto <not_zeroish>;
+    out = 0;
+    goto <done>;
+    <not_zeroish>
+    if (exp != 0x7F800000) goto <done>;
+    if ((in & 0x007FFFFF) == 0) goto <done>;
+    out = 0x7F800000;    # NaN -> +inf; sign bit is dropped (mwdmwd matches this)
+    <done>
 }
 
-# 1-operand result flag update (ABSF32, NEGF32 UNCF, MOV32...UNCF loads): set
-# ZF from a zero-exponent test and NF from the sign bit gated on non-zero.
+# TMU input conditioning (SPRUHS1C §7.5.2): denormals/negative-zero -> +0,
+# NaN -> signed inf. Applied to DIVF32 / SQRTF32 / MPY2PIF32 / DIV2PIF32 inputs.
+macro tmu_condition_operand(out, in) {
+    local exp:4 = in & 0x7F800000;
+    if (exp != 0) goto <not_zeroish>;
+    out = 0;
+    goto <done>;
+    <not_zeroish>
+    out = in;
+    if (exp != 0x7F800000) goto <done>;
+    out = (in & 0x80000000) | 0x7F800000;
+    <done>
+}
+
+# MAX/MIN output conditioning: SPRUHS1C says the picked value is passed through
+# a denormal-flush + NaN-flush stage before being written to RaH.
+macro fpu_minmax_output(out) {
+    local exp:4 = out & 0x7F800000;
+    if (exp != 0) goto <not_denorm>;
+    if ((out & 0x007FFFFF) == 0) goto <done>;
+    out = 0;
+    goto <done>;
+    <not_denorm>
+    if (exp != 0x7F800000) goto <done>;
+    if ((out & 0x007FFFFF) == 0) goto <done>;
+    out = 0x7F800000;
+    <done>
+}
+
+# --- Flag-writing macros (used by the FP instructions) -----------------------
+
+# 2-operand compare (CMPF32/MAXF32/MINF32): condition both operands first, then
+# set ZF/NF from the ordered comparison. `setFloatFlags` is kept as a thin alias
+# so existing call sites (below) don't have to change all at once.
+macro update_stf_cmp(lhs, rhs) {
+    local lhs_c:4;
+    local rhs_c:4;
+    fpu_cmp_operand(lhs_c, lhs);
+    fpu_cmp_operand(rhs_c, rhs);
+    STF_ZF = (lhs_c f== rhs_c);
+    STF_NF = (lhs_c f< rhs_c);
+}
+macro setFloatFlags(a, b) {
+    update_stf_cmp(a, b);
+}
+
+# 1-operand result flag update for ARITHMETIC results (ABSF32, NEGF32 UNCF).
+# Sets ZF from a zero-exponent test and NF from the sign bit gated on non-zero.
+# LUF/LVF are not modeled numerically.
 macro update_stf(res) {
     local zero_exp:1 = ((res & 0x7F800000) == 0);
+    STF_ZF = zero_exp;
+    STF_NF = res[31,1] && !zero_exp;
+}
+
+# 1-operand result flag update for MOV loads (MOV32 RaH,mem32,UNCF etc.). The
+# ISA specifies that MOV UNCF updates FOUR flags: ZF/NF from the exponent (as
+# above) AND ZI/NI from the raw integer bit pattern (SPRUHS1C Table 6-14).
+# Distinct from update_stf because arithmetic-result flag semantics only touch
+# ZF/NF; a MOV should also refresh the integer-view flags.
+macro update_stf_mov(res) {
+    local zero_exp:1 = ((res & 0x7F800000) == 0);
+    STF_NI = res[31,1];
+    STF_ZI = (res == 0);
     STF_ZF = zero_exp;
     STF_NF = res[31,1] && !zero_exp;
 }
@@ -163,15 +250,22 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
 :ABSF32 f_ra, f_rb     is op16=0xE695; f_rb & f_ra & f_msw_hi=0 { f_ra = abs(f_rb); update_stf(f_ra); }
 :CMPF32 f_ra, f_rb     is op16=0xE694; f_rb & f_ra & f_msw_hi=0 { setFloatFlags(f_ra, f_rb); }
 # MAX/MIN: SLEIGH has no ternary — pick the larger/smaller with an if/goto.
+# The compare sets ZF/NF (via update_stf_cmp inside setFloatFlags: denormals ->
+# 0, NaN -> +inf), and the selected value is then denormal/NaN-flushed on its
+# way to RaH (fpu_minmax_output). Applied on both paths of the if/else.
 :MAXF32 f_ra, f_rb     is op16=0xE696; f_rb & f_ra & f_msw_hi=0 {
-    setFloatFlags(f_ra, f_rb);
-    if (f_ra f>= f_rb) goto inst_next;
+    update_stf_cmp(f_ra, f_rb);
+    if (f_ra f>= f_rb) goto <keep>;
     f_ra = f_rb;
+  <keep>
+    fpu_minmax_output(f_ra);
 }
 :MINF32 f_ra, f_rb     is op16=0xE697; f_rb & f_ra & f_msw_hi=0 {
-    setFloatFlags(f_ra, f_rb);
-    if (f_ra f<= f_rb) goto inst_next;
+    update_stf_cmp(f_ra, f_rb);
+    if (f_ra f<= f_rb) goto <keep>;
     f_ra = f_rb;
+  <keep>
+    fpu_minmax_output(f_ra);
 }
 # SLEIGH has no float literals — use the IEEE-754 bit pattern (1.0f = 0x3F800000).
 :EINVF32 f_ra, f_rb    is op16=0xE693; f_rb & f_ra & f_msw_hi=0 { local one:4 = 0x3F800000; f_ra = one f/ f_rb; }       # reciprocal estimate
@@ -182,12 +276,31 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
 # TMU (Trigonometric Math Unit) ops — 0xE27x. MSW reg fields: aaa=RaH dest, bbb=RbH,
 # ccc=RcH, ddd=RdH (2nd dest for QUADF32). Real math where a SLEIGH primitive exists
 # (div/sqrt/2pi); transcendentals use the pcodeops above.
-:MPY2PIF32 f_ra, f_rb  is op16=0xE270; f_rb & f_ra & f_msw_hi=0 { local twopi:4 = 0x40C90FDB; f_ra = f_rb f* twopi; } # *2pi
-:DIV2PIF32 f_ra, f_rb  is op16=0xE271; f_rb & f_ra & f_msw_hi=0 { local twopi:4 = 0x40C90FDB; f_ra = f_rb f/ twopi; } # /2pi
+#
+# TMU inputs go through tmu_condition_operand (SPRUHS1C §7.5.2): denormals ->
+# +0, NaN -> signed inf. This makes the arithmetic outputs match silicon on the
+# edge-case inputs, which is exactly the material for the compares that follow.
+:MPY2PIF32 f_ra, f_rb  is op16=0xE270; f_rb & f_ra & f_msw_hi=0 {
+    local b:4; tmu_condition_operand(b, f_rb);
+    local twopi:4 = 0x40C90FDB;
+    f_ra = b f* twopi;
+}
+:DIV2PIF32 f_ra, f_rb  is op16=0xE271; f_rb & f_ra & f_msw_hi=0 {
+    local b:4; tmu_condition_operand(b, f_rb);
+    local twopi:4 = 0x40C90FDB;
+    f_ra = b f/ twopi;
+}
 :IEXP2F32 f_ra, f_rb   is op16=0xE272; f_rb & f_ra & f_msw_hi=0 { f_ra = IEXP2F32(f_rb); }   # 1/2^x estimate
 :LOG2F32 f_ra, f_rb    is op16=0xE273; f_rb & f_ra & f_msw_hi=0 { f_ra = LOG2F32(f_rb); }    # log2(x) estimate
-:DIVF32 f_ra, f_rb, f_rc  is op16=0xE274; f_rc & f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb f/ f_rc; }
-:SQRTF32 f_ra, f_rb    is op16=0xE277; f_rb & f_ra & f_msw_hi=0 { f_ra = sqrt(f_rb); }
+:DIVF32 f_ra, f_rb, f_rc  is op16=0xE274; f_rc & f_rb & f_ra & f_msw_hi=0 {
+    local b:4; tmu_condition_operand(b, f_rb);
+    local c:4; tmu_condition_operand(c, f_rc);
+    f_ra = b f/ c;
+}
+:SQRTF32 f_ra, f_rb    is op16=0xE277; f_rb & f_ra & f_msw_hi=0 {
+    local b:4; tmu_condition_operand(b, f_rb);
+    f_ra = sqrt(b);
+}
 :SINPUF32 f_ra, f_rb   is op16=0xE278; f_rb & f_ra & f_msw_hi=0 { f_ra = SINPUF32(f_rb); }   # sin(2pi*x)
 :COSPUF32 f_ra, f_rb   is op16=0xE279; f_rb & f_ra & f_msw_hi=0 { f_ra = COSPUF32(f_rb); }   # cos(2pi*x)
 :ATANPUF32 f_ra, f_rb  is op16=0xE27A; f_rb & f_ra & f_msw_hi=0 { f_ra = ATANPUF32(f_rb); }  # atan(x)/2pi
@@ -322,11 +435,12 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
 # MOV32 RaH, mem32 CNDF (0xE2A? family). UNCF (0b1111) is unconditional + updates
 # flags from the loaded value; other codes are conditional and leave flags alone.
 # The loaded value is opaque (address not cleanly decodable from the byte), so
-# the UNCF variant materialises RaH via identity and calls update_stf on it --
-# gives the decompiler a def to trace even though the concrete value is unknown.
+# the UNCF variant materialises RaH via identity and calls update_stf_mov --
+# gives the decompiler a def to trace, plus a MOV-flavoured flag update
+# (ZI/NI along with ZF/NF, per SPRUHS1C Table 6-14).
 :MOV32 p_ra, "mem32", cndf  is op_hi8=0xE2 & loc_hi4=0b1010 & fcndf=0b1111 & cndf ; p_ra {
     p_ra = p_ra;
-    update_stf(p_ra);
+    update_stf_mov(p_ra);
 }
 :MOV32 p_ra, "mem32", cndf  is op_hi8=0xE2 & loc_hi4=0b1010 & cndf ; p_ra {
     if (!cndf) goto <done>;
@@ -339,13 +453,14 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
 :MOV32 p_ra, "mem32 (e27x)" is op_hi8=0xE2 & loc_hi4=0b0111 ; p_ra  { p_ra = p_ra; }
 
 # MOV32 RaH, RbH {,CNDF}   LSW=1110 0110 1100 CNDF : MSW=0000 0000 00bb baaa
-# UNCF (0b1111): unconditional move + update flags from the moved value.
+# UNCF (0b1111): unconditional move + MOV-flavoured flag update (ZI/NI plus
+# ZF/NF, per SPRUHS1C Table 6-14).
 # Others: genuinely conditional (was previously an unconditional copy with cndf
 # rendered display-only, which mis-modeled the semantics for the decompiler).
 :MOV32 f_ra, f_rb, cndf  is op_hi8=0xE6 & loc_hi4=0b1100 & fcndf=0b1111 & cndf
                          ; f_rb & f_ra & f_msw_hi=0 {
     f_ra = f_rb;
-    update_stf(f_ra);
+    update_stf_mov(f_ra);
 }
 :MOV32 f_ra, f_rb, cndf  is op_hi8=0xE6 & loc_hi4=0b1100 & cndf
                          ; f_rb & f_ra & f_msw_hi=0 {
@@ -435,33 +550,43 @@ attach variables [ p_rf ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 
 # MAXF32 RaH, #16FHi   LSW: 1110 1000 0010 0III ; MSW: IIII IIII IIII Iaaa  (2-word)
 # RaH = max(RaH, imm). imm16 = (LSW[2:0] << 13) | MSW[15:3] (III = HIGH 3 bits; see CMPF32).
+# Compare updates ZF/NF; selected value flushed through fpu_minmax_output.
 :MAXF32 f_ra, "#"^fimm_hi13  is op_hi8=0xE8 & loc_mode5=0b00100 & fimm_lo3 ; f_ra & fimm_hi13 {
     local imm:4 = (zext(fimm_lo3:4) << 13 | zext(fimm_hi13:4)) << 16;
-    if (f_ra f>= imm) goto inst_next;
+    update_stf_cmp(f_ra, imm);
+    if (f_ra f>= imm) goto <keep>;
     f_ra = imm;
+  <keep>
+    fpu_minmax_output(f_ra);
 }
 # MINF32 RaH, #16FHi   LSW: 1110 1000 0011 0III ; MSW: IIII IIII IIII Iaaa  (2-word)
 :MINF32 f_ra, "#"^fimm_hi13  is op_hi8=0xE8 & loc_mode5=0b00110 & fimm_lo3 ; f_ra & fimm_hi13 {
     local imm:4 = (zext(fimm_lo3:4) << 13 | zext(fimm_hi13:4)) << 16;
-    if (f_ra f<= imm) goto inst_next;
+    update_stf_cmp(f_ra, imm);
+    if (f_ra f<= imm) goto <keep>;
     f_ra = imm;
+  <keep>
+    fpu_minmax_output(f_ra);
 }
 # MAXF32 RaH,RbH||MOV32 RcH,RdH  LSW: 1110 0110 1001 1100 ; MSW: 0000 dddc ccbb baaa
 # RaH=max(RaH,RbH); the parallel MOV32 RcH,RdH copies — RdH not cleanly decodable, model
-# RcH as written from RbH (the available source) so its def survives.
+# RcH as written from RbH (the available source) so its def survives. MOV side of a
+# parallel doesn't update integer flags per SPRUHS1C -- only the arith side's compare.
 :MAXF32 f_ra, f_rb, "||MOV32", f_rc  is op16=0xE69C ; f_rc & f_rb & f_ra {
-    setFloatFlags(f_ra, f_rb);
+    update_stf_cmp(f_ra, f_rb);
     if (f_ra f>= f_rb) goto <skip>;
     f_ra = f_rb;
   <skip>
+    fpu_minmax_output(f_ra);
     f_rc = f_rb;
 }
 # MINF32 RaH,RbH||MOV32 RcH,RdH  LSW: 1110 0110 1001 1101 ; MSW: 0000 dddc ccbb baaa
 :MINF32 f_ra, f_rb, "||MOV32", f_rc  is op16=0xE69D ; f_rc & f_rb & f_ra {
-    setFloatFlags(f_ra, f_rb);
+    update_stf_cmp(f_ra, f_rb);
     if (f_ra f<= f_rb) goto <skip>;
     f_ra = f_rb;
   <skip>
+    fpu_minmax_output(f_ra);
     f_rc = f_rb;
 }
 # SWAPF RaH,RbH{,CNDF}  LSW: 1110 0110 1110 CNDF ; MSW: 0000 0000 00bb baaa
