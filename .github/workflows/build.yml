@@ -125,6 +125,13 @@ jobs:
       - name: Smoke test — language loads and disassembles (runtime cspec/pspec bind)
         run: bash tests/run_disasm_test.sh
 
+      # The disassembly test above proves the listing; this proves the p-code. It
+      # emulates the FPU status-flag instructions and reads the STF sub-registers back,
+      # which is the only way to catch a wrong bit order inside a split mask -- those
+      # still disassemble to something entirely plausible.
+      - name: Semantics test — emulate the FPU flag instructions
+        run: bash tests/run_emu_test.sh
+
       - name: Guard against a stale committed .sla
         run: |
           set -euo pipefail

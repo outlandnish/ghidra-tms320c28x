@@ -76,3 +76,22 @@ spot-check for after any spec change:
 When adding constructors, spot-check the rendered operands (not just the
 mnemonic) and run the decompiler on a small function — ugly `CONCAT` / `ZEXT`
 noise usually points at one of these.
+
+## Semantics: `tests/run_emu_test.{sh,ps1}`
+
+The disassembly test proves the *listing*; this proves the *p-code*. It emulates the FPU
+status-flag instructions (`SETFLG`, `SAVE`, `RESTORE`) and reads the STF sub-registers
+back, asserting both the flags a mask names and that the ones it does not name keep their
+previous values, plus the SAVE/RESTORE round trip through the shadow register set.
+
+This is the only test that can catch a wrong bit order *inside* a mask. `SETFLG`'s 11-bit
+FLAG field is split across both instruction words with the halves in the opposite order
+from the `#16FHi` immediates; swapping them silently moves `RND32` onto `NI` while the
+disassembly still reads as something entirely plausible. It caught exactly that during
+development.
+
+Run `run_disasm_test` first -- it is what compiles and installs the language.
+
+Not yet covered: the `FPU_CMP_OPERAND` / `TMU_COND_OPERAND` / `FPU_MINMAX_FLUSH`
+behaviours in `TMS320C28xEmulateInstructionStateModifier`, which need the modifier jar
+(`tests/build_modifier.*`) plus a denormal/NaN fixture.
