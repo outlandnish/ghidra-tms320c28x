@@ -229,15 +229,29 @@ macro unpackstf(in) {
 # ST0's OV and auto-clears them, packstf / unpackstf round-trip them through memory, and
 # the `LU` / `LV` conditions in the cndf table read them.
 #
-# What is deliberately NOT modelled is arithmetic LATCHING them -- ADDF32 setting LUF
-# when its result underflows, and so on. Detecting a true underflow needs the operands,
-# not just the result (0.0 * 5.0 gives a zero result that is not an underflow), so it
-# would take an operand-aware intrinsic plus a sticky OR into the flag on EVERY float
-# arithmetic instruction: roughly two extra CALLOTHERs and two register writes each.
-# That is the same per-instruction tax that the conditioning macros were just measured
-# and rewritten to avoid, spent on diagnostic flags that no control flow in either the
-# PMR or DIR image demonstrably reads. If a firmware is found that acts on LUF/LVF, the
-# hook is a single macro at the arithmetic sites.
+# What is NOT modelled is arithmetic LATCHING them. This is a cost decision, not a gap in
+# the documentation -- SPRUHS1C 7.3.4 / 7.3.5 do define the conditions (that section is in
+# the TMU chapter, which states its treatment matches the FPU):
+#     underflow -- the operation generates a value too small to represent; zero is
+#                  returned. With 7.3.3 (a denormal is never generated) that means any
+#                  result that would have been denormal is an underflow.
+#     overflow  -- the operation generates a value too large to represent; +/-Inf is
+#                  returned.
+# So it is implementable, but detecting either still needs the OPERANDS and not just the
+# result: 0.0 * 5.0 returns a zero that is not an underflow, and Inf + 1.0 returns an
+# infinity that is not an overflow. That means an operand-aware intrinsic plus a sticky OR
+# per flag -- roughly two CALLOTHERs and two register writes -- on every latching site.
+#
+# And the latching set is wider than the FPU chapter's list. Chapter 1 names MPYF32,
+# ADDF32, SUBF32, MACF32, EINVF32, EISQRTF32 (29 constructors here), but the TMU
+# instruction tables add more, asymmetrically per flag: DIVF32, LOG2F32 and QUADF32 set
+# both; MPY2PIF32, SQRTF32 and ATANPUF32 set only LVF; DIV2PIF32 and IEXP2F32 set only
+# LUF. Chapter 1's list simply predates the TMU.
+#
+# That is the same per-instruction tax the conditioning macros were measured and rewritten
+# to avoid, spent on diagnostic flags that no control flow in either the PMR or DIR image
+# demonstrably reads. If a firmware turns up that acts on LUF/LVF, the hook is one macro
+# at the sites above, and the conditions are now written down.
 
 # --- SETFLG / SAVE flag write ------------------------------------------------
 # Both instructions carry an 11-bit FLAG mask ("which flags to change") and an 11-bit

@@ -92,6 +92,11 @@ development.
 
 Run `run_disasm_test` first -- it is what compiles and installs the language.
 
-Not yet covered: the `FPU_CMP_OPERAND` / `TMU_COND_OPERAND` / `FPU_MINMAX_FLUSH`
-behaviours in `TMS320C28xEmulateInstructionStateModifier`, which need the modifier jar
-(`tests/build_modifier.*`) plus a denormal/NaN fixture.
+A second suite, `EmuFpuCondTest`, covers the `TMU_COND_OPERAND` / `FPU_MINMAX_FLUSH`
+conditioning intrinsics. Those are pcodeops, so their behaviour lives in the compiled
+`TMS320C28xEmulateInstructionStateModifier` and nothing else -- not the decompiler, not
+the decode tests -- can see it. Run `tests/build_modifier.*` first; the pspec names the
+modifier class, so without the jar the emulator refuses to start (verified: it dies with
+`ClassNotFoundException` rather than passing vacuously). A *misspelled pcodeop name* is
+the quieter failure -- `tryRegister` swallows it and the op stays opaque -- which is why
+every assertion checks a conditioned value rather than merely that stepping succeeded.

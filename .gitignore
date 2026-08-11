@@ -32,6 +32,7 @@ firmware/
 docs/c28x/vcu2_instructions.txt
 docs/c28x/vcu1_instructions.txt
 docs/c28x/fpu_instructions.txt
+docs/c28x/fpu_data_format.txt
 docs/c28x/vcrc_instructions.txt
 
 # Scratch firmware-region test bins (keep only the canonical addr_modes/mov/etc.)
