@@ -210,15 +210,15 @@
                 { $(AMODE) = 0; }   # = C28ADDR
 :SETC "AMODE"   is op16=0x561e [ ctx_AMODE = 1; globalset(inst_next, ctx_AMODE); ]
                 { $(AMODE) = 1; }   # = LPADDR
-:SETC "Objmode" is op16=0x561f { }                 # = C28OBJ
-:CLRC "Objmode" is op16=0x5636 { }                 # = C27OBJ
-:SETC "XF"      is op16=0x5626 { }
-:CLRC "XF"      is op16=0x561b { }
-:CLRC "OVC"     is op16=0x565c { }                 # = ZAP OVC
+:SETC "Objmode" is op16=0x561f { OBJMODE = 1; }    # = C28OBJ
+:CLRC "Objmode" is op16=0x5636 { OBJMODE = 0; }    # = C27OBJ
+:SETC "XF"      is op16=0x5626 { XF = 1; }
+:CLRC "XF"      is op16=0x561b { XF = 0; }
+:CLRC "OVC"     is op16=0x565c { OVC = 0; }        # = ZAP OVC
 :ZAPA           is op16=0x5633 { ACC = 0; P = 0; }
 # More 0x56 mode/config bits (dis2000-confirmed; in the PCS reset/init routine at 0x947fc).
 :SETC "CNF"     is op16=0x5612 { }                 # map block B0 to program space (decode-only)
-:SETC "M0M1MAP" is op16=0x561a { }                 # = C28MAP (boot mode bit; decode-only)
+:SETC "M0M1MAP" is op16=0x561a { M0M1MAP = 1; }    # = C28MAP (boot mode bit)
 # CMPR n  0101 0110 0001 NN0N  (compare AR(ARP) with AR(n); set TC). dis2000: 1d=0 19=1 18=2 1c=3.
 :CMPR "0"       is op16=0x561d { }                 # decode-only (TC result not modeled)
 :CMPR "1"       is op16=0x5619 { }

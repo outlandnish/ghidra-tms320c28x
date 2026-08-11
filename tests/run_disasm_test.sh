@@ -39,18 +39,27 @@ trap 'rm -rf "$tmp"' EXIT
 (cd "$lang" && "$GHIDRA_INSTALL_DIR/support/sleigh" tms320c28x.slaspec)
 [ -f "$lang/tms320c28x.sla" ] || { echo "SLEIGH compile failed (no .sla)"; exit 1; }
 
-# 2. reinstall into Ghidra
-inst="$GHIDRA_INSTALL_DIR/Ghidra/Processors/TMS320C28x/data/languages"
+# 2. reinstall into Ghidra. On a fresh Ghidra the TMS320C28x module does not exist
+# yet, so also drop in the Module.manifest -- without it Ghidra won't treat the
+# directory as a module and won't discover the language (analyzeHeadless then fails
+# with "language not found"). data/languages is enough to load + disassemble here;
+# the compiled Java (emulate modifier / analyzer) is resolved lazily and is not
+# needed for this -noanalysis decode check.
+modroot="$GHIDRA_INSTALL_DIR/Ghidra/Processors/TMS320C28x"
+inst="$modroot/data/languages"
 mkdir -p "$inst"
 cp "$lang"/* "$inst/"
+cp "$module/Module.manifest" "$modroot/Module.manifest"
 
 # 3. headless disassemble
 mkdir -p "$tmp/proj" "$tmp/scripts"
 cp "$module/tests/addr_modes.bin" "$tmp/addr_modes.bin"
 cp "$module/ghidra_scripts/DumpDisasm.java" "$tmp/scripts/DumpDisasm.java"
+# `|| true`: don't let a headless failure abort under `set -e` before we can print
+# its output -- an empty $got below is reported as a diagnostic instead of a blank.
 raw=$("$GHIDRA_INSTALL_DIR/support/analyzeHeadless" "$tmp/proj" t \
   -import "$tmp/addr_modes.bin" -processor "TMS320C28x:LE:32:default" \
-  -scriptPath "$tmp/scripts" -postScript DumpDisasm.java -noanalysis -overwrite 2>&1)
+  -scriptPath "$tmp/scripts" -postScript DumpDisasm.java -noanalysis -overwrite 2>&1) || true
 
 # 4. compare. Pull "ADDR<tab>BYTES<tab>TEXT" lines from DumpDisasm's println output;
 # strip Ghidra's "<script>> " prefix + optional "<space>MEM:" address prefix, then
@@ -64,6 +73,10 @@ got=$(printf '%s\n' "$raw" \
 
 echo "--- GOT ---"
 printf '%s\n' "$got"
+if [ -z "$got" ]; then
+  echo "--- no disassembly parsed; raw analyzeHeadless output follows ---" >&2
+  printf '%s\n' "$raw" >&2
+fi
 
 exp="$module/tests/addr_modes.expected.txt"
 fail=0

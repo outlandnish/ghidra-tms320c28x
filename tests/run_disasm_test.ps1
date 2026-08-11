@@ -25,10 +25,13 @@ Pop-Location
 if (-not (Test-Path "$bld\tms320c28x.sla")) { throw "SLEIGH compile failed (no .sla)" }
 Copy-Item "$bld\tms320c28x.sla" $lang -Force
 
-# 2. reinstall into Ghidra
-$inst = "$Ghidra\Ghidra\Processors\TMS320C28x\data\languages"
+# 2. reinstall into Ghidra (Module.manifest too, so a fresh Ghidra recognizes the
+# directory as a module and discovers the language)
+$modroot = "$Ghidra\Ghidra\Processors\TMS320C28x"
+$inst = "$modroot\data\languages"
 New-Item -ItemType Directory -Force -Path $inst | Out-Null
 Copy-Item "$lang\*" $inst -Force
+Copy-Item "$Module\Module.manifest" "$modroot\Module.manifest" -Force
 
 # 3. headless disassemble
 $ws = "$tmp\run"; New-Item -ItemType Directory -Force -Path "$ws\proj","$ws\scripts" | Out-Null

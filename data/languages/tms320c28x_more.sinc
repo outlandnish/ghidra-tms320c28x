@@ -1,5 +1,13 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Nishanth Samala
+# Copyright the mwdmwd/ghidra-c28x contributors (https://github.com/mwdmwd/ghidra-c28x)
+#
+# Portions adapted from mwdmwd/ghidra-c28x (Apache-2.0): the ST0/ST1 pack/unpack
+# macros (packst0/unpackst0/packst1/unpackst1) and their wiring on PUSH|POP ST0|ST1,
+# the per-flag SETC|CLRC #imm8 bodies, the decoded-signed PM convention used by SPM,
+# and the three-variant LB *XAR7 split dispatched by the ffc_return /
+# switch_canonical context bits. See THIRD-PARTY.md.
+#
 # Additional C28x instructions seen in the real firmware (DIR/PM) but not in the
 # core families. Encodings verified against docs/c28x/ch6_instruction_detail.txt.
 # Included by tms320c28x.sinc.
@@ -27,8 +35,31 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 
 # LC *XAR7   0111 0110 0000 0100   (indirect call via XAR7)
 :LC "*XAR7"  is op16=0x7604 { local sp2:4 = SP; *[ram]:4 sp2 = RPC; SP = SP + 2; RPC = inst_next >> 1; call [XAR7]; }
+
 # LB *XAR7   0111 0110 0010 0000   (indirect branch via XAR7)
-:LB "*XAR7"  is op16=0x7620 { goto [XAR7]; }
+# The same opcode is used for BOTH the FFC-helper return sequence AND for switch-table
+# dispatch (MOVL XAR7,#table; ADDB XAR7,idx; LB *XAR7). SLEIGH can't tell them apart on
+# its own, so this splits into three variants dispatched by two analyzer-set context bits:
+#   - switch_canonical=1: set by TMS320C28xSwitchAnalyzer on validated switch dispatches.
+#     Leave XAR7 on BRANCHIND directly so Ghidra's generic Decompiler Switch Analysis sees
+#     the data dependency and recovers case targets.
+#   - ffc_return=1: set by TMS320C28xFfcReturnAnalyzer on the terminal LB of a bounded,
+#     exclusive FFC helper whose body never rewrites XAR7. Emit a real `return`.
+#   - both clear (default): plain indirect branch; only the low 22 bits are architecturally
+#     valid PC, so mask XAR7 before jumping (avoids spurious out-of-map targets in the CFG).
+# The three patterns are pairwise exclusive on the (ffc_return, switch_canonical) pair.
+# Adapted from mwdmwd/ghidra-c28x (Apache-2.0). See THIRD-PARTY.md.
+:LB "*XAR7"  is ffc_return=0 & switch_canonical=1 & op16=0x7620  {
+    goto [XAR7];
+}
+:LB "*XAR7"  is ffc_return=1 & switch_canonical=0 & op16=0x7620  {
+    local target:4 = XAR7 & 0x003fffff;
+    return [target];
+}
+:LB "*XAR7"  is ffc_return=0 & switch_canonical=0 & op16=0x7620  {
+    local target:4 = XAR7 & 0x003fffff;
+    goto [target];
+}
 
 # --- MOVZ ARn, loc16 : load AR, clear ARH (zero-extend) ----------------------
 # AR0..5: 0101 1nnn LLLL LLLL  (nnn via arsel3); AR6/AR7 have distinct opcodes.
@@ -270,6 +301,75 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 macro push16(v) { local a:4 = SP; *[ram]:2 a = v; SP = SP + 1; }
 macro pop16(dst) { SP = SP - 1; local a:4 = SP; dst = *[ram]:2 a; }
 
+# --- ST0/ST1 pack/unpack: individual flag registers <-> the 16-bit status word.
+# The unpacked flag model (each status bit is its own register, see the slaspec)
+# means PUSH/POP ST0|ST1 must assemble/disassemble the word from/into those regs.
+# PM is stored DECODED (signed shift -6..+1); the raw ST0[7,3] field encodes it as
+# (1 - shift), so pack/unpack convert. unpackst0's PM path also models the C2xLP
+# (AMODE=1) raw-value-5 => +4 special case. Adapted from mwdmwd/ghidra-c28x
+# (Apache-2.0); see the file header and THIRD-PARTY.md.
+macro packst0(res) {
+    local pm_signed:2 = sext(PM);
+    local pm_raw:2 = (1 - pm_signed) & 7;
+    local ovc_raw:2 = zext(OVC) & 0x3f;
+    res = (zext(SXM)
+        | (zext(OVM) << 1)
+        | (zext(TC) << 2)
+        | (zext(C) << 3)
+        | (zext(Z) << 4)
+        | (zext(N) << 5)
+        | (zext(V) << 6)
+        | (pm_raw << 7)
+        | (ovc_raw << 10));
+}
+macro unpackst0(in) {
+    local ovc_raw:1 = in[10,6];
+    local ovc_sign_mask:1 = 0 - ovc_raw[5,1];
+    OVC = ovc_raw | (ovc_sign_mask & 0xc0);
+    local pm_raw:1 = in[7,3];
+    local pm_default:1 = 1 - pm_raw;
+    local pm_plus4:1 = (AMODE != 0) && (pm_raw == 5);
+    local pm_plus4_mask:1 = 0 - pm_plus4;
+    PM = (pm_default & ~pm_plus4_mask) | (4 & pm_plus4_mask);
+    V   = in[6,1];
+    N   = in[5,1];
+    Z   = in[4,1];
+    C   = in[3,1];
+    TC  = in[2,1];
+    OVM = in[1,1];
+    SXM = in[0,1];
+}
+macro packst1(res) {
+    res = (zext(INTM)
+        | (zext(DBGM) << 1)
+        | (zext(PAGE0) << 2)
+        | (zext(VMAP) << 3)
+        | (zext(SPA) << 4)
+        | (zext(LOOP) << 5)
+        | (zext(EALLOW) << 6)
+        | (zext(IDLESTAT) << 7)
+        | (zext(AMODE) << 8)
+        | (zext(OBJMODE) << 9)
+        | (zext(M0M1MAP) << 11)
+        | (zext(XF) << 12)
+        | (zext(ARP) << 13));
+}
+macro unpackst1(in) {
+    ARP      = in[13,3];
+    XF       = in[12,1];
+    M0M1MAP  = in[11,1];
+    OBJMODE  = in[9,1];
+    AMODE    = in[8,1];
+    IDLESTAT = in[7,1];
+    EALLOW   = in[6,1];
+    LOOP     = in[5,1];
+    SPA      = in[4,1];
+    VMAP     = in[3,1];
+    PAGE0    = in[2,1];
+    DBGM     = in[1,1];
+    INTM     = in[0,1];
+}
+
 :POP "IFR"       is op16=0x0002 { pop16(IFR); }
 :POP "AR1H:AR0H" is op16=0x0003 { SP = SP - 2; }               # decode-only (pair pop)
 :POP "RPC"       is op16=0x0007 { SP = SP - 2; local a:4 = SP; RPC = *[ram]:4 a; }
@@ -279,13 +379,13 @@ macro pop16(dst) { SP = SP - 1; local a:4 = SP; dst = *[ram]:2 a; }
 :POP "P"         is op16=0x7611 { SP = SP - 2; local a:4 = SP; P = *[ram]:4 a; }
 :PUSH "AR1H:AR0H" is op16=0x0005 { SP = SP + 2; }              # decode-only (pair push)
 :POP "DP"        is op16=0x7603 { pop16(DP); }
-:POP "ST0"       is op16=0x7613 { pop16(ST0); }
-:POP "ST1"       is op16=0x7600 { pop16(ST1); }
+:POP "ST0"       is op16=0x7613 { pop16(ST0); unpackst0(ST0); }
+:POP "ST1"       is op16=0x7600 { pop16(ST1); unpackst1(ST1); }
 :POP "DBGIER"    is op16=0x7612 { pop16(DBGIER); }
 :PUSH "IFR"      is op16=0x760A { push16(IFR); }
 :PUSH "DP"       is op16=0x760B { push16(DP); }
-:PUSH "ST0"      is op16=0x7618 { push16(ST0); }
-:PUSH "ST1"      is op16=0x7608 { push16(ST1); }
+:PUSH "ST0"      is op16=0x7618 { packst0(ST0); push16(ST0); }
+:PUSH "ST1"      is op16=0x7608 { packst1(ST1); push16(ST1); }
 
 # =============================================================================
 # Batch 5: AX shifts (0xFF-prefix), SP byte-add, MOVL ACC,P — from TI rts validation.
@@ -370,9 +470,21 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 :SETC "DBGM"  is op16=0x3B20 { $(DBGM)  = 1; }
 :SETC "PAGE0" is op16=0x3B40 { $(PAGE0) = 1; }
 :SETC "VMAP"  is op16=0x3B80 { $(VMAP)  = 1; }
-# General mask (multi-bit combos, e.g. SETC #0x30 = INTM|DBGM). The mask's high
-# nibble maps to ST1 mode bits (0x10=INTM..0x80=VMAP); OR it in so the op is non-empty.
-:SETC "#"imm8  is op_hi8=0x3B & imm8 { ST1 = ST1 | (zext(imm8:1) >> 4); }
+# General mask (multi-bit combos, e.g. SETC #0x30 = INTM|DBGM). imm8 bit i selects
+# a flag: 0=SXM 1=OVM 2=TC 3=C 4=INTM 5=DBGM 6=PAGE0 7=VMAP (SPRU430F; matches the
+# single-flag opcodes 0x3B01..0x3B80 above). Set each selected flag on its own
+# register. Adapted from mwdmwd/ghidra-c28x (Apache-2.0).
+:SETC "#"imm8  is op_hi8=0x3B & imm8 {
+    local m:1 = imm8;
+    $(SXM)   = $(SXM)   || (m[0,1] != 0);
+    $(OVM)   = $(OVM)   || (m[1,1] != 0);
+    $(TC)    = $(TC)    || (m[2,1] != 0);
+    $(C)     = $(C)     || (m[3,1] != 0);
+    $(INTM)  = $(INTM)  || (m[4,1] != 0);
+    $(DBGM)  = $(DBGM)  || (m[5,1] != 0);
+    $(PAGE0) = $(PAGE0) || (m[6,1] != 0);
+    $(VMAP)  = $(VMAP)  || (m[7,1] != 0);
+}
 
 # =============================================================================
 # Batch 8: MOVB XARn,#8bit  +  TEST ACC  (close remaining rts-validation gaps).
@@ -474,8 +586,18 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 :CLRC "DBGM"  is op16=0x2920 { $(DBGM)  = 0; }
 :CLRC "PAGE0" is op16=0x2940 { $(PAGE0) = 0; }
 :CLRC "VMAP"  is op16=0x2980 { $(VMAP)  = 0; }
-# General mask: clear the ST1 mode bits selected by the mask's high nibble.
-:CLRC "#"imm8  is op_hi8=0x29 & imm8 { ST1 = ST1 & ~(zext(imm8:1) >> 4); }
+# General mask: clear each flag selected by imm8 (same bit->flag map as SETC #imm8).
+:CLRC "#"imm8  is op_hi8=0x29 & imm8 {
+    local m:1 = imm8;
+    $(SXM)   = $(SXM)   && (m[0,1] == 0);
+    $(OVM)   = $(OVM)   && (m[1,1] == 0);
+    $(TC)    = $(TC)    && (m[2,1] == 0);
+    $(C)     = $(C)     && (m[3,1] == 0);
+    $(INTM)  = $(INTM)  && (m[4,1] == 0);
+    $(DBGM)  = $(DBGM)  && (m[5,1] == 0);
+    $(PAGE0) = $(PAGE0) && (m[6,1] == 0);
+    $(VMAP)  = $(VMAP)  && (m[7,1] == 0);
+}
 
 # RPT #8bit   1111 0110 CCCC CCCC  -- repeat next instruction (count+1 times).
 # The hardware repeat-counter (RPTC) isn't modeled, but the body must be non-empty
@@ -504,16 +626,17 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 }
 # MOVL P,ACC       1111 1111 0101 1010
 :MOVL "P", ACCreg  is op16=0xFF5A & ACCreg { P = ACC; }
-# SPM PM           1111 1111 0110 1xxx  (set product shift mode). Body sets the PM
-# field in ST0 to the encoded value (low 3 bits) so the op emits non-empty p-code.
-:SPM "+1"  is op16=0xFF68 { $(PM) = 0; }
-:SPM "0"   is op16=0xFF69 { $(PM) = 1; }
-:SPM "-1"  is op16=0xFF6A { $(PM) = 2; }
-:SPM "-2"  is op16=0xFF6B { $(PM) = 3; }
-:SPM "-3"  is op16=0xFF6C { $(PM) = 4; }
-:SPM "-4"  is op16=0xFF6D { $(PM) = 5; }
-:SPM "-5"  is op16=0xFF6E { $(PM) = 6; }
-:SPM "-6"  is op16=0xFF6F { $(PM) = 7; }
+# SPM PM           1111 1111 0110 1xxx  (set product shift mode). PM now holds the
+# DECODED signed shift amount (-6..+1); packst0 re-encodes it to the raw ST0[7,3]
+# field as (1 - shift). Matches mwdmwd/ghidra-c28x's PM convention.
+:SPM "+1"  is op16=0xFF68 { $(PM) =  1; }
+:SPM "0"   is op16=0xFF69 { $(PM) =  0; }
+:SPM "-1"  is op16=0xFF6A { $(PM) = -1; }
+:SPM "-2"  is op16=0xFF6B { $(PM) = -2; }
+:SPM "-3"  is op16=0xFF6C { $(PM) = -3; }
+:SPM "-4"  is op16=0xFF6D { $(PM) = -4; }
+:SPM "-5"  is op16=0xFF6E { $(PM) = -5; }
+:SPM "-6"  is op16=0xFF6F { $(PM) = -6; }
 # ADD ACC,#16bit<<#0..15   1111 1111 0001 SHFT : iiii iiii iiii iiii  (2-word)
 :ADD ACCreg, "#"imm16^"<<#"^shft4  is op_hi8=0xFF & loc_hi4=0b0001 & shft4 & ACCreg ; imm16 {
     local v:4 = zext(imm16:2); local s:4 = zext(shft4:1); ACC = ACC + (v << s);
