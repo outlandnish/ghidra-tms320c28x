@@ -503,14 +503,43 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
   <done>
 }
 
-# Parallel "MPYF32 RdH,ReH,RfH || MOV32 RaH,mem32"  LSW: 1110 0011 0000 fffe ;
-# MSW: eedd daaa mem32.  RdH=ddd(MSW), RfH=fff(LSW), RaH=aaa(MSW). ReH is split across
-# both words so it isn't rendered; model the MPYF32 dest as RdH = RdH * RfH (ReH would be
-# the true 2nd factor, but RfH is the cleanly-decodable one) and the parallel load of RaH.
 attach variables [ p_rf ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
-:MPYF32 p_rd, p_rf, "||MOV32", p_ra, "mem32"
-        is op_hi8=0xE3 & loc_hi4=0b0000 & p_rf
-        ; p_rd & p_ra { p_rd = p_rd f* p_rf; p_ra = p_ra; }   # mul + parallel load (load opaque -> identity)
+attach variables [ p_rd9 p_re12 ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
+
+# --- split registers in the parallel forms -----------------------------------
+# Two of the parallel-form register selectors straddle the word boundary, so no single
+# field can name them. A sub-table whose own pattern spans both words can: the part before
+# its `;` matches in the LSW, the part after in the MSW.
+#
+# p_re_l / p_re_h -- ReH in the "arith || MOV32 mem32" family (0xE0/0xE3). ReH is split:
+# high bit is LSW bit 0 (e), low 2 bits are MSW bits 14-15 (ee), so ReH = (e << 2) | ee.
+# Verified against dis2000: `e30d 6042` = MPYF32 R4H,R5H,R6H ||MOV32 R0H,*-SP[2] -- e=1,
+# ee=1 -> R5H. A single sub-table cannot span the word boundary (a straddling pattern would
+# push the parent's own second-word fields into a third word), so there is one half-table
+# per value of e and the constructors below come in matching pairs.
+p_re_l: "R0H"  is p_re_lo=0 { export R0H; }
+p_re_l: "R1H"  is p_re_lo=1 { export R1H; }
+p_re_l: "R2H"  is p_re_lo=2 { export R2H; }
+p_re_l: "R3H"  is p_re_lo=3 { export R3H; }
+p_re_h: "R4H"  is p_re_lo=0 { export R4H; }
+p_re_h: "R5H"  is p_re_lo=1 { export R5H; }
+p_re_h: "R6H"  is p_re_lo=2 { export R6H; }
+p_re_h: "R7H"  is p_re_lo=3 { export R7H; }
+
+# p_rf7_0 / p_rf7_1 -- RfH in the "MPYF32 || ADDF32/SUBF32" family (0xE74x/0xE75x). Here
+# the split runs the OTHER way: the HIGH 2 bits are LSW bits 0-1 (ff) and the LOW bit is
+# MSW bit 15 (f), so RfH = (ff << 1) | f. Verified against dis2000: `e753 c688` =
+# MPYF32 R0H,R1H,R2H ||SUBF32 R3H,R4H,R7H -- ff=3, f=1 -> R7H (reading the halves the other
+# way round would give R6H). These live in the LSW, selected by the MSW bit, so unlike
+# p_re_* the sub-table is the word-1 operand and the selector is a plain word-2 constraint.
+p_rf7_0: "R0H" is p_ff2=0 { export R0H; }
+p_rf7_0: "R2H" is p_ff2=1 { export R2H; }
+p_rf7_0: "R4H" is p_ff2=2 { export R4H; }
+p_rf7_0: "R6H" is p_ff2=3 { export R6H; }
+p_rf7_1: "R1H" is p_ff2=0 { export R1H; }
+p_rf7_1: "R3H" is p_ff2=1 { export R3H; }
+p_rf7_1: "R5H" is p_ff2=2 { export R5H; }
+p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
 
 # =============================================================================
 # Immediate-operand FP ops (2-word):  RaH = RbH {op} #16FHi
@@ -646,25 +675,27 @@ attach variables [ p_rf ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
     fpu_minmax_output(f_ra);
 }
 # MAXF32 RaH,RbH||MOV32 RcH,RdH  LSW: 1110 0110 1001 1100 ; MSW: 0000 dddc ccbb baaa
-# RaH=max(RaH,RbH); the parallel MOV32 RcH,RdH copies — RdH not cleanly decodable, model
-# RcH as written from RbH (the available source) so its def survives. MOV side of a
-# parallel doesn't update integer flags per SPRUHS1C -- only the arith side's compare.
-:MAXF32 f_ra, f_rb, "||MOV32", f_rc  is op16=0xE69C ; f_rc & f_rb & f_ra {
+# The parallel move is CONDITIONAL on the same test as the max, not a free-standing copy:
+#     if (RaH < RbH) { RaH = RbH; RcH = RdH; }
+# (SPRUHS1C p.99.) It used to be modelled as an unconditional `RcH = RbH` -- wrong source
+# *and* wrong control flow. RdH is p_rd9 in this MSW layout (bits 9-11), not p_rd.
+:MAXF32 f_ra, f_rb, "||MOV32", f_rc, p_rd9  is op16=0xE69C ; f_rc & f_rb & f_ra & p_rd9 {
     update_stf_cmp(f_ra, f_rb);
     if (f_ra f>= f_rb) goto <skip>;
     f_ra = f_rb;
+    f_rc = p_rd9;
   <skip>
     fpu_minmax_output(f_ra);
-    f_rc = f_rb;
 }
 # MINF32 RaH,RbH||MOV32 RcH,RdH  LSW: 1110 0110 1001 1101 ; MSW: 0000 dddc ccbb baaa
-:MINF32 f_ra, f_rb, "||MOV32", f_rc  is op16=0xE69D ; f_rc & f_rb & f_ra {
+#     if (RaH > RbH) { RaH = RbH; RcH = RdH; }
+:MINF32 f_ra, f_rb, "||MOV32", f_rc, p_rd9  is op16=0xE69D ; f_rc & f_rb & f_ra & p_rd9 {
     update_stf_cmp(f_ra, f_rb);
     if (f_ra f<= f_rb) goto <skip>;
     f_ra = f_rb;
+    f_rc = p_rd9;
   <skip>
     fpu_minmax_output(f_ra);
-    f_rc = f_rb;
 }
 # SWAPF RaH,RbH{,CNDF}  LSW: 1110 0110 1110 CNDF ; MSW: 0000 0000 00bb baaa
 # UNCF (0b1111): unconditional swap; per SPRUHS1C the swap itself doesn't touch flags.
@@ -680,38 +711,143 @@ attach variables [ p_rf ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
   <done>
 }
 
-# Parallel ADDF32/SUBF32 ||MOV32 forms (LSW 0xE0/0xE3 sub-ops) — 2-word. p_rd (the
-# ADDF32/SUBF32 dest) is in MSW bits 11-13; the 2nd arithmetic source and the MOV32
-# operand are bit-packed across both words and not cleanly decodable. Model the
-# arithmetic dest def (f+/f- against an opaque source) so dataflow continues.
-# 0xE0 sub-ops = "...||MOV32 mem32,RaH" (store side) ; 0xE3 = "...||MOV32 RaH,mem32" (load).
-# loc_hi4 selects the arithmetic op: 0000=MPYF32 0001=ADDF32 0010=SUBF32 (0xE3 0011=MACF32).
-# p_rd (MSW bits 11-13) is the cleanly-decodable arithmetic dest; the 2nd source + MOV32
-# operand are bit-packed/unrecoverable, so keep the dest defined via identity.
-#   MPYF32 RdH,ReH,RfH || MOV32 mem32,RaH   LSW: 1110 0000 0000 fffe
-:MPYF32 p_rd, "||MOV32 mem32"  is op_hi8=0xE0 & loc_hi4=0b0000 ; p_rd { p_rd = p_rd; }
-#   ADDF32 RdH,ReH,RfH || MOV32 mem32,RaH   LSW: 1110 0000 0001 fffe
-:ADDF32 p_rd, "||MOV32 mem32"  is op_hi8=0xE0 & loc_hi4=0b0001 ; p_rd { p_rd = p_rd; }
-#   SUBF32 RdH,ReH,RfH || MOV32 mem32,RaH   LSW: 1110 0000 0010 fffe
-:SUBF32 p_rd, "||MOV32 mem32"  is op_hi8=0xE0 & loc_hi4=0b0010 ; p_rd { p_rd = p_rd; }
-#   ADDF32 ... || MOV32 RaH,mem32  LSW: 1110 0011 0001 fffe
-:ADDF32 p_rd, "||MOV32"  is op_hi8=0xE3 & loc_hi4=0b0001 ; p_rd { p_rd = p_rd; }
-#   SUBF32 ... || MOV32 RaH,mem32  LSW: 1110 0011 0010 fffe
-:SUBF32 p_rd, "||MOV32"  is op_hi8=0xE3 & loc_hi4=0b0010 ; p_rd { p_rd = p_rd; }
-#   MACF32 R3H,R2H,RdH,ReH,RfH || MOV32 RaH,mem32  LSW: 1110 0011 0011 fffe
-:MACF32 p_rd, "||MOV32"  is op_hi8=0xE3 & loc_hi4=0b0011 ; p_rd { p_rd = p_rd; }
-#   MPYF32 RdH,RaH,RbH || ADDF32 R3H,R3H,R2H  LSW: 1110 0111 0100 00ff ; MSW reg fields.
-#   Parallel multiply-add alias (confirmed via dis2000, word 0xe741). Flow-preserving
-#   (the MPYF32 dest p_rd is in the MSW; touch it so dataflow + flow continue).
-:MPYF32 p_rd, "||ADDF32"  is op_hi8=0xE7 & loc_hi4=0b0100 ; p_rd { p_rd = p_rd; }
-#   MPYF32 RdH,RaH,RbH || SUBF32 RdH,ReH,RfH  LSW: 1110 0111 0101 00ff ; MSW reg fields.
-#   The ||SUBF32 sibling (sub-nibble 0101 vs ||ADDF32's 0100). Surfaced in the PCS411 image
-#   (words 0xe751/0xe753 at 0x8837f / 0x94df6 / 0x94e19). Same flow-preserving p_rd touch.
-:MPYF32 p_rd, "||SUBF32"  is op_hi8=0xE7 & loc_hi4=0b0101 ; p_rd { p_rd = p_rd; }
-#   MACF32 R7H,R6H,RdH,ReH,RfH — alias for MPYF32 RdH,ReH,RfH || ADDF32 R7H,R7H,R6H (multiply +
-#   accumulate into R7H). Distinct opcode from the R3H,R2H-accumulator MACF32 alias (the ||ADDF32 at
-#   0xE74x above). LSW: 1110 0011 1100 00ff (op_hi8=0xE3, loc_hi4=0b1100). RdH = p_rd (MSW[13:11]); the
-#   R7H/R6H accumulator pair is fixed by this opcode; ReH/RfH are bit-packed (not cleanly decoded, per
-#   the family convention). Was UNDEF -> halted the whole FPU block. Confirmed via TI dis2000: word pair
-#   e3cb/2e94 @ word 0xa20c1 = "MACF32 R7H, R6H, R5H, R4H, R5H".
-:MACF32 "R7H,R6H,"^p_rd  is op_hi8=0xE3 & loc_hi4=0b1100 ; p_rd { p_rd = p_rd; }
+# =============================================================================
+# Parallel "arith || MOV32 mem32" family — 2-word.
+#   LSW: 1110 00X0 YYYY fffe    MSW: eedd daaa mem32
+# X selects the direction of the parallel move and YYYY the arithmetic op:
+#   0xE0 = "... || MOV32 mem32, RaH"  (store)   0xE3 = "... || MOV32 RaH, mem32"  (load)
+#   YYYY: 0000 MPYF32  0001 ADDF32  0010 SUBF32  0011 MACF32 R3H,R2H  1100 MACF32 R7H,R6H
+# All five register selectors are now decoded: RdH = p_rd (MSW 11-13), RaH = p_ra (MSW
+# 8-10), RfH = p_rf (LSW 1-3), ReH = the split p_re sub-table, and mem32 = loc32 on the
+# MSW's low byte. These used to be `p_rd = p_rd` identity stubs with every operand except
+# the dest dropped from the display, which meant a third of the FPU work in a DSP loop was
+# invisible to both the listing and the decompiler.
+#
+# Source-before-dest ordering: the arithmetic reads ReH/RfH and the parallel MOV32 may
+# target one of them (TI only forbids RaH == RdH), so the arithmetic is evaluated first.
+#
+# MACF32's accumulate consumes the PREVIOUS product out of R2H/R6H before RdH is
+# rewritten, per SPRUHS1C: "R3H = R3H + R2H, RdH = ReH * RfH, RaH = [mem32]".
+#   MPYF32 RdH,ReH,RfH || MOV32 mem32, RaH   LSW: E000 sub 0b0000
+:MPYF32 p_rd, p_re_l, p_rf, "||MOV32", loc32, p_ra
+        is op_hi8=0xE0 & loc_hi4=0b0000 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    p_rd = p_re_l f* p_rf;
+    loc32 = p_ra;
+}
+:MPYF32 p_rd, p_re_h, p_rf, "||MOV32", loc32, p_ra
+        is op_hi8=0xE0 & loc_hi4=0b0000 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    p_rd = p_re_h f* p_rf;
+    loc32 = p_ra;
+}
+#   ADDF32 RdH,ReH,RfH || MOV32 mem32, RaH   LSW: E000 sub 0b0001
+:ADDF32 p_rd, p_re_l, p_rf, "||MOV32", loc32, p_ra
+        is op_hi8=0xE0 & loc_hi4=0b0001 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    p_rd = p_re_l f+ p_rf;
+    loc32 = p_ra;
+}
+:ADDF32 p_rd, p_re_h, p_rf, "||MOV32", loc32, p_ra
+        is op_hi8=0xE0 & loc_hi4=0b0001 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    p_rd = p_re_h f+ p_rf;
+    loc32 = p_ra;
+}
+#   SUBF32 RdH,ReH,RfH || MOV32 mem32, RaH   LSW: E000 sub 0b0010
+:SUBF32 p_rd, p_re_l, p_rf, "||MOV32", loc32, p_ra
+        is op_hi8=0xE0 & loc_hi4=0b0010 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    p_rd = p_re_l f- p_rf;
+    loc32 = p_ra;
+}
+:SUBF32 p_rd, p_re_h, p_rf, "||MOV32", loc32, p_ra
+        is op_hi8=0xE0 & loc_hi4=0b0010 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    p_rd = p_re_h f- p_rf;
+    loc32 = p_ra;
+}
+#   MPYF32 RdH,ReH,RfH || MOV32 RaH, mem32   LSW: E300 sub 0b0000
+:MPYF32 p_rd, p_re_l, p_rf, "||MOV32", p_ra, loc32
+        is op_hi8=0xE3 & loc_hi4=0b0000 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    p_rd = p_re_l f* p_rf;
+    p_ra = loc32;
+}
+:MPYF32 p_rd, p_re_h, p_rf, "||MOV32", p_ra, loc32
+        is op_hi8=0xE3 & loc_hi4=0b0000 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    p_rd = p_re_h f* p_rf;
+    p_ra = loc32;
+}
+#   ADDF32 RdH,ReH,RfH || MOV32 RaH, mem32   LSW: E300 sub 0b0001
+:ADDF32 p_rd, p_re_l, p_rf, "||MOV32", p_ra, loc32
+        is op_hi8=0xE3 & loc_hi4=0b0001 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    p_rd = p_re_l f+ p_rf;
+    p_ra = loc32;
+}
+:ADDF32 p_rd, p_re_h, p_rf, "||MOV32", p_ra, loc32
+        is op_hi8=0xE3 & loc_hi4=0b0001 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    p_rd = p_re_h f+ p_rf;
+    p_ra = loc32;
+}
+#   SUBF32 RdH,ReH,RfH || MOV32 RaH, mem32   LSW: E300 sub 0b0010
+:SUBF32 p_rd, p_re_l, p_rf, "||MOV32", p_ra, loc32
+        is op_hi8=0xE3 & loc_hi4=0b0010 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    p_rd = p_re_l f- p_rf;
+    p_ra = loc32;
+}
+:SUBF32 p_rd, p_re_h, p_rf, "||MOV32", p_ra, loc32
+        is op_hi8=0xE3 & loc_hi4=0b0010 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    p_rd = p_re_h f- p_rf;
+    p_ra = loc32;
+}
+#   MACF32 R3H,R2H,RdH,ReH,RfH || MOV32 RaH, mem32   LSW: E300 sub 0b0011
+:MACF32 "R3H,R2H", p_rd, p_re_l, p_rf, "||MOV32", p_ra, loc32
+        is op_hi8=0xE3 & loc_hi4=0b0011 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    R3H = R3H f+ R2H;
+    p_rd = p_re_l f* p_rf;
+    p_ra = loc32;
+}
+:MACF32 "R3H,R2H", p_rd, p_re_h, p_rf, "||MOV32", p_ra, loc32
+        is op_hi8=0xE3 & loc_hi4=0b0011 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    R3H = R3H f+ R2H;
+    p_rd = p_re_h f* p_rf;
+    p_ra = loc32;
+}
+#   MACF32 R7H,R6H,RdH,ReH,RfH || MOV32 RaH, mem32   LSW: E300 sub 0b1100
+:MACF32 "R7H,R6H", p_rd, p_re_l, p_rf, "||MOV32", p_ra, loc32
+        is op_hi8=0xE3 & loc_hi4=0b1100 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    R7H = R7H f+ R6H;
+    p_rd = p_re_l f* p_rf;
+    p_ra = loc32;
+}
+:MACF32 "R7H,R6H", p_rd, p_re_h, p_rf, "||MOV32", p_ra, loc32
+        is op_hi8=0xE3 & loc_hi4=0b1100 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    R7H = R7H f+ R6H;
+    p_rd = p_re_h f* p_rf;
+    p_ra = loc32;
+}
+
+# =============================================================================
+# Parallel "MPYF32 || ADDF32 / SUBF32" — 2-word, registers only (no memory operand).
+#   LSW: 1110 0111 010Y 00ff    MSW: feee dddc ccbb baaa      (Y: 0 = ADDF32, 1 = SUBF32)
+#   RaH = RbH * RcH ,  RdH = ReH +/- RfH
+# Note the MSW layout differs from the ||MOV32 family above: ddd/eee sit one bit lower
+# (p_rd9 / p_re12), and aaa/bbb/ccc are the ordinary f_ra/f_rb/f_rc.
+:MPYF32 f_ra, f_rb, f_rc, "||ADDF32", p_rd9, p_re12, p_rf7_0
+        is op_hi8=0xE7 & loc_hi4=0b0100 & p_rf7_0 ; f_ra & f_rb & f_rc & p_rd9 & p_re12 & p_rf_lo1=0 {
+    local prod:4 = f_rb f* f_rc;
+    p_rd9 = p_re12 f+ p_rf7_0;
+    f_ra = prod;
+}
+:MPYF32 f_ra, f_rb, f_rc, "||ADDF32", p_rd9, p_re12, p_rf7_1
+        is op_hi8=0xE7 & loc_hi4=0b0100 & p_rf7_1 ; f_ra & f_rb & f_rc & p_rd9 & p_re12 & p_rf_lo1=1 {
+    local prod:4 = f_rb f* f_rc;
+    p_rd9 = p_re12 f+ p_rf7_1;
+    f_ra = prod;
+}
+:MPYF32 f_ra, f_rb, f_rc, "||SUBF32", p_rd9, p_re12, p_rf7_0
+        is op_hi8=0xE7 & loc_hi4=0b0101 & p_rf7_0 ; f_ra & f_rb & f_rc & p_rd9 & p_re12 & p_rf_lo1=0 {
+    local prod:4 = f_rb f* f_rc;
+    p_rd9 = p_re12 f- p_rf7_0;
+    f_ra = prod;
+}
+:MPYF32 f_ra, f_rb, f_rc, "||SUBF32", p_rd9, p_re12, p_rf7_1
+        is op_hi8=0xE7 & loc_hi4=0b0101 & p_rf7_1 ; f_ra & f_rb & f_rc & p_rd9 & p_re12 & p_rf_lo1=1 {
+    local prod:4 = f_rb f* f_rc;
+    p_rd9 = p_re12 f- p_rf7_1;
+    f_ra = prod;
+}

@@ -14,13 +14,20 @@
 #                   across both instruction words, so a wrong reassembly prints a
 #                   plausible-looking but wrong constant). Every expected line was
 #                   verified against asm2000/dis2000 output for the same words.
+#   fpu_parallel -- every parallel ("||") FPU form. These pack five register
+#                   selectors plus a mem32 loc byte across both words, and TWO of
+#                   the selectors straddle the word boundary in OPPOSITE bit
+#                   orders (ReH = e:ee, RfH = ff:f), which is exactly the kind of
+#                   thing that decodes plausibly while naming the wrong register.
+#                   Assembled by asm2000 from the TI mnemonics, so the expected
+#                   registers are TI's, not ours.
 #
 # Usage:  pwsh -File tests\run_disasm_test.ps1 -Ghidra <ghidra-install-dir>
 #   (Ghidra defaults to $env:GHIDRA_INSTALL_DIR; Module defaults to this repo root.)
 param(
   [string]$Ghidra = $env:GHIDRA_INSTALL_DIR,
   [string]$Module = (Split-Path -Parent $PSScriptRoot),
-  [string[]]$Cases = @("addr_modes", "fpu_display")
+  [string[]]$Cases = @("addr_modes", "fpu_display", "fpu_parallel")
 )
 if (-not $Ghidra) { throw "Set -Ghidra or the GHIDRA_INSTALL_DIR env var to your Ghidra install." }
 $ErrorActionPreference = "Stop"

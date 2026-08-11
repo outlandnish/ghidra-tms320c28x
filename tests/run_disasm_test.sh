@@ -16,6 +16,13 @@
 #                   across both instruction words, so a wrong reassembly prints a
 #                   plausible-looking but wrong constant). Every expected line was
 #                   verified against asm2000/dis2000 output for the same words.
+#   fpu_parallel -- every parallel ("||") FPU form. These pack five register
+#                   selectors plus a mem32 loc byte across both words, and TWO of
+#                   the selectors straddle the word boundary in OPPOSITE bit
+#                   orders (ReH = e:ee, RfH = ff:f), which is exactly the kind of
+#                   thing that decodes plausibly while naming the wrong register.
+#                   Assembled by asm2000 from the TI mnemonics, so the expected
+#                   registers are TI's, not ours.
 #
 # Env / args:
 #   GHIDRA_INSTALL_DIR  -- required. Root of Ghidra install.
@@ -45,7 +52,7 @@ lang="$module/data/languages"
 tmp=$(mktemp -d -t c28x-test-XXXXXX)
 trap 'rm -rf "$tmp"' EXIT
 
-CASES="addr_modes fpu_display"
+CASES="addr_modes fpu_display fpu_parallel"
 
 # 1. compile the .sla
 (cd "$lang" && "$GHIDRA_INSTALL_DIR/support/sleigh" tms320c28x.slaspec)

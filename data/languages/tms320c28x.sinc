@@ -69,6 +69,7 @@ define token instr16 (16)
     ax_bit4   = (4,4)       # AX selector in bit 4 (the 'A' in 1111 1111 ssAS SHFT)
     op_lo765  = (5,7)       # bits 5..7 of low byte (AX,#imm shift selector sss)
     p_rf      = (1,3)       # fff  RfH for parallel MPYF32||MOV32 (LSW: 0000 fffe)
+    p_ff2     = (0,1)       # ff   HIGH 2 bits of RfH for MPYF32||ADDF32 (LSW: 0100 00ff)
     shft_hi4  = (8,11)      # SHFT in word2 of MOV ACC,loc16<<#1..15 (0000 SHFT LLLLLLLL)
     imm8_hi   = (8,15)      # high byte of word2 (MOVB loc16,#8bit,COND: CCCC CCCC LLLLLLLL)
     p_re_hi   = (0,0)       # e    high bit of ReH for that parallel form
@@ -102,7 +103,14 @@ define token instr16 (16)
     # parallel "op || MOV32 mem" MSW layout: eedd daaa mem32
     p_rd    = (11,13)       # ddd  MPYF32 dest RdH
     p_ra    = (8,10)        # aaa  MOV32 dest RaH
-    p_re_lo = (14,15)       # ee   low 2 bits of ReH (high bit is in the LSW)
+    p_re_lo = (14,15)       # ee   low 2 bits of ReH (high bit is p_re_hi in the LSW)
+    # "MPYF32 RaH,RbH,RcH || ADDF32/SUBF32 RdH,ReH,RfH" (0xE74x/0xE75x) and
+    # "MAXF32/MINF32 RaH,RbH || MOV32 RcH,RdH" (0xE69C/D) use a DIFFERENT MSW layout --
+    # feee dddc ccbb baaa / 0000 dddc ccbb baaa -- so ddd and eee sit one bit lower than
+    # p_rd/p_re_lo above. aaa/bbb/ccc are the ordinary f_ra/f_rb/f_rc.
+    p_rd9   = (9,11)        # ddd  in the `dddc ccbb baaa` layout
+    p_re12  = (12,14)       # eee  in the `feee dddc ccbb baaa` layout
+    p_rf_lo1 = (15,15)      # f    LOW bit of RfH for 0xE74x/0xE75x (high 2 bits are p_ff2)
     # NB: the FPU `mem32` / `mem16` operand is the LOW 8 bits of the MSW and is a standard
     # C28x loc byte, so it needs no fields of its own -- the shared loc16 / loc32 sub-tables
     # decode it directly when placed after the `;` in a constructor's pattern.
