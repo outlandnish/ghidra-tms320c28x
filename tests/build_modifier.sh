@@ -20,9 +20,11 @@
 
 set -euo pipefail
 
-: "${GHIDRA_INSTALL_DIR:?set GHIDRA_INSTALL_DIR to your Ghidra install root}"
-
 module=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# Load this worktree's local config (.c28x.env) if present. Absent file => no-op.
+. "$(dirname "${BASH_SOURCE[0]}")/_env.sh"; _c28x_load_env "$module"
+
+: "${GHIDRA_INSTALL_DIR:?set GHIDRA_INSTALL_DIR (or put it in .c28x.env) -- your Ghidra install root}"
 
 # locate javac / jar
 if [ -n "${JAVA_HOME:-}" ]; then

@@ -18,6 +18,11 @@ param(
   [string]$Jdk    = $null,
   [string]$Module = (Split-Path -Parent $PSScriptRoot)
 )
+# Load this worktree's local config (.c28x.env), then re-resolve -Ghidra from it
+# when not passed explicitly. Absent file => no-op.
+. "$PSScriptRoot\_env.ps1"
+Import-C28xEnv $Module
+if (-not $PSBoundParameters.ContainsKey('Ghidra')) { $Ghidra = $env:GHIDRA_INSTALL_DIR }
 if (-not $Ghidra) { $Ghidra = "C:\Users\nisha\Downloads\ghidra_12.1.2_PUBLIC_20260605\ghidra_12.1.2_PUBLIC" }
 $ErrorActionPreference = "Stop"
 
@@ -30,7 +35,8 @@ if (-not (Test-Path $javac)) { throw "javac not found; pass -Jdk <jdk-home>" }
 
 $src = "$Module\src\main\java\ghidra\program\emulation\TMS320C28xEmulateInstructionStateModifier.java"
 $cp  = ((Get-ChildItem "$Ghidra\Ghidra\Framework" -Filter "*.jar" -Recurse | ForEach-Object { $_.FullName }) -join ';')
-$out = "$env:TEMP\c28x-mod-build\out"; New-Item -ItemType Directory -Force $out | Out-Null
+# Per-worktree scratch dir (was a fixed "$env:TEMP\c28x-mod-build" that collided across worktrees).
+$out = (Join-Path (Get-C28xScratchRoot -Module $Module -Kind "modbuild") "out"); New-Item -ItemType Directory -Force $out | Out-Null
 
 # Ghidra 12.x runs on JDK 21+; --release 21 keeps the class loadable on any supported JVM.
 & $javac --release 21 -cp $cp -d $out $src
