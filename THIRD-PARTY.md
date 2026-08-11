@@ -103,7 +103,12 @@ Apache-2.0 §4(b).
 
 Files adapted so far:
 
-- *(none yet — this section will be extended as each `upstream-merge` PR lands.)*
+- **`data/languages/tms320c28x.cspec`** — pentry ordering (hiddenret / ptr /
+  float / general per SPRU514 §7), `stackshift="2"` + stack pentry `offset="2"`
+  frame accounting for the RPC push, `context_data <tracked_set>` establishing
+  the TI C-runtime state (PM=0 / OVM=0 / PAGE0=0, SPRU514 Table 7-4), extended
+  `killedbycall` list (DP + status registers), and the standalone `interrupt`
+  prototype. See #15.
 
 ## Nothing else
 
