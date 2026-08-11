@@ -21,13 +21,18 @@
 #                   thing that decodes plausibly while naming the wrong register.
 #                   Assembled by asm2000 from the TI mnemonics, so the expected
 #                   registers are TI's, not ours.
+#   fpu_flags    -- SETFLG / SAVE / RESTORE. Their 11-bit FLAG mask is split across
+#                   both words with the HIGH 6 bits in the LSW and the low 5 in the
+#                   MSW -- the opposite order from the #16FHi immediates, and getting
+#                   it backwards silently moves RND32 onto NI. Assembled by asm2000
+#                   from TI mnemonics (`SETFLG RNDF32=1` -> e610 0200).
 #
 # Usage:  pwsh -File tests\run_disasm_test.ps1 -Ghidra <ghidra-install-dir>
 #   (Ghidra defaults to $env:GHIDRA_INSTALL_DIR; Module defaults to this repo root.)
 param(
   [string]$Ghidra = $env:GHIDRA_INSTALL_DIR,
   [string]$Module = (Split-Path -Parent $PSScriptRoot),
-  [string[]]$Cases = @("addr_modes", "fpu_display", "fpu_parallel")
+  [string[]]$Cases = @("addr_modes", "fpu_display", "fpu_parallel", "fpu_flags")
 )
 # Load this worktree's local config (.c28x.env), then re-resolve -Ghidra from it
 # when it was not passed explicitly. Absent file => no-op (CI is unaffected).

@@ -222,7 +222,10 @@ macro packstf(res) {
     local ni:4 = zext(STF_NI);
     local zi:4 = zext(STF_ZI);
     local tf:4 = zext(STF_TF);
-    res = lv | (lu << 1) | (nf << 2) | (zf << 3) | (ni << 4) | (zi << 5) | (tf << 6);
+    local rnd:4 = zext(STF_RND);
+    local shd:4 = zext(STF_SHDWS);
+    res = lv | (lu << 1) | (nf << 2) | (zf << 3) | (ni << 4) | (zi << 5) | (tf << 6)
+        | (rnd << 9) | (shd << 31);
 }
 macro unpackstf(in) {
     STF_LV = (in & 0x01) != 0;
@@ -232,6 +235,36 @@ macro unpackstf(in) {
     STF_NI = (in & 0x10) != 0;
     STF_ZI = (in & 0x20) != 0;
     STF_TF = (in & 0x40) != 0;
+    STF_RND = (in & 0x200) != 0;
+    STF_SHDWS = (in & 0x80000000) != 0;
+}
+
+# --- SETFLG / SAVE flag write ------------------------------------------------
+# Both instructions carry an 11-bit FLAG mask ("which flags to change") and an 11-bit
+# VALUE ("what to change them to"); a flag whose mask bit is 0 keeps its current value.
+# FLAG's bit order is the STF register's own (SPRUHS1C Table 1-2), which is NOT the
+# order MOVST0's mask uses -- MOVST0 swaps ZF/NI and puts TF at bit 7. Do not share
+# tables between the two.
+#   0 LVF   1 LUF   2 NF   3 ZF   4 NI   5 ZI   6 TF   7,8 rsvd   9 RND32   10 rsvd
+# Both operands are decode-time constants, so the decompiler folds this down to just
+# the flags the mask actually names.
+macro apply_setflg(fl, va) {
+    local s_lv:1 = (fl & 0x001) != 0;
+    local s_lu:1 = (fl & 0x002) != 0;
+    local s_nf:1 = (fl & 0x004) != 0;
+    local s_zf:1 = (fl & 0x008) != 0;
+    local s_ni:1 = (fl & 0x010) != 0;
+    local s_zi:1 = (fl & 0x020) != 0;
+    local s_tf:1 = (fl & 0x040) != 0;
+    local s_rn:1 = (fl & 0x200) != 0;
+    STF_LV    = (s_lv && ((va & 0x001) != 0)) || (!s_lv && STF_LV);
+    STF_LU    = (s_lu && ((va & 0x002) != 0)) || (!s_lu && STF_LU);
+    STF_NF    = (s_nf && ((va & 0x004) != 0)) || (!s_nf && STF_NF);
+    STF_ZF    = (s_zf && ((va & 0x008) != 0)) || (!s_zf && STF_ZF);
+    STF_NI    = (s_ni && ((va & 0x010) != 0)) || (!s_ni && STF_NI);
+    STF_ZI    = (s_zi && ((va & 0x020) != 0)) || (!s_zi && STF_ZI);
+    STF_TF    = (s_tf && ((va & 0x040) != 0)) || (!s_tf && STF_TF);
+    STF_RND   = (s_rn && ((va & 0x200) != 0)) || (!s_rn && STF_RND);
 }
 
 # --- cndf: FPU condition-code sub-table --------------------------------------
@@ -353,14 +386,59 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
 # RB is 32-bit; occupies 2 words on the 16-bit word-addressed stack.
 :PUSH "RB"   is op16=0xFFF0 { local a:4 = SP; *[ram]:4 a = RB; SP = SP + 2; }
 :POP "RB"    is op16=0xFFF1 { SP = SP - 2; local a:4 = SP; RB = *[ram]:4 a; }
-:RESTORE     is op16=0xE562 { }   # restores saved FP regs from stack frame — no-op stub
+# RESTORE   LSW: 1110 0101 0110 0010 (single word)
+# Copy R0H-R7H and STF back from the shadow register set, and clear SHDWS. Was a `{ }`
+# no-op, which made a SAVE/RESTORE-bracketed ISR look like it clobbered every float
+# register of the code it interrupted.
+:RESTORE     is op16=0xE562 {
+    R0H = R0H_s; R1H = R1H_s; R2H = R2H_s; R3H = R3H_s;
+    R4H = R4H_s; R5H = R5H_s; R6H = R6H_s; R7H = R7H_s;
+    STF = STF_s;
+    unpackstf(STF);
+    STF_SHDWS = 0;
+}
 :ZEROA       is op16=0xE563 { R0H=0; R1H=0; R2H=0; R3H=0; R4H=0; R5H=0; R6H=0; R7H=0; }
 
-# SETFLG FLAG,VALUE   LSW: 1110 0110 00FF FFFF ; MSW: FFFFF VVV VVVV VVVV  (2-word).
-# Set/clear selected FPU status flags per an 11-bit mask/value pair. The exact per-flag
-# scatter into STF isn't modeled; touch STF so the op emits non-empty p-code and flow
-# continues (7 sites — the dominant remaining FPU gap, e.g. word 0xe630).
-:SETFLG "#"setflg_m6  is op_hi8=0xE6 & lo_b76=0 & setflg_m6 ; imm16  { STF = STF; }
+# SETFLG FLAG,VALUE   LSW: 1110 0110 00FF FFFF ; MSW: FFFF FVVV VVVV VVVV  (2-word)
+# SAVE   FLAG,VALUE   LSW: 1110 0110 01FF FFFF ; MSW: FFFF FVVV VVVV VVVV  (2-word)
+# Set or clear selected FPU status flags. FLAG is split across both words (low 6 bits in
+# the LSW, high 5 in the MSW) so, like the #16FHi immediates, the display reassembles it
+# in a disassembly action rather than printing whichever half fits -- SETFLG's most
+# common real use is RND32, which is FLAG bit 9.
+#
+# Note the halves are the other way round from the #16FHi immediates: here the LSW holds
+# the HIGH 6 bits of FLAG and the MSW the low 5, i.e. FLAG = (m6 << 5) | f5. Confirmed
+# against asm2000: `SETFLG RNDF32=1` assembles to `e610 0200` -- m6 = 0b010000 puts the
+# set bit at FLAG[9], and reading the halves the other way round would land it on NI.
+#
+# SETFLG was `{ STF = STF; }` -- a placeholder that named flags it did not write, so
+# firmware clearing LUF/LVF or switching the rounding mode had no modelled effect at all.
+:SETFLG "#"^ctx_setflg_flag, "#"setflg_v11
+        is op_hi8=0xE6 & lo_b76=0 & setflg_m6 ; setflg_f5 & setflg_v11
+        [ ctx_setflg_flag = (setflg_m6 << 5) | setflg_f5; ] {
+    local f5:2 = setflg_f5;
+    local m6:2 = setflg_m6;
+    local fl:2 = (m6 << 5) | f5;
+    local va:2 = setflg_v11;
+    apply_setflg(fl, va);
+}
+# SAVE additionally copies the working register set to the shadows, in the same cycle.
+# Per SPRUHS1C the status register is copied BEFORE the flag values are changed, so the
+# packstf/copy happens first and SHDWS is set after it.
+:SAVE "#"^ctx_setflg_flag, "#"setflg_v11
+        is op_hi8=0xE6 & lo_b76=1 & setflg_m6 ; setflg_f5 & setflg_v11
+        [ ctx_setflg_flag = (setflg_m6 << 5) | setflg_f5; ] {
+    R0H_s = R0H; R1H_s = R1H; R2H_s = R2H; R3H_s = R3H;
+    R4H_s = R4H; R5H_s = R5H; R6H_s = R6H; R7H_s = R7H;
+    packstf(STF);
+    STF_s = STF;
+    STF_SHDWS = 1;
+    local f5:2 = setflg_f5;
+    local m6:2 = setflg_m6;
+    local fl:2 = (m6 << 5) | f5;
+    local va:2 = setflg_v11;
+    apply_setflg(fl, va);
+}
 
 # RPTB label, loc16 / #RC   LSW: 1011 0101 Rbbb bbbb ; MSW: (0000 0000 loc16) or (imm16).
 # Block-repeat (hardware loop over the following RSIZE words). The loop itself can't be
