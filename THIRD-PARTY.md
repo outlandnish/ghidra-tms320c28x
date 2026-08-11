@@ -110,15 +110,31 @@ Files adapted so far:
   `killedbycall` list (DP + status registers), and the standalone `interrupt`
   prototype. See #15.
 - **`src/main/java/ghidra/app/plugin/core/analysis/TMS320C28xFfcReturnAnalyzer.java`**
-  — wholesale port of their `TMS320C28FfcReturnAnalyzer`; only local changes are
-  the processor-name string ("TMS320C28x" here vs "TMS320C28" upstream) and the
-  class rename. See #16.
+  — port of their `TMS320C28FfcReturnAnalyzer`. Local changes: the processor-name
+  string ("TMS320C28x" here vs "TMS320C28" upstream), the class rename, and the
+  FFC/LB detection in `ffcTarget()` / `isXar7Branch()`. Upstream matches XAR7 as
+  operand 0; this module's SLEIGH renders `FFC XAR7,#t` / `LB *XAR7` with XAR7 as a
+  print literal (FFC operand 0 is the target; `LB *XAR7` has no operand), so
+  detection is by mnemonic + resolved call flow / the `*XAR7` print form. Runtime-
+  verified: with upstream's operand-0 checks the analyzer never fired on this
+  module. See #16.
 - **`data/languages/tms320c28x_more.sinc`** (partial) — the three-variant
   `LB *XAR7` constructor split dispatched by (`ffc_return`, `switch_canonical`)
   SLEIGH context bits, plus the `XAR7 & 0x003fffff` 22-bit PC mask on the
-  branch/return targets. See #16.
+  branch/return targets (see #16); and the unpacked status-flag model plumbing:
+  the `packst0` / `unpackst0` / `packst1` / `unpackst1` macros and their wiring on
+  `PUSH` / `POP ST0` / `ST1`, the per-flag `SETC` / `CLRC #imm8` bodies, and the
+  decoded-signed `PM` convention used by `SPM`.
 - **`data/languages/tms320c28x.slaspec`** (partial) — the `ffc_return` and
-  `switch_canonical` context bit definitions. See #16.
+  `switch_canonical` context bit definitions (see #16); and the unpacked
+  status-flag model: each ST0/ST1 status bit defined as its own register (the
+  `define register` blocks at 0x100 / 0x110) with the `$(NAME)` flag macros
+  expanding to those registers, which is what lets the compiler-spec
+  `context_data <tracked_set>` name `PM` / `OVM` / `PAGE0` (SPRU514 Table 7-4).
+- **`data/languages/tms320c28x_ext56.sinc`** — *not adapted code*, noted for
+  completeness: the `SETC` / `CLRC` mode-bit constructors (`OBJMODE`, `XF`, `OVC`,
+  `M0M1MAP`) were wired to write the individual status registers introduced by the
+  unpacked flag model above. The register-assignment wiring is this project's own.
 
 ## Nothing else
 
