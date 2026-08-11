@@ -126,11 +126,21 @@ Files adapted so far:
   `PUSH` / `POP ST0` / `ST1`, the per-flag `SETC` / `CLRC #imm8` bodies, and the
   decoded-signed `PM` convention used by `SPM`.
 - **`data/languages/tms320c28x.slaspec`** (partial) — the `ffc_return` and
-  `switch_canonical` context bit definitions (see #16); and the unpacked
+  `switch_canonical` context bit definitions (see #16); the unpacked
   status-flag model: each ST0/ST1 status bit defined as its own register (the
   `define register` blocks at 0x100 / 0x110) with the `$(NAME)` flag macros
   expanding to those registers, which is what lets the compiler-spec
-  `context_data <tracked_set>` name `PM` / `OVM` / `PAGE0` (SPRU514 Table 7-4).
+  `context_data <tracked_set>` name `PM` / `OVM` / `PAGE0` (SPRU514 Table 7-4);
+  and the STF flag sub-registers at 0x124 (`STF_LV` / `STF_LU` / `STF_NF` /
+  `STF_ZF` / `STF_NI` / `STF_ZI` / `STF_TF`) that the FPU condition-code table
+  reads. See #17.
+- **`data/languages/tms320c28x_fpu.sinc`** (partial) — the `cndf` sub-table
+  (12 float conditions plus `UNC` / `UNCF`) exporting a 1-byte boolean, the
+  STF sub-register writes in `setFloatFlags` / `update_stf`, `packstf` /
+  `unpackstf` for the packed-STF sync on STF ↔ memory moves, the UNCF-vs-
+  conditional split on `MOV32` / `NEGF32` / `SWAPF ... cndf`, and the
+  `MOVST0 → $(Z)/$(N)` forward from `STF_ZF` / `STF_NF` (replacing the
+  previous packed `STF[0,1]` bit slices). See #17.
 - **`data/languages/tms320c28x_ext56.sinc`** — *not adapted code*, noted for
   completeness: the `SETC` / `CLRC` mode-bit constructors (`OBJMODE`, `XF`, `OVC`,
   `M0M1MAP`) were wired to write the individual status registers introduced by the

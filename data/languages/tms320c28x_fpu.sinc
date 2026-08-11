@@ -1,5 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Nishanth Samala
+# Copyright the mwdmwd/ghidra-c28x contributors (https://github.com/mwdmwd/ghidra-c28x)
+#
+# Portions adapted from mwdmwd/ghidra-c28x (Apache-2.0): the `cndf` condition
+# sub-table (12 conditions plus UNC/UNCF), the STF sub-register updates in
+# `setFloatFlags` / `update_stf`, and the UNCF-vs-conditional split on MOV32 /
+# NEGF32 / SWAPF ... cndf. See THIRD-PARTY.md.
+#
 # C28x FPU (F2837x / FPU32) instructions.
 # Included by tms320c28x.sinc. Encodings verified against docs/c28x/fpu_instructions.txt
 # (spruhs1c ch.1). Confirmed used in DIR/PMR (~281 ext-ISA words).
@@ -7,9 +14,11 @@
 # SCOPE: real IEEE-754 single-precision p-code (FPU-PCODE-SPEC.md, PCODE-GAPS B2).
 # The FP regs R0H..R7H are 32-bit varnodes holding the IEEE-754 bit pattern; SLEIGH's
 # float operators (f+ f- f* f/ f== f< ... int2float trunc abs sqrt) are size-typed, so
-# applying them to the 4-byte reg values is correct. CMPF32 sets the STF Z/N flags so the
-# CMPF32 -> MOVST0 -> SB(GEQ/LT/...) idiom survives (an unset flag makes the decompiler
-# prune the branch successor as unreachable -> halt_baddata, the dominant B2 truncation).
+# applying them to the 4-byte reg values is correct. Compares (CMPF32/MAXF32/MINF32)
+# update the STF sub-registers STF_ZF/STF_NF; the `cndf` sub-table reads them so the
+# `CMPF32 -> MOV32 RaH,RbH,cndf` and `CMPF32 -> MOVST0 -> SB(cond)` idioms both survive
+# (an unset flag makes the decompiler prune the branch successor as unreachable ->
+# halt_baddata, the dominant B2 truncation).
 #
 # FPU instructions are 32-bit: LSW (low word, lower address) + MSW. The LSW is the
 # opcode; for reg-reg forms the MSW holds the register fields aaa/bbb/ccc.
@@ -66,15 +75,80 @@ define pcodeop QUADF32;
 define pcodeop IEXP2F32;
 define pcodeop LOG2F32;
 
-# --- STF flag model ----------------------------------------------------------
-# CMPF32/MINF32/MAXF32 set ZF=STF[0] and NF=STF[1] from the comparison (SPRU430F).
-# (LUF/LVF over/underflow flags are not modeled.) MOVST0 forwards STF->ST0 so the
-# integer SB ...,COND decoder picks EQ/NEQ/GT/GEQ/LT/LEQ from these bits.
+# --- STF flag model (unpacked) -----------------------------------------------
+# CMPF32/MINF32/MAXF32 set ZF/NF from the comparison; the single-value flag ops
+# (ABSF32, NEGF32 UNCF, ...) set ZF/NF from the result's exponent/sign.
+# STF is modeled as individual sub-registers STF_ZF/STF_NF/STF_TF/STF_LV/STF_LU
+# (slaspec) rather than bit slices of the packed STF, so the decompiler can name
+# each flag directly. (LUF/LVF over/underflow flags are not modeled numerically;
+# TMU pcodeops leave them stale.) The packed STF register is synced on the rare
+# STF <-> memory move sites via packstf/unpackstf below.
+#
+# The `cndf` sub-table (12 conditions + UNC/UNCF) reads these sub-registers and
+# exports a 1-byte boolean so conditional variants of MOV32 / NEGF32 / SWAPF can
+# be genuinely conditional in p-code.
+# Adapted from mwdmwd/ghidra-c28x (Apache-2.0). See THIRD-PARTY.md.
+
+# 2-operand compare: set ZF/NF from the ordered comparison of two floats.
 macro setFloatFlags(a, b) {
-    local zf:1 = (a f== b);
-    local nf:1 = (a f< b);
-    STF = (STF & 0xFFFFFFFC) | zext(zf) | (zext(nf) << 1);
+    STF_ZF = (a f== b);
+    STF_NF = (a f< b);
 }
+
+# 1-operand result flag update (ABSF32, NEGF32 UNCF, MOV32...UNCF loads): set
+# ZF from a zero-exponent test and NF from the sign bit gated on non-zero.
+macro update_stf(res) {
+    local zero_exp:1 = ((res & 0x7F800000) == 0);
+    STF_ZF = zero_exp;
+    STF_NF = res[31,1] && !zero_exp;
+}
+
+# Pack the individual flag sub-registers back into the STF word for the rare
+# case where STF is stored to memory (or PUSH STF). Bit numbering matches
+# SPRUHS1C Table 2-2: LVF=0 LUF=1 NF=2 ZF=3 NI=4 ZI=5 TF=6.
+macro packstf(res) {
+    local lv:4 = zext(STF_LV);
+    local lu:4 = zext(STF_LU);
+    local nf:4 = zext(STF_NF);
+    local zf:4 = zext(STF_ZF);
+    local ni:4 = zext(STF_NI);
+    local zi:4 = zext(STF_ZI);
+    local tf:4 = zext(STF_TF);
+    res = lv | (lu << 1) | (nf << 2) | (zf << 3) | (ni << 4) | (zi << 5) | (tf << 6);
+}
+macro unpackstf(in) {
+    STF_LV = (in & 0x01) != 0;
+    STF_LU = (in & 0x02) != 0;
+    STF_NF = (in & 0x04) != 0;
+    STF_ZF = (in & 0x08) != 0;
+    STF_NI = (in & 0x10) != 0;
+    STF_ZI = (in & 0x20) != 0;
+    STF_TF = (in & 0x40) != 0;
+}
+
+# --- cndf: FPU condition-code sub-table --------------------------------------
+# The 4-bit `fcndf` token field selects one of 16 float conditions (SPRUHS1C
+# Table 6-1). Each constructor exports a 1-byte boolean the parent instruction
+# uses in an `if (cndf) ...` guard. Reserved encodings 6..9 are given a bogus
+# `rsvdN` display and export false so the table is total (SLEIGH requires every
+# reachable pattern to match).
+# Adapted from mwdmwd/ghidra-c28x (Apache-2.0).
+cndf: "NEQ"   is fcndf=0b0000 { local b:1 = (STF_ZF == 0);                    export b; }
+cndf: "EQ"    is fcndf=0b0001 { local b:1 = (STF_ZF == 1);                    export b; }
+cndf: "GT"    is fcndf=0b0010 { local b:1 = (STF_ZF == 0) && (STF_NF == 0);   export b; }
+cndf: "GEQ"   is fcndf=0b0011 { local b:1 = (STF_NF == 0);                    export b; }
+cndf: "LT"    is fcndf=0b0100 { local b:1 = (STF_NF == 1);                    export b; }
+cndf: "LEQ"   is fcndf=0b0101 { local b:1 = (STF_ZF == 1) || (STF_NF == 1);   export b; }
+cndf: "rsvd6" is fcndf=0b0110 { local b:1 = 0;                                 export b; }
+cndf: "rsvd7" is fcndf=0b0111 { local b:1 = 0;                                 export b; }
+cndf: "rsvd8" is fcndf=0b1000 { local b:1 = 0;                                 export b; }
+cndf: "rsvd9" is fcndf=0b1001 { local b:1 = 0;                                 export b; }
+cndf: "TF"    is fcndf=0b1010 { local b:1 = (STF_TF == 1);                    export b; }
+cndf: "NTF"   is fcndf=0b1011 { local b:1 = (STF_TF == 0);                    export b; }
+cndf: "LU"    is fcndf=0b1100 { local b:1 = (STF_LU == 1);                    export b; }
+cndf: "LV"    is fcndf=0b1101 { local b:1 = (STF_LV == 1);                    export b; }
+cndf: "UNC"   is fcndf=0b1110 { local b:1 = 1;                                 export b; }
+cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 export b; }
 
 # =============================================================================
 # Register-register 3-operand FP ops:  LSW fixed, MSW = 0000 000c ccbb baaa
@@ -86,7 +160,7 @@ macro setFloatFlags(a, b) {
 # =============================================================================
 # Register-register 2-operand ops:  MSW = 0000 0000 00bb baaa
 # =============================================================================
-:ABSF32 f_ra, f_rb     is op16=0xE695; f_rb & f_ra & f_msw_hi=0 { f_ra = abs(f_rb); }
+:ABSF32 f_ra, f_rb     is op16=0xE695; f_rb & f_ra & f_msw_hi=0 { f_ra = abs(f_rb); update_stf(f_ra); }
 :CMPF32 f_ra, f_rb     is op16=0xE694; f_rb & f_ra & f_msw_hi=0 { setFloatFlags(f_ra, f_rb); }
 # MAX/MIN: SLEIGH has no ternary — pick the larger/smaller with an if/goto.
 :MAXF32 f_ra, f_rb     is op16=0xE696; f_rb & f_ra & f_msw_hi=0 {
@@ -228,7 +302,7 @@ macro setFloatFlags(a, b) {
 # Exact LSW encodings (spruhs1c): 0xE200 mem32,STF  0xE203 mem32,RaH  0xE213 mem16,RaH
 #   0xE223 MOVD32 RaH,mem32  0xE250 MACF32  0xE280 STF,mem32  0xE284 UI32TOF32  0xE288
 #   I32TOF32  0xE2A0..AF MOV32 RaH,mem32,CNDF  0xE2C4 UI16TOF32  0xE2C8 I16TOF32
-:MOV32 "mem32", "STF"       is op16=0xE200 ; imm16  { local s:4 = STF; }            # store STF -> mem
+:MOV32 "mem32", "STF"       is op16=0xE200 ; imm16  { packstf(STF); local s:4 = STF; }  # sync sub-regs -> packed, then store
 :MOV32 mem32d, p_ra         is op16=0xE203 ; mem32d & p_ra { mem32d = p_ra; }        # store RaH -> [DP:off6]
 # Non-direct mem32 modes (indirect *XARn etc.): the address isn't cleanly recoverable from
 # the byte alone, so keep the flow-preserving consume (don't regress those to halt_baddata).
@@ -242,26 +316,43 @@ macro setFloatFlags(a, b) {
     R7H = R7H f+ R3H;
     XAR7 = XAR7 + 2;
 }
-:MOV32 "STF", "mem32"       is op16=0xE280 ; imm16  { STF = STF; }                   # load mem -> STF (opaque)
+:MOV32 "STF", "mem32"       is op16=0xE280 ; imm16  { STF = STF; unpackstf(STF); }   # load mem -> STF (opaque value; sync to sub-regs)
 :UI32TOF32 p_ra, "mem32"    is op16=0xE284 ; p_ra   { p_ra = int2float(p_ra); }
 :I32TOF32 p_ra, "mem32"     is op16=0xE288 ; p_ra   { p_ra = int2float(p_ra); }
-:MOV32 p_ra, "mem32", fcndf is op_hi8=0xE2 & loc_hi4=0b1010 & fcndf ; p_ra { p_ra = p_ra; }
+# MOV32 RaH, mem32 CNDF (0xE2A? family). UNCF (0b1111) is unconditional + updates
+# flags from the loaded value; other codes are conditional and leave flags alone.
+# The loaded value is opaque (address not cleanly decodable from the byte), so
+# the UNCF variant materialises RaH via identity and calls update_stf on it --
+# gives the decompiler a def to trace even though the concrete value is unknown.
+:MOV32 p_ra, "mem32", cndf  is op_hi8=0xE2 & loc_hi4=0b1010 & fcndf=0b1111 & cndf ; p_ra {
+    p_ra = p_ra;
+    update_stf(p_ra);
+}
+:MOV32 p_ra, "mem32", cndf  is op_hi8=0xE2 & loc_hi4=0b1010 & cndf ; p_ra {
+    if (!cndf) goto <done>;
+    p_ra = p_ra;
+  <done>
+}
 :UI16TOF32 p_ra, "mem16"    is op16=0xE2C4 ; p_ra   { local v:2 = p_ra:2; p_ra = int2float(v); }
 :I16TOF32 p_ra, "mem16"     is op16=0xE2C8 ; p_ra   { local v:2 = p_ra:2; p_ra = int2float(v); }
 # 0xe27x seen in firmware — undocumented load form, consume both words
 :MOV32 p_ra, "mem32 (e27x)" is op_hi8=0xE2 & loc_hi4=0b0111 ; p_ra  { p_ra = p_ra; }
 
-# CNDF condition codes (FPU), low nibble of the LSW. spruhs1c Table; reserved
-# encodings (6..9) are unused -> name them rsvd so the table is total.
-attach names [ fcndf ]
-  [ "NEQ" "EQ" "GT" "GEQ" "LT" "LEQ" "rsvd6" "rsvd7"
-    "rsvd8" "rsvd9" "TF" "NTF" "LU" "LV" "UNC" "UNCF" ];
-
-# MOV32 RaH, RbH {,CNDF}   LSW=1110 0110 1100 CNDF : MSW=0000 0000 00bb baaa  (reg-reg)
-# Unconditional move (the common case); the conditional variants still copy (the cond is
-# rendered but we model the move unconditionally — close enough for dataflow).
-:MOV32 f_ra, f_rb, fcndf  is op_hi8=0xE6 & loc_hi4=0b1100 & fcndf
-                          ; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb; }
+# MOV32 RaH, RbH {,CNDF}   LSW=1110 0110 1100 CNDF : MSW=0000 0000 00bb baaa
+# UNCF (0b1111): unconditional move + update flags from the moved value.
+# Others: genuinely conditional (was previously an unconditional copy with cndf
+# rendered display-only, which mis-modeled the semantics for the decompiler).
+:MOV32 f_ra, f_rb, cndf  is op_hi8=0xE6 & loc_hi4=0b1100 & fcndf=0b1111 & cndf
+                         ; f_rb & f_ra & f_msw_hi=0 {
+    f_ra = f_rb;
+    update_stf(f_ra);
+}
+:MOV32 f_ra, f_rb, cndf  is op_hi8=0xE6 & loc_hi4=0b1100 & cndf
+                         ; f_rb & f_ra & f_msw_hi=0 {
+    if (!cndf) goto <done>;
+    f_ra = f_rb;
+  <done>
+}
 
 # Parallel "MPYF32 RdH,ReH,RfH || MOV32 RaH,mem32"  LSW: 1110 0011 0000 fffe ;
 # MSW: eedd daaa mem32.  RdH=ddd(MSW), RfH=fff(LSW), RaH=aaa(MSW). ReH is split across
@@ -316,19 +407,30 @@ attach variables [ p_rf ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 # ZERO RaH             LSW: 1110 0101 1001 0aaa  (single word)
 :ZERO fimm_reg            is op_hi8=0xE5 & loc_mode5=0b10010 & fimm_reg { fimm_reg = 0; }
 # NEGF32 RaH,RbH{,CNDF} LSW: 1110 0110 1010 CNDF ; MSW: 0000 0000 00bb baaa
-:NEGF32 f_ra, f_rb, fcndf  is op_hi8=0xE6 & loc_hi4=0b1010 & fcndf
-                           ; f_rb & f_ra & f_msw_hi=0 { local negone:4 = 0xBF800000; f_ra = f_rb f* negone; }
+# UNCF (0b1111): unconditional negate + update flags from the result.
+# Others: conditional; leave flags alone.
+:NEGF32 f_ra, f_rb, cndf  is op_hi8=0xE6 & loc_hi4=0b1010 & fcndf=0b1111 & cndf
+                          ; f_rb & f_ra & f_msw_hi=0 {
+    f_ra = f_rb ^ 0x80000000;
+    update_stf(f_ra);
+}
+:NEGF32 f_ra, f_rb, cndf  is op_hi8=0xE6 & loc_hi4=0b1010 & cndf
+                          ; f_rb & f_ra & f_msw_hi=0 {
+    local val:4 = f_rb;
+    if (!cndf) goto <done>;
+    val = f_rb ^ 0x80000000;
+  <done>
+    f_ra = val;
+}
 # MOVST0 FLAG          LSW: 1010 1101 FFFF FFFF  (copy selected STF flags into ST0)
-# ST0 holds the integer Z/N flags the SB ...,COND decoder reads. setFloatFlags() puts the
-# float compare result in STF[0]=ZF / STF[1]=NF, but the named flags are $(Z)=ST0[4] and
-# $(N)=ST0[5] (slaspec). A flat `ST0 = STF:2` lands them in ST0 bits 0/1, so the SB branch
-# reads ST0[4]/[5] (never set) → constant condition → the decompiler prunes the real arm.
-# Map STF's compare bits into the named ST0 flag fields instead. (imm8 is the flag-select
-# mask; Z+N covers every CMPF32/MAXF32/MINF32 → SB EQ/NEQ/GT/GEQ/LT/LEQ idiom. C/V/TC are
-# untouched — the FPU compare path doesn't set them.)
+# ST0 holds the integer Z/N flags the SB ...,COND decoder reads; setFloatFlags puts the
+# float compare result in the STF_ZF / STF_NF sub-registers, so forward them into the
+# unpacked $(Z) / $(N) flag registers. (imm8 is the flag-select mask; Z+N covers every
+# CMPF32/MAXF32/MINF32 → SB EQ/NEQ/GT/GEQ/LT/LEQ idiom. C/V/TC are untouched — the
+# FPU compare path doesn't set them.)
 :MOVST0 "#"imm8        is op_hi8=0xAD & imm8 {
-    $(Z) = STF[0,1];   # float ZF -> integer Z (ST0[4])
-    $(N) = STF[1,1];   # float NF -> integer N (ST0[5])
+    $(Z) = STF_ZF;   # float ZF -> integer Z (ST0[4])
+    $(N) = STF_NF;   # float NF -> integer N (ST0[5])
 }
 
 # MAXF32 RaH, #16FHi   LSW: 1110 1000 0010 0III ; MSW: IIII IIII IIII Iaaa  (2-word)
@@ -363,8 +465,18 @@ attach variables [ p_rf ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
     f_rc = f_rb;
 }
 # SWAPF RaH,RbH{,CNDF}  LSW: 1110 0110 1110 CNDF ; MSW: 0000 0000 00bb baaa
-:SWAPF f_ra, f_rb, fcndf  is op_hi8=0xE6 & loc_hi4=0b1110 & fcndf
-                          ; f_rb & f_ra & f_msw_hi=0 { local t:4 = f_ra; f_ra = f_rb; f_rb = t; }
+# UNCF (0b1111): unconditional swap; per SPRUHS1C the swap itself doesn't touch flags.
+# Others: conditional swap.
+:SWAPF f_ra, f_rb, cndf  is op_hi8=0xE6 & loc_hi4=0b1110 & fcndf=0b1111 & cndf
+                         ; f_rb & f_ra & f_msw_hi=0 {
+    local t:4 = f_ra; f_ra = f_rb; f_rb = t;
+}
+:SWAPF f_ra, f_rb, cndf  is op_hi8=0xE6 & loc_hi4=0b1110 & cndf
+                         ; f_rb & f_ra & f_msw_hi=0 {
+    if (!cndf) goto <done>;
+    local t:4 = f_ra; f_ra = f_rb; f_rb = t;
+  <done>
+}
 
 # Parallel ADDF32/SUBF32 ||MOV32 forms (LSW 0xE0/0xE3 sub-ops) — 2-word. p_rd (the
 # ADDF32/SUBF32 dest) is in MSW bits 11-13; the 2nd arithmetic source and the MOV32
