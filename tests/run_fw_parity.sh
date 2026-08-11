@@ -29,8 +29,12 @@
 
 set -euo pipefail
 
-: "${GHIDRA_INSTALL_DIR:?set GHIDRA_INSTALL_DIR to your Ghidra install root}"
-: "${C2000WARE:?set C2000WARE to your TI C2000 CGT install root (contains bin/asm2000, bin/dis2000)}"
+module=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+# Load this worktree's local config (.c28x.env) if present. Absent file => no-op.
+. "$(dirname "${BASH_SOURCE[0]}")/_env.sh"; _c28x_load_env "$module"
+
+: "${GHIDRA_INSTALL_DIR:?set GHIDRA_INSTALL_DIR (or put it in .c28x.env) -- your Ghidra install root}"
+: "${C2000WARE:?set C2000WARE (or put it in .c28x.env) -- TI C2000 CGT root with bin/asm2000, bin/dis2000}"
 
 Fw=""; Start=""; Count=""; Base=0x82000; Tag="fn"
 while [ $# -gt 0 ]; do
@@ -53,7 +57,6 @@ start=$((Start))
 count=$((Count))
 base=$((Base))
 
-module=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 work=$(mktemp -d -t c28x-fwparity-XXXXXX)
 trap 'rm -rf "$work"' EXIT
 tibin="$C2000WARE/bin"

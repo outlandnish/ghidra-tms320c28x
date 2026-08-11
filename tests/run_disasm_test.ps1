@@ -29,10 +29,16 @@ param(
   [string]$Module = (Split-Path -Parent $PSScriptRoot),
   [string[]]$Cases = @("addr_modes", "fpu_display", "fpu_parallel")
 )
-if (-not $Ghidra) { throw "Set -Ghidra or the GHIDRA_INSTALL_DIR env var to your Ghidra install." }
+# Load this worktree's local config (.c28x.env), then re-resolve -Ghidra from it
+# when it was not passed explicitly. Absent file => no-op (CI is unaffected).
+. "$PSScriptRoot\_env.ps1"
+Import-C28xEnv $Module
+if (-not $PSBoundParameters.ContainsKey('Ghidra')) { $Ghidra = $env:GHIDRA_INSTALL_DIR }
+if (-not $Ghidra) { throw "Set -Ghidra, `$env:GHIDRA_INSTALL_DIR, or .c28x.env to your Ghidra install." }
 $ErrorActionPreference = "Stop"
 $lang = "$Module\data\languages"
-$tmp  = "$env:TEMP\c28x-test"
+# Per-worktree scratch dir (was a fixed "$env:TEMP\c28x-test" that collided across worktrees).
+$tmp  = Get-C28xScratchRoot -Module $Module -Kind "test"
 
 # 1. compile (UNC-safe: copy to a Windows-local dir, the .bat can't run from UNC cwd)
 $bld = "$tmp\build"; New-Item -ItemType Directory -Force -Path $bld | Out-Null

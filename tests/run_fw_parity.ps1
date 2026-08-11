@@ -29,10 +29,18 @@ param(
   [string]$Ghidra = $env:GHIDRA_INSTALL_DIR,
   [string]$Ti     = $env:C2000WARE,
   [string]$Module = (Split-Path -Parent $PSScriptRoot),
-  [string]$Work   = "$env:TEMP\c28x-fwparity"
+  [string]$Work   = $null
 )
-if (-not $Ti)     { throw "Point -Ti (or `$env:C2000WARE) at your TI C2000 CGT install (with bin\asm2000.exe, bin\dis2000.exe)." }
-if (-not $Ghidra) { throw "Point -Ghidra (or `$env:GHIDRA_INSTALL_DIR) at your Ghidra install." }
+# Load this worktree's local config (.c28x.env), then re-resolve -Ghidra/-Ti from
+# it when not passed explicitly. Absent file => no-op.
+. "$PSScriptRoot\_env.ps1"
+Import-C28xEnv $Module
+if (-not $PSBoundParameters.ContainsKey('Ghidra')) { $Ghidra = $env:GHIDRA_INSTALL_DIR }
+if (-not $PSBoundParameters.ContainsKey('Ti'))     { $Ti     = $env:C2000WARE }
+# Per-worktree scratch dir (was a fixed "$env:TEMP\c28x-fwparity" that collided across worktrees).
+if (-not $Work)   { $Work = Get-C28xScratchRoot -Module $Module -Kind "fwparity" }
+if (-not $Ti)     { throw "Point -Ti (or `$env:C2000WARE / .c28x.env) at your TI C2000 CGT install (with bin\asm2000.exe, bin\dis2000.exe)." }
+if (-not $Ghidra) { throw "Point -Ghidra (or `$env:GHIDRA_INSTALL_DIR / .c28x.env) at your Ghidra install." }
 $ErrorActionPreference = "Stop"
 $TiBin = "$Ti\bin"
 New-Item -ItemType Directory -Force $Work | Out-Null

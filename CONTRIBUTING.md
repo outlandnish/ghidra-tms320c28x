@@ -93,6 +93,14 @@ pwsh -File tests\run_fw_parity.ps1 -Fw <swapped.bin> -Start 0x9af9e -Count 0xf2 
 Zero WRONG mnemonics + zero length-skew is required; UNDEFs indicate missing
 opcodes and are a follow-up, not a regression.
 
+## Working on several branches at once (git worktrees)
+
+If you keep multiple branches checked out via `git worktree`, use
+`scripts/worktree.{sh,ps1}` — it seeds each worktree's per-worktree config
+(`.c28x.env`) and warns when two worktrees share one Ghidra install (which can't
+run headless tests in parallel, because the processor module is a singleton within
+a Ghidra install). See [docs/WORKTREES.md](docs/WORKTREES.md).
+
 ## Attribution for outside code
 
 If you merge or adapt code from another Apache-2.0 project (including other Ghidra
