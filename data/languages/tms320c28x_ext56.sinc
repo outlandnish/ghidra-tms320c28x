@@ -42,12 +42,37 @@
 # MOV ACC,loc16<<#1..15   word1=0x5603 ; word2 = 0000 SHFT LLLL LLLL  (2-word; SHFT
 # in word2 bits 8-11, loc16 in the low byte). The dominant missing opcode in the
 # byte-swapped F28377D production firmware (~1443 sites).
+#
+# Canonical variant (switch_canonical=1): zero-extend the loc16 selector instead of
+# sign-extending. TMS320C28xSwitchAnalyzer sets this context bit on the proven index
+# instruction of a validated switch dispatch (see #18). The unsigned-selector semantics
+# make ACC exactly bounded by loc16's [0, 0xffff] range, which is what lets the
+# decompiler's Decompiler Switch Analysis prove the case-count bound reachable via the
+# subsequent CMP/BF and the LB *XAR7. With the default SXM=1 sign-extend the ACC value
+# carries an unrestricted upper half and the range check disappears. Adapted from
+# mwdmwd/ghidra-c28x (Apache-2.0); see THIRD-PARTY.md.
+:MOV ACCreg, loc16^"<<#"^shft_hi4  is switch_canonical=1 & op16=0x5603 ; shft_hi4 & loc16 & ACCreg {
+    local sh:4 = zext(shft_hi4:1);
+    ACC = zext(loc16) << sh;
+    setNZ32(ACC);
+}
 :MOV ACCreg, loc16^"<<#"^shft_hi4  is op16=0x5603 ; shft_hi4 & loc16 & ACCreg {
     local sh:4 = zext(shft_hi4:1);
     ACC = sext(loc16) << sh;
 }
 # ADD ACC,loc16<<#1..15   word1=0x5604 ; word2 = 0000 SHFT LLLL LLLL  (2-word; same
 # layout as MOV ACC,loc16<<# above). dis2000-confirmed (RWD image, word 0x5604).
+#
+# Canonical variant (switch_canonical=1): zero-extend loc16 and clear C, matching the
+# unsigned-selector semantics needed for switch table-base + scaled-index arithmetic.
+# See the MOV canonical form above for the full rationale. Adapted from mwdmwd/ghidra-c28x.
+:ADD ACCreg, loc16^"<<#"^shft_hi4  is switch_canonical=1 & op16=0x5604 ; shft_hi4 & loc16 & ACCreg {
+    local sh:4 = zext(shft_hi4:1);
+    local v:4 = zext(loc16) << sh;
+    ACC = ACC + v;
+    $(C) = 0;
+    setNZ32(ACC);
+}
 :ADD ACCreg, loc16^"<<#"^shft_hi4  is op16=0x5604 ; shft_hi4 & loc16 & ACCreg {
     local sh:4 = zext(shft_hi4:1);
     ACC = ACC + (sext(loc16) << sh);

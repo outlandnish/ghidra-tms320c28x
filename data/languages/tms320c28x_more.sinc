@@ -656,6 +656,20 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 }
 # SUB ACC,#16bit<<#0..15   1111 1111 0000 SHFT : iiii  (2-word; counterpart to the
 # ADD ACC,#16bit<<# at 0xFF1x). 0xff00/0xff0f etc.
+#
+# Canonical variant (switch_canonical=1): same numeric result plus C=1 and N/Z from
+# the ACC result. TMS320C28xSwitchAnalyzer sets this bit on the "SUB ACC,#(2*low)"
+# range-subtraction instruction of a validated switch dispatch (only present on the
+# 32-bit-selector variants -- see the guardCanonicalInstruction path in the analyzer).
+# The flag-set + carry pair matches TI's own semantics for the operation and lets the
+# subsequent CMPB/CMPL bounds check reason from the post-SUB ACC. Adapted from
+# mwdmwd/ghidra-c28x (Apache-2.0); see THIRD-PARTY.md.
+:SUB ACCreg, "#"imm16^"<<#"^shft4  is switch_canonical=1 & op_hi8=0xFF & loc_hi4=0b0000 & shft4 & ACCreg ; imm16 {
+    local v:4 = zext(imm16:2); local s:4 = zext(shft4:1);
+    ACC = ACC - (v << s);
+    $(C) = 1;
+    setNZ32(ACC);
+}
 :SUB ACCreg, "#"imm16^"<<#"^shft4  is op_hi8=0xFF & loc_hi4=0b0000 & shft4 & ACCreg ; imm16 {
     local v:4 = zext(imm16:2); local s:4 = zext(shft4:1); ACC = ACC - (v << s);
 }
