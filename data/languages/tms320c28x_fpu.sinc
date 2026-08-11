@@ -89,16 +89,9 @@ attach names [ movst0_flags ] [
     "NI,ZF,ZI,rsvd6,TF" "LVF,NI,ZF,ZI,rsvd6,TF" "LUF,NI,ZF,ZI,rsvd6,TF" "LVF,LUF,NI,ZF,ZI,rsvd6,TF" "NF,NI,ZF,ZI,rsvd6,TF" "LVF,NF,NI,ZF,ZI,rsvd6,TF" "LUF,NF,NI,ZF,ZI,rsvd6,TF" "LVF,LUF,NF,NI,ZF,ZI,rsvd6,TF"
 ];
 
-# --- mem32 destination on the MSW (0xE203 store) -----------------------------
-# The C28x `mem32` operand carried in the LOW 8 bits of the MSW. Only DP-direct mode
-# (@6bit, b76=00) is observed for these FPU stores (dis2000: `MOV32 @0xa,R1H`), and that
-# is the only mode that yields a clean, recoverable address — (DP<<6)|off6, exactly as the
-# integer `loc32: "@"loc_off6` rule in addr.sinc. Export the 32-bit memory cell so the store
-# writes a real global (the whole reason the 0x441 float unpack vanished from the decompile).
-mem32d: "@"f_mem_off6  is f_mem_b76=0b00 & f_mem_off6 {
-    local a:4 = (zext(DP) << 6) | zext(f_mem_off6:4);
-    export *[ram]:4 a;
-}
+# (The `mem32d` sub-table that used to live here decoded only the DP-direct mode of the
+# MSW loc byte. The shared loc32 sub-table decodes all of them, and is now used directly
+# in the second word, so mem32d is gone.)
 
 # --- TMU intrinsics ----------------------------------------------------------
 # The Trigonometric Math Unit ops (0xE27x) have no SLEIGH primitive. Declare them as
@@ -433,50 +426,63 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
 
 # =============================================================================
 # 0xE2 family: LSW = 1110 0010 <hi4> <lo4> ; MSW = 0000 0aaa mem32
-# p_ra (MSW bits 8-10) = RaH. The mem32 ADDRESS is in the MSW low byte, which we do NOT
-# decode (no MSW loc subtable) — the pointer is unrecoverable. SLEIGH forbids reading an
-# uninitialized temp, so we can't introduce a clean "opaque loaded value". Use the legal
-# flow-preserving model: loads keep the dest defined via identity (p_ra = p_ra; value
-# unknown/preserved), converts apply the conversion to the reg's own bits, stores consume
-# the source into a scratch local. (FPU-PCODE-SPEC wanted real *[ram] moves; the address
-# is genuinely unavailable, so this is the honest legal model.)
+# p_ra (MSW bits 8-10) = RaH, and the MSW's LOW 8 bits are a standard C28x loc byte --
+# so the `mem32` / `mem16` operand is decoded by the SAME loc32 / loc16 sub-tables the
+# integer instructions use, just matched in the second word (after the `;`). That is only
+# expressible because the FPU MSW fields share the `instr16` token; see the token comment
+# in tms320c28x.sinc.
+#
+# These used to be modelled as opaque identity moves (`p_ra = p_ra`, stores consumed into a
+# dead local) on the belief that the address was unrecoverable. It isn't. The identity model
+# was also actively harmful: a load that tells the decompiler nothing and a store that goes
+# nowhere means an entire float pipeline has no observable effect and gets eliminated --
+# whole clamp/lerp routines decompiled to nothing but the surrounding pointer arithmetic.
+#
+# Like every other loc16/loc32 user in this language, these are AMODE=0 only (there are no
+# AMODE=1 constructors anywhere in addr.sinc).
+#
 # Exact LSW encodings (spruhs1c): 0xE200 mem32,STF  0xE203 mem32,RaH  0xE213 mem16,RaH
 #   0xE223 MOVD32 RaH,mem32  0xE250 MACF32  0xE280 STF,mem32  0xE284 UI32TOF32  0xE288
 #   I32TOF32  0xE2A0..AF MOV32 RaH,mem32,CNDF  0xE2C4 UI16TOF32  0xE2C8 I16TOF32
-:MOV32 "mem32", "STF"       is op16=0xE200 ; imm16  { packstf(STF); local s:4 = STF; }  # sync sub-regs -> packed, then store
-:MOV32 mem32d, p_ra         is op16=0xE203 ; mem32d & p_ra { mem32d = p_ra; }        # store RaH -> [DP:off6]
-# Non-direct mem32 modes (indirect *XARn etc.): the address isn't cleanly recoverable from
-# the byte alone, so keep the flow-preserving consume (don't regress those to halt_baddata).
-:MOV32 "mem32", p_ra        is op16=0xE203 ; f_mem_b76!=0b00 & p_ra { local s:4 = p_ra; }
-:MOV16 "mem16", p_ra        is op16=0xE213 ; p_ra   { local s:2 = p_ra:2; }         # store RaH[15:0] -> mem
-:MOVD32 p_ra, "mem32"       is op16=0xE223 ; p_ra   { p_ra = p_ra; }                 # load mem -> RaH (opaque)
-:MACF32 "R7H,R3H", "mem32,*XAR7++"  is op16=0xE250 ; imm16 {   # RPT-capable MAC: R3H*=mem, R7H+=R3H
+:MOV32 loc32, "STF"         is op16=0xE200 ; loc32  { packstf(STF); loc32 = STF; }  # sync sub-regs -> packed, then store
+:MOV32 loc32, p_ra          is op16=0xE203 ; p_ra & loc32 { loc32 = p_ra; }         # store RaH -> mem32
+:MOV16 loc16, p_ra          is op16=0xE213 ; p_ra & loc16 { loc16 = p_ra:2; }       # store RaH[15:0] -> mem16
+# MOVD32 RaH, mem32: RaH = [mem32] AND [mem32+2] = [mem32]. loc32 exports the dereferenced
+# cell rather than the address, so the duplicate store to mem32+2 is not modelled -- the
+# load, which is what the dataflow needs, is.
+:MOVD32 p_ra, loc32         is op16=0xE223 ; p_ra & loc32 { p_ra = loc32; }
+# MACF32 R7H,R3H,mem32,*XAR7++  MSW: 0001 1111 mem32 (no register field -- both operands
+# are memory). Standalone semantics per SPRUHS1C are
+#     R3H = R3H + R2H ;  R2H = [mem32] * [XAR7++]
+# i.e. the accumulate consumes the PREVIOUS product in R2H and only then is R2H overwritten.
+# (The old model multiplied R3H by [XAR7] and accumulated into R7H, which was neither
+# operand pairing nor either destination.) When repeated under RPT the destinations
+# alternate R3H/R7H with R2H/R6H as the temporaries; only the standalone form is modelled.
+:MACF32 "R7H,R3H", loc32, "*XAR7++"  is op16=0xE250 ; op_hi8=0x1F & loc32 {
+    R3H = R3H f+ R2H;
     local a:4 = XAR7;
     local m:4 = *[ram]:4 a;
-    R3H = R3H f* m;
-    R7H = R7H f+ R3H;
+    R2H = loc32 f* m;
     XAR7 = XAR7 + 2;
 }
-:MOV32 "STF", "mem32"       is op16=0xE280 ; imm16  { STF = STF; unpackstf(STF); }   # load mem -> STF (opaque value; sync to sub-regs)
-:UI32TOF32 p_ra, "mem32"    is op16=0xE284 ; p_ra   { p_ra = int2float(p_ra); }
-:I32TOF32 p_ra, "mem32"     is op16=0xE288 ; p_ra   { p_ra = int2float(p_ra); }
-# MOV32 RaH, mem32 CNDF (0xE2A? family). UNCF (0b1111) is unconditional + updates
-# flags from the loaded value; other codes are conditional and leave flags alone.
-# The loaded value is opaque (address not cleanly decodable from the byte), so
-# the UNCF variant materialises RaH via identity and calls update_stf_mov --
-# gives the decompiler a def to trace, plus a MOV-flavoured flag update
-# (ZI/NI along with ZF/NF, per SPRUHS1C Table 6-14).
-:MOV32 p_ra, "mem32", cndf  is op_hi8=0xE2 & loc_hi4=0b1010 & fcndf=0b1111 & cndf ; p_ra {
-    p_ra = p_ra;
+:MOV32 "STF", loc32         is op16=0xE280 ; loc32  { STF = loc32; unpackstf(STF); }  # load mem -> STF, sync sub-regs
+# int -> float converts. int2float is signed, so the unsigned forms widen first.
+:UI32TOF32 p_ra, loc32      is op16=0xE284 ; p_ra & loc32 { local v:8 = zext(loc32); p_ra = int2float(v); }
+:I32TOF32 p_ra, loc32       is op16=0xE288 ; p_ra & loc32 { p_ra = int2float(loc32); }
+# MOV32 RaH, mem32 CNDF (0xE2A? family). UNCF (0b1111) is unconditional + updates the
+# flags from the loaded value (ZI/NI along with ZF/NF, per SPRUHS1C Table 6-14);
+# other codes are conditional and leave the flags alone.
+:MOV32 p_ra, loc32, cndf    is op_hi8=0xE2 & loc_hi4=0b1010 & fcndf=0b1111 & cndf ; p_ra & loc32 {
+    p_ra = loc32;
     update_stf_mov(p_ra);
 }
-:MOV32 p_ra, "mem32", cndf  is op_hi8=0xE2 & loc_hi4=0b1010 & cndf ; p_ra {
+:MOV32 p_ra, loc32, cndf    is op_hi8=0xE2 & loc_hi4=0b1010 & cndf ; p_ra & loc32 {
     if (!cndf) goto <done>;
-    p_ra = p_ra;
+    p_ra = loc32;
   <done>
 }
-:UI16TOF32 p_ra, "mem16"    is op16=0xE2C4 ; p_ra   { local v:2 = p_ra:2; p_ra = int2float(v); }
-:I16TOF32 p_ra, "mem16"     is op16=0xE2C8 ; p_ra   { local v:2 = p_ra:2; p_ra = int2float(v); }
+:UI16TOF32 p_ra, loc16      is op16=0xE2C4 ; p_ra & loc16 { local v:4 = zext(loc16); p_ra = int2float(v); }
+:I16TOF32 p_ra, loc16       is op16=0xE2C8 ; p_ra & loc16 { local v:2 = loc16; p_ra = int2float(v); }
 # 0xe27x seen in firmware — undocumented load form, consume both words
 :MOV32 p_ra, "mem32 (e27x)" is op_hi8=0xE2 & loc_hi4=0b0111 ; p_ra  { p_ra = p_ra; }
 

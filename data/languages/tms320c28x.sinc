@@ -103,10 +103,9 @@ define token instr16 (16)
     p_rd    = (11,13)       # ddd  MPYF32 dest RdH
     p_ra    = (8,10)        # aaa  MOV32 dest RaH
     p_re_lo = (14,15)       # ee   low 2 bits of ReH (high bit is in the LSW)
-    # 0xE203 store MSW = 0000 0aaa mem32: the mem32 operand is the LOW 8 bits of the
-    # MSW (a standard C28x loc byte), decoded by the shared loc16/loc32 sub-tables.
-    f_mem_b76 = (6,7)       # mem32 addressing-mode selector (00 = @6bit DP-direct)
-    f_mem_off6 = (0,5)      # mem32 direct-mode 6-bit offset (combined with DP)
+    # NB: the FPU `mem32` / `mem16` operand is the LOW 8 bits of the MSW and is a standard
+    # C28x loc byte, so it needs no fields of its own -- the shared loc16 / loc32 sub-tables
+    # decode it directly when placed after the `;` in a constructor's pattern.
     # 0xBD/0xBF register-form MOV32 MSW = 0x0F<reg> : the FP reg index sits in MSW bits[2:5]
     # (dis2000-confirmed: R0H..R7H => MSW byte 0x12,16,1A,1E,22,26,2A,2E = field value 4..11).
     f_movf_reg = (2,5)
