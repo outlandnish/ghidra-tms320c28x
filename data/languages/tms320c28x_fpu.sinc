@@ -1,5 +1,21 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Nishanth Samala
+# Copyright the mwdmwd/ghidra-c28x contributors (https://github.com/mwdmwd/ghidra-c28x)
+#
+# Portions adapted from mwdmwd/ghidra-c28x (Apache-2.0):
+#   * the `cndf` condition sub-table (12 conditions + UNC/UNCF);
+#   * the STF sub-register model (STF_ZF/NF/TF/LV/LU/NI/ZI defined in slaspec);
+#   * the operand-conditioning macros `fpu_cmp_operand` (denormal -> 0, NaN ->
+#     +inf) and `tmu_condition_operand` (TMU input canonicalisation) per
+#     SPRUHS1C §7.5.2;
+#   * `fpu_minmax_output` (denormal/NaN flush on MAX/MIN result);
+#   * the flag-writing macros `update_stf` (arith 1-op), `update_stf_cmp`
+#     (compare, with conditioned operands), `update_stf_mov` (MOV loads: ZI/NI
+#     alongside ZF/NF);
+#   * `packstf` / `unpackstf` for the packed-STF sync on STF <-> memory moves;
+#   * the UNCF-vs-conditional split on MOV32 / NEGF32 / SWAPF ... cndf.
+# See THIRD-PARTY.md.
+#
 # C28x FPU (F2837x / FPU32) instructions.
 # Included by tms320c28x.sinc. Encodings verified against docs/c28x/fpu_instructions.txt
 # (spruhs1c ch.1). Confirmed used in DIR/PMR (~281 ext-ISA words).
@@ -7,35 +23,23 @@
 # SCOPE: real IEEE-754 single-precision p-code (FPU-PCODE-SPEC.md, PCODE-GAPS B2).
 # The FP regs R0H..R7H are 32-bit varnodes holding the IEEE-754 bit pattern; SLEIGH's
 # float operators (f+ f- f* f/ f== f< ... int2float trunc abs sqrt) are size-typed, so
-# applying them to the 4-byte reg values is correct. CMPF32 sets the STF Z/N flags so the
-# CMPF32 -> MOVST0 -> SB(GEQ/LT/...) idiom survives (an unset flag makes the decompiler
-# prune the branch successor as unreachable -> halt_baddata, the dominant B2 truncation).
+# applying them to the 4-byte reg values is correct. Compares (CMPF32/MAXF32/MINF32)
+# update the STF sub-registers STF_ZF/STF_NF; the `cndf` sub-table reads them so the
+# `CMPF32 -> MOV32 RaH,RbH,cndf` and `CMPF32 -> MOVST0 -> SB(cond)` idioms both survive
+# (an unset flag makes the decompiler prune the branch successor as unreachable ->
+# halt_baddata, the dominant B2 truncation).
 #
 # FPU instructions are 32-bit: LSW (low word, lower address) + MSW. The LSW is the
 # opcode; for reg-reg forms the MSW holds the register fields aaa/bbb/ccc.
 
 # --- MSW register fields (second 16-bit word) --------------------------------
-define token fpu_msw (16)
-    f_ra   = (0,2)     # aaa  destination RaH
-    f_rb   = (3,5)     # bbb  source RbH
-    f_rc   = (6,8)     # ccc  source RcH
-    f_msw_hi = (9,15)
-    f_msw_mid = (9,14)  # MSW bits 9-14 (the reg-form's must-be-zero middle bits)
-    f_msw_rnd = (15,15) # MSW bit 15 = round-to-nearest variant selector (F32TO*16R)
-    fimm_hi10 = (6,15)  # #16FHi immediate high 10 bits (MSW: IIII IIII IIbb baaa) ADD/SUB/MPY form
-    fimm_hi13 = (3,15)  # #16FHi immediate high 13 bits (MSW: IIII IIII IIII Iaaa) CMP/MAX/MIN form
-    # parallel "op || MOV32 mem" MSW layout: eedd daaa mem32
-    p_rd    = (11,13)  # ddd  MPYF32 dest RdH
-    p_ra    = (8,10)   # aaa  MOV32 dest RaH
-    p_re_lo = (14,15)  # ee   low 2 bits of ReH (high bit is in the LSW)
-    # 0xE203 store MSW = 0000 0aaa mem32: the mem32 operand lives in the LOW 8 bits of the
-    # MSW (a standard C28x loc byte). b76 selects the addressing mode; off6 is the direct offset.
-    f_mem_b76 = (6,7)  # mem32 addressing-mode selector (00 = @6bit DP-direct)
-    f_mem_off6 = (0,5) # mem32 direct-mode 6-bit offset (combined with DP)
-    # 0xBD/0xBF register-form MOV32 MSW = 0x0F<reg> : the FP reg index sits in MSW bits[2:5]
-    # (dis2000-confirmed: R0H..R7H => MSW byte 0x12,16,1A,1E,22,26,2A,2E = field value 4..11).
-    f_movf_reg = (2,5)
-;
+# The f_* / p_* / fimm_hi* fields are defined on the shared `instr16` token in
+# tms320c28x.sinc, NOT on a token of their own. SLEIGH refuses to combine fields
+# from two different tokens at the same word ("Mismatched tokens when combining
+# patterns") even when both tokens are 16 bits wide, so a private MSW token would
+# make `p_ra & loc32` -- an FPU register selector next to a standard C28x loc byte,
+# which is exactly the MSW layout of every `mem32` form -- impossible to express.
+# See tms320c28x.sinc for the field list.
 attach variables [ f_ra f_rb f_rc ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 attach variables [ fimm_reg ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 attach variables [ p_rd p_ra ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
@@ -43,16 +47,51 @@ attach variables [ p_rd p_ra ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 attach variables [ f_movf_reg ]
     [ _ _ _ _ R0H R1H R2H R3H R4H R5H R6H R7H _ _ _ _ ];
 
-# --- mem32 destination on the MSW (0xE203 store) -----------------------------
-# The C28x `mem32` operand carried in the LOW 8 bits of the MSW. Only DP-direct mode
-# (@6bit, b76=00) is observed for these FPU stores (dis2000: `MOV32 @0xa,R1H`), and that
-# is the only mode that yields a clean, recoverable address — (DP<<6)|off6, exactly as the
-# integer `loc32: "@"loc_off6` rule in addr.sinc. Export the 32-bit memory cell so the store
-# writes a real global (the whole reason the 0x441 float unpack vanished from the decompile).
-mem32d: "@"f_mem_off6  is f_mem_b76=0b00 & f_mem_off6 {
-    local a:4 = (zext(DP) << 6) | zext(f_mem_off6:4);
-    export *[ram]:4 a;
-}
+# --- MOVST0 FLAG select mask ------------------------------------------------
+# The FLAG operand is an 8-bit mask, one bit per STF flag, and TI's assembler prints
+# the selected names in ascending bit order (`MOVST0 NF,ZF` for 0x14). Bit assignment
+# recovered from asm2000/dis2000 ground truth (SPRUHS1C documents the ST0 mapping but
+# not the mask encoding): LVF=0x01 LUF=0x02 NF=0x04 NI=0x08 ZF=0x10 ZI=0x20 TF=0x80.
+# Bit 6 is unused (`MOVST0 <all>` assembles to 0xBF), so it renders as rsvd6.
+# 256 entries because `attach names` must cover every value of the 8-bit field.
+attach names [ movst0_flags ] [
+    "0" "LVF" "LUF" "LVF,LUF" "NF" "LVF,NF" "LUF,NF" "LVF,LUF,NF"
+    "NI" "LVF,NI" "LUF,NI" "LVF,LUF,NI" "NF,NI" "LVF,NF,NI" "LUF,NF,NI" "LVF,LUF,NF,NI"
+    "ZF" "LVF,ZF" "LUF,ZF" "LVF,LUF,ZF" "NF,ZF" "LVF,NF,ZF" "LUF,NF,ZF" "LVF,LUF,NF,ZF"
+    "NI,ZF" "LVF,NI,ZF" "LUF,NI,ZF" "LVF,LUF,NI,ZF" "NF,NI,ZF" "LVF,NF,NI,ZF" "LUF,NF,NI,ZF" "LVF,LUF,NF,NI,ZF"
+    "ZI" "LVF,ZI" "LUF,ZI" "LVF,LUF,ZI" "NF,ZI" "LVF,NF,ZI" "LUF,NF,ZI" "LVF,LUF,NF,ZI"
+    "NI,ZI" "LVF,NI,ZI" "LUF,NI,ZI" "LVF,LUF,NI,ZI" "NF,NI,ZI" "LVF,NF,NI,ZI" "LUF,NF,NI,ZI" "LVF,LUF,NF,NI,ZI"
+    "ZF,ZI" "LVF,ZF,ZI" "LUF,ZF,ZI" "LVF,LUF,ZF,ZI" "NF,ZF,ZI" "LVF,NF,ZF,ZI" "LUF,NF,ZF,ZI" "LVF,LUF,NF,ZF,ZI"
+    "NI,ZF,ZI" "LVF,NI,ZF,ZI" "LUF,NI,ZF,ZI" "LVF,LUF,NI,ZF,ZI" "NF,NI,ZF,ZI" "LVF,NF,NI,ZF,ZI" "LUF,NF,NI,ZF,ZI" "LVF,LUF,NF,NI,ZF,ZI"
+    "rsvd6" "LVF,rsvd6" "LUF,rsvd6" "LVF,LUF,rsvd6" "NF,rsvd6" "LVF,NF,rsvd6" "LUF,NF,rsvd6" "LVF,LUF,NF,rsvd6"
+    "NI,rsvd6" "LVF,NI,rsvd6" "LUF,NI,rsvd6" "LVF,LUF,NI,rsvd6" "NF,NI,rsvd6" "LVF,NF,NI,rsvd6" "LUF,NF,NI,rsvd6" "LVF,LUF,NF,NI,rsvd6"
+    "ZF,rsvd6" "LVF,ZF,rsvd6" "LUF,ZF,rsvd6" "LVF,LUF,ZF,rsvd6" "NF,ZF,rsvd6" "LVF,NF,ZF,rsvd6" "LUF,NF,ZF,rsvd6" "LVF,LUF,NF,ZF,rsvd6"
+    "NI,ZF,rsvd6" "LVF,NI,ZF,rsvd6" "LUF,NI,ZF,rsvd6" "LVF,LUF,NI,ZF,rsvd6" "NF,NI,ZF,rsvd6" "LVF,NF,NI,ZF,rsvd6" "LUF,NF,NI,ZF,rsvd6" "LVF,LUF,NF,NI,ZF,rsvd6"
+    "ZI,rsvd6" "LVF,ZI,rsvd6" "LUF,ZI,rsvd6" "LVF,LUF,ZI,rsvd6" "NF,ZI,rsvd6" "LVF,NF,ZI,rsvd6" "LUF,NF,ZI,rsvd6" "LVF,LUF,NF,ZI,rsvd6"
+    "NI,ZI,rsvd6" "LVF,NI,ZI,rsvd6" "LUF,NI,ZI,rsvd6" "LVF,LUF,NI,ZI,rsvd6" "NF,NI,ZI,rsvd6" "LVF,NF,NI,ZI,rsvd6" "LUF,NF,NI,ZI,rsvd6" "LVF,LUF,NF,NI,ZI,rsvd6"
+    "ZF,ZI,rsvd6" "LVF,ZF,ZI,rsvd6" "LUF,ZF,ZI,rsvd6" "LVF,LUF,ZF,ZI,rsvd6" "NF,ZF,ZI,rsvd6" "LVF,NF,ZF,ZI,rsvd6" "LUF,NF,ZF,ZI,rsvd6" "LVF,LUF,NF,ZF,ZI,rsvd6"
+    "NI,ZF,ZI,rsvd6" "LVF,NI,ZF,ZI,rsvd6" "LUF,NI,ZF,ZI,rsvd6" "LVF,LUF,NI,ZF,ZI,rsvd6" "NF,NI,ZF,ZI,rsvd6" "LVF,NF,NI,ZF,ZI,rsvd6" "LUF,NF,NI,ZF,ZI,rsvd6" "LVF,LUF,NF,NI,ZF,ZI,rsvd6"
+    "TF" "LVF,TF" "LUF,TF" "LVF,LUF,TF" "NF,TF" "LVF,NF,TF" "LUF,NF,TF" "LVF,LUF,NF,TF"
+    "NI,TF" "LVF,NI,TF" "LUF,NI,TF" "LVF,LUF,NI,TF" "NF,NI,TF" "LVF,NF,NI,TF" "LUF,NF,NI,TF" "LVF,LUF,NF,NI,TF"
+    "ZF,TF" "LVF,ZF,TF" "LUF,ZF,TF" "LVF,LUF,ZF,TF" "NF,ZF,TF" "LVF,NF,ZF,TF" "LUF,NF,ZF,TF" "LVF,LUF,NF,ZF,TF"
+    "NI,ZF,TF" "LVF,NI,ZF,TF" "LUF,NI,ZF,TF" "LVF,LUF,NI,ZF,TF" "NF,NI,ZF,TF" "LVF,NF,NI,ZF,TF" "LUF,NF,NI,ZF,TF" "LVF,LUF,NF,NI,ZF,TF"
+    "ZI,TF" "LVF,ZI,TF" "LUF,ZI,TF" "LVF,LUF,ZI,TF" "NF,ZI,TF" "LVF,NF,ZI,TF" "LUF,NF,ZI,TF" "LVF,LUF,NF,ZI,TF"
+    "NI,ZI,TF" "LVF,NI,ZI,TF" "LUF,NI,ZI,TF" "LVF,LUF,NI,ZI,TF" "NF,NI,ZI,TF" "LVF,NF,NI,ZI,TF" "LUF,NF,NI,ZI,TF" "LVF,LUF,NF,NI,ZI,TF"
+    "ZF,ZI,TF" "LVF,ZF,ZI,TF" "LUF,ZF,ZI,TF" "LVF,LUF,ZF,ZI,TF" "NF,ZF,ZI,TF" "LVF,NF,ZF,ZI,TF" "LUF,NF,ZF,ZI,TF" "LVF,LUF,NF,ZF,ZI,TF"
+    "NI,ZF,ZI,TF" "LVF,NI,ZF,ZI,TF" "LUF,NI,ZF,ZI,TF" "LVF,LUF,NI,ZF,ZI,TF" "NF,NI,ZF,ZI,TF" "LVF,NF,NI,ZF,ZI,TF" "LUF,NF,NI,ZF,ZI,TF" "LVF,LUF,NF,NI,ZF,ZI,TF"
+    "rsvd6,TF" "LVF,rsvd6,TF" "LUF,rsvd6,TF" "LVF,LUF,rsvd6,TF" "NF,rsvd6,TF" "LVF,NF,rsvd6,TF" "LUF,NF,rsvd6,TF" "LVF,LUF,NF,rsvd6,TF"
+    "NI,rsvd6,TF" "LVF,NI,rsvd6,TF" "LUF,NI,rsvd6,TF" "LVF,LUF,NI,rsvd6,TF" "NF,NI,rsvd6,TF" "LVF,NF,NI,rsvd6,TF" "LUF,NF,NI,rsvd6,TF" "LVF,LUF,NF,NI,rsvd6,TF"
+    "ZF,rsvd6,TF" "LVF,ZF,rsvd6,TF" "LUF,ZF,rsvd6,TF" "LVF,LUF,ZF,rsvd6,TF" "NF,ZF,rsvd6,TF" "LVF,NF,ZF,rsvd6,TF" "LUF,NF,ZF,rsvd6,TF" "LVF,LUF,NF,ZF,rsvd6,TF"
+    "NI,ZF,rsvd6,TF" "LVF,NI,ZF,rsvd6,TF" "LUF,NI,ZF,rsvd6,TF" "LVF,LUF,NI,ZF,rsvd6,TF" "NF,NI,ZF,rsvd6,TF" "LVF,NF,NI,ZF,rsvd6,TF" "LUF,NF,NI,ZF,rsvd6,TF" "LVF,LUF,NF,NI,ZF,rsvd6,TF"
+    "ZI,rsvd6,TF" "LVF,ZI,rsvd6,TF" "LUF,ZI,rsvd6,TF" "LVF,LUF,ZI,rsvd6,TF" "NF,ZI,rsvd6,TF" "LVF,NF,ZI,rsvd6,TF" "LUF,NF,ZI,rsvd6,TF" "LVF,LUF,NF,ZI,rsvd6,TF"
+    "NI,ZI,rsvd6,TF" "LVF,NI,ZI,rsvd6,TF" "LUF,NI,ZI,rsvd6,TF" "LVF,LUF,NI,ZI,rsvd6,TF" "NF,NI,ZI,rsvd6,TF" "LVF,NF,NI,ZI,rsvd6,TF" "LUF,NF,NI,ZI,rsvd6,TF" "LVF,LUF,NF,NI,ZI,rsvd6,TF"
+    "ZF,ZI,rsvd6,TF" "LVF,ZF,ZI,rsvd6,TF" "LUF,ZF,ZI,rsvd6,TF" "LVF,LUF,ZF,ZI,rsvd6,TF" "NF,ZF,ZI,rsvd6,TF" "LVF,NF,ZF,ZI,rsvd6,TF" "LUF,NF,ZF,ZI,rsvd6,TF" "LVF,LUF,NF,ZF,ZI,rsvd6,TF"
+    "NI,ZF,ZI,rsvd6,TF" "LVF,NI,ZF,ZI,rsvd6,TF" "LUF,NI,ZF,ZI,rsvd6,TF" "LVF,LUF,NI,ZF,ZI,rsvd6,TF" "NF,NI,ZF,ZI,rsvd6,TF" "LVF,NF,NI,ZF,ZI,rsvd6,TF" "LUF,NF,NI,ZF,ZI,rsvd6,TF" "LVF,LUF,NF,NI,ZF,ZI,rsvd6,TF"
+];
+
+# (The `mem32d` sub-table that used to live here decoded only the DP-direct mode of the
+# MSW loc byte. The shared loc32 sub-table decodes all of them, and is now used directly
+# in the second word, so mem32d is gone.)
 
 # --- TMU intrinsics ----------------------------------------------------------
 # The Trigonometric Math Unit ops (0xE27x) have no SLEIGH primitive. Declare them as
@@ -66,15 +105,158 @@ define pcodeop QUADF32;
 define pcodeop IEXP2F32;
 define pcodeop LOG2F32;
 
-# --- STF flag model ----------------------------------------------------------
-# CMPF32/MINF32/MAXF32 set ZF=STF[0] and NF=STF[1] from the comparison (SPRU430F).
-# (LUF/LVF over/underflow flags are not modeled.) MOVST0 forwards STF->ST0 so the
-# integer SB ...,COND decoder picks EQ/NEQ/GT/GEQ/LT/LEQ from these bits.
-macro setFloatFlags(a, b) {
-    local zf:1 = (a f== b);
-    local nf:1 = (a f< b);
-    STF = (STF & 0xFFFFFFFC) | zext(zf) | (zext(nf) << 1);
+# --- STF flag model (unpacked) -----------------------------------------------
+# CMPF32/MINF32/MAXF32 set ZF/NF from the comparison; the single-value flag ops
+# (ABSF32, NEGF32 UNCF, ...) set ZF/NF from the result's exponent/sign.
+# STF is modeled as individual sub-registers STF_ZF/STF_NF/STF_TF/STF_LV/STF_LU
+# (slaspec) rather than bit slices of the packed STF, so the decompiler can name
+# each flag directly. (LUF/LVF over/underflow flags are not modeled numerically;
+# TMU pcodeops leave them stale.) The packed STF register is synced on the rare
+# STF <-> memory move sites via packstf/unpackstf below.
+#
+# The `cndf` sub-table (12 conditions + UNC/UNCF) reads these sub-registers and
+# exports a 1-byte boolean so conditional variants of MOV32 / NEGF32 / SWAPF can
+# be genuinely conditional in p-code.
+# Adapted from mwdmwd/ghidra-c28x (Apache-2.0). See THIRD-PARTY.md.
+
+# --- Operand conditioning ----------------------------------------------------
+# Per SPRUHS1C §7.5.2 the FPU treats denormals as ±0 and NaNs as ±infinity in
+# compares and TMU inputs. Modeling this explicitly is what makes CMPF32/MAXF32
+# match silicon on the edge-case inputs (denormals are frequent in scaled fixed-
+# point-to-float conversions; NaNs surface in TMU divide-by-zero paths).
+#
+# fpu_cmp_operand: coerce an input for CMPF32/MAXF32/MINF32:
+#   exp == 0                 -> denormal or ±0 -> canonical +0
+#   exp == 0xFF, mantissa==0 -> ±inf           -> pass through
+#   exp == 0xFF, mantissa!=0 -> NaN            -> ±inf (sign preserved)
+#   otherwise (normal)                          -> pass through
+macro fpu_cmp_operand(out, in) {
+    local exp:4 = in & 0x7F800000;
+    out = in;
+    if (exp != 0) goto <not_zeroish>;
+    out = 0;
+    goto <done>;
+    <not_zeroish>
+    if (exp != 0x7F800000) goto <done>;
+    if ((in & 0x007FFFFF) == 0) goto <done>;
+    out = 0x7F800000;    # NaN -> +inf; sign bit is dropped (mwdmwd matches this)
+    <done>
 }
+
+# TMU input conditioning (SPRUHS1C §7.5.2): denormals/negative-zero -> +0,
+# NaN -> signed inf. Applied to DIVF32 / SQRTF32 / MPY2PIF32 / DIV2PIF32 inputs.
+macro tmu_condition_operand(out, in) {
+    local exp:4 = in & 0x7F800000;
+    if (exp != 0) goto <not_zeroish>;
+    out = 0;
+    goto <done>;
+    <not_zeroish>
+    out = in;
+    if (exp != 0x7F800000) goto <done>;
+    out = (in & 0x80000000) | 0x7F800000;
+    <done>
+}
+
+# MAX/MIN output conditioning: SPRUHS1C says the picked value is passed through
+# a denormal-flush + NaN-flush stage before being written to RaH.
+macro fpu_minmax_output(out) {
+    local exp:4 = out & 0x7F800000;
+    if (exp != 0) goto <not_denorm>;
+    if ((out & 0x007FFFFF) == 0) goto <done>;
+    out = 0;
+    goto <done>;
+    <not_denorm>
+    if (exp != 0x7F800000) goto <done>;
+    if ((out & 0x007FFFFF) == 0) goto <done>;
+    out = 0x7F800000;
+    <done>
+}
+
+# --- Flag-writing macros (used by the FP instructions) -----------------------
+
+# 2-operand compare (CMPF32/MAXF32/MINF32): condition both operands first, then
+# set ZF/NF from the ordered comparison. `setFloatFlags` is kept as a thin alias
+# so existing call sites (below) don't have to change all at once.
+macro update_stf_cmp(lhs, rhs) {
+    local lhs_c:4;
+    local rhs_c:4;
+    fpu_cmp_operand(lhs_c, lhs);
+    fpu_cmp_operand(rhs_c, rhs);
+    STF_ZF = (lhs_c f== rhs_c);
+    STF_NF = (lhs_c f< rhs_c);
+}
+macro setFloatFlags(a, b) {
+    update_stf_cmp(a, b);
+}
+
+# 1-operand result flag update for ARITHMETIC results (ABSF32, NEGF32 UNCF).
+# Sets ZF from a zero-exponent test and NF from the sign bit gated on non-zero.
+# LUF/LVF are not modeled numerically.
+macro update_stf(res) {
+    local zero_exp:1 = ((res & 0x7F800000) == 0);
+    STF_ZF = zero_exp;
+    STF_NF = res[31,1] && !zero_exp;
+}
+
+# 1-operand result flag update for MOV loads (MOV32 RaH,mem32,UNCF etc.). The
+# ISA specifies that MOV UNCF updates FOUR flags: ZF/NF from the exponent (as
+# above) AND ZI/NI from the raw integer bit pattern (SPRUHS1C Table 6-14).
+# Distinct from update_stf because arithmetic-result flag semantics only touch
+# ZF/NF; a MOV should also refresh the integer-view flags.
+macro update_stf_mov(res) {
+    local zero_exp:1 = ((res & 0x7F800000) == 0);
+    STF_NI = res[31,1];
+    STF_ZI = (res == 0);
+    STF_ZF = zero_exp;
+    STF_NF = res[31,1] && !zero_exp;
+}
+
+# Pack the individual flag sub-registers back into the STF word for the rare
+# case where STF is stored to memory (or PUSH STF). Bit numbering matches
+# SPRUHS1C Table 2-2: LVF=0 LUF=1 NF=2 ZF=3 NI=4 ZI=5 TF=6.
+macro packstf(res) {
+    local lv:4 = zext(STF_LV);
+    local lu:4 = zext(STF_LU);
+    local nf:4 = zext(STF_NF);
+    local zf:4 = zext(STF_ZF);
+    local ni:4 = zext(STF_NI);
+    local zi:4 = zext(STF_ZI);
+    local tf:4 = zext(STF_TF);
+    res = lv | (lu << 1) | (nf << 2) | (zf << 3) | (ni << 4) | (zi << 5) | (tf << 6);
+}
+macro unpackstf(in) {
+    STF_LV = (in & 0x01) != 0;
+    STF_LU = (in & 0x02) != 0;
+    STF_NF = (in & 0x04) != 0;
+    STF_ZF = (in & 0x08) != 0;
+    STF_NI = (in & 0x10) != 0;
+    STF_ZI = (in & 0x20) != 0;
+    STF_TF = (in & 0x40) != 0;
+}
+
+# --- cndf: FPU condition-code sub-table --------------------------------------
+# The 4-bit `fcndf` token field selects one of 16 float conditions (SPRUHS1C
+# Table 6-1). Each constructor exports a 1-byte boolean the parent instruction
+# uses in an `if (cndf) ...` guard. Reserved encodings 6..9 are given a bogus
+# `rsvdN` display and export false so the table is total (SLEIGH requires every
+# reachable pattern to match).
+# Adapted from mwdmwd/ghidra-c28x (Apache-2.0).
+cndf: "NEQ"   is fcndf=0b0000 { local b:1 = (STF_ZF == 0);                    export b; }
+cndf: "EQ"    is fcndf=0b0001 { local b:1 = (STF_ZF == 1);                    export b; }
+cndf: "GT"    is fcndf=0b0010 { local b:1 = (STF_ZF == 0) && (STF_NF == 0);   export b; }
+cndf: "GEQ"   is fcndf=0b0011 { local b:1 = (STF_NF == 0);                    export b; }
+cndf: "LT"    is fcndf=0b0100 { local b:1 = (STF_NF == 1);                    export b; }
+cndf: "LEQ"   is fcndf=0b0101 { local b:1 = (STF_ZF == 1) || (STF_NF == 1);   export b; }
+cndf: "rsvd6" is fcndf=0b0110 { local b:1 = 0;                                 export b; }
+cndf: "rsvd7" is fcndf=0b0111 { local b:1 = 0;                                 export b; }
+cndf: "rsvd8" is fcndf=0b1000 { local b:1 = 0;                                 export b; }
+cndf: "rsvd9" is fcndf=0b1001 { local b:1 = 0;                                 export b; }
+cndf: "TF"    is fcndf=0b1010 { local b:1 = (STF_TF == 1);                    export b; }
+cndf: "NTF"   is fcndf=0b1011 { local b:1 = (STF_TF == 0);                    export b; }
+cndf: "LU"    is fcndf=0b1100 { local b:1 = (STF_LU == 1);                    export b; }
+cndf: "LV"    is fcndf=0b1101 { local b:1 = (STF_LV == 1);                    export b; }
+cndf: "UNC"   is fcndf=0b1110 { local b:1 = 1;                                 export b; }
+cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 export b; }
 
 # =============================================================================
 # Register-register 3-operand FP ops:  LSW fixed, MSW = 0000 000c ccbb baaa
@@ -86,18 +268,25 @@ macro setFloatFlags(a, b) {
 # =============================================================================
 # Register-register 2-operand ops:  MSW = 0000 0000 00bb baaa
 # =============================================================================
-:ABSF32 f_ra, f_rb     is op16=0xE695; f_rb & f_ra & f_msw_hi=0 { f_ra = abs(f_rb); }
+:ABSF32 f_ra, f_rb     is op16=0xE695; f_rb & f_ra & f_msw_hi=0 { f_ra = abs(f_rb); update_stf(f_ra); }
 :CMPF32 f_ra, f_rb     is op16=0xE694; f_rb & f_ra & f_msw_hi=0 { setFloatFlags(f_ra, f_rb); }
 # MAX/MIN: SLEIGH has no ternary — pick the larger/smaller with an if/goto.
+# The compare sets ZF/NF (via update_stf_cmp inside setFloatFlags: denormals ->
+# 0, NaN -> +inf), and the selected value is then denormal/NaN-flushed on its
+# way to RaH (fpu_minmax_output). Applied on both paths of the if/else.
 :MAXF32 f_ra, f_rb     is op16=0xE696; f_rb & f_ra & f_msw_hi=0 {
-    setFloatFlags(f_ra, f_rb);
-    if (f_ra f>= f_rb) goto inst_next;
+    update_stf_cmp(f_ra, f_rb);
+    if (f_ra f>= f_rb) goto <keep>;
     f_ra = f_rb;
+  <keep>
+    fpu_minmax_output(f_ra);
 }
 :MINF32 f_ra, f_rb     is op16=0xE697; f_rb & f_ra & f_msw_hi=0 {
-    setFloatFlags(f_ra, f_rb);
-    if (f_ra f<= f_rb) goto inst_next;
+    update_stf_cmp(f_ra, f_rb);
+    if (f_ra f<= f_rb) goto <keep>;
     f_ra = f_rb;
+  <keep>
+    fpu_minmax_output(f_ra);
 }
 # SLEIGH has no float literals — use the IEEE-754 bit pattern (1.0f = 0x3F800000).
 :EINVF32 f_ra, f_rb    is op16=0xE693; f_rb & f_ra & f_msw_hi=0 { local one:4 = 0x3F800000; f_ra = one f/ f_rb; }       # reciprocal estimate
@@ -108,12 +297,31 @@ macro setFloatFlags(a, b) {
 # TMU (Trigonometric Math Unit) ops — 0xE27x. MSW reg fields: aaa=RaH dest, bbb=RbH,
 # ccc=RcH, ddd=RdH (2nd dest for QUADF32). Real math where a SLEIGH primitive exists
 # (div/sqrt/2pi); transcendentals use the pcodeops above.
-:MPY2PIF32 f_ra, f_rb  is op16=0xE270; f_rb & f_ra & f_msw_hi=0 { local twopi:4 = 0x40C90FDB; f_ra = f_rb f* twopi; } # *2pi
-:DIV2PIF32 f_ra, f_rb  is op16=0xE271; f_rb & f_ra & f_msw_hi=0 { local twopi:4 = 0x40C90FDB; f_ra = f_rb f/ twopi; } # /2pi
+#
+# TMU inputs go through tmu_condition_operand (SPRUHS1C §7.5.2): denormals ->
+# +0, NaN -> signed inf. This makes the arithmetic outputs match silicon on the
+# edge-case inputs, which is exactly the material for the compares that follow.
+:MPY2PIF32 f_ra, f_rb  is op16=0xE270; f_rb & f_ra & f_msw_hi=0 {
+    local b:4; tmu_condition_operand(b, f_rb);
+    local twopi:4 = 0x40C90FDB;
+    f_ra = b f* twopi;
+}
+:DIV2PIF32 f_ra, f_rb  is op16=0xE271; f_rb & f_ra & f_msw_hi=0 {
+    local b:4; tmu_condition_operand(b, f_rb);
+    local twopi:4 = 0x40C90FDB;
+    f_ra = b f/ twopi;
+}
 :IEXP2F32 f_ra, f_rb   is op16=0xE272; f_rb & f_ra & f_msw_hi=0 { f_ra = IEXP2F32(f_rb); }   # 1/2^x estimate
 :LOG2F32 f_ra, f_rb    is op16=0xE273; f_rb & f_ra & f_msw_hi=0 { f_ra = LOG2F32(f_rb); }    # log2(x) estimate
-:DIVF32 f_ra, f_rb, f_rc  is op16=0xE274; f_rc & f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb f/ f_rc; }
-:SQRTF32 f_ra, f_rb    is op16=0xE277; f_rb & f_ra & f_msw_hi=0 { f_ra = sqrt(f_rb); }
+:DIVF32 f_ra, f_rb, f_rc  is op16=0xE274; f_rc & f_rb & f_ra & f_msw_hi=0 {
+    local b:4; tmu_condition_operand(b, f_rb);
+    local c:4; tmu_condition_operand(c, f_rc);
+    f_ra = b f/ c;
+}
+:SQRTF32 f_ra, f_rb    is op16=0xE277; f_rb & f_ra & f_msw_hi=0 {
+    local b:4; tmu_condition_operand(b, f_rb);
+    f_ra = sqrt(b);
+}
 :SINPUF32 f_ra, f_rb   is op16=0xE278; f_rb & f_ra & f_msw_hi=0 { f_ra = SINPUF32(f_rb); }   # sin(2pi*x)
 :COSPUF32 f_ra, f_rb   is op16=0xE279; f_rb & f_ra & f_msw_hi=0 { f_ra = COSPUF32(f_rb); }   # cos(2pi*x)
 :ATANPUF32 f_ra, f_rb  is op16=0xE27A; f_rb & f_ra & f_msw_hi=0 { f_ra = ATANPUF32(f_rb); }  # atan(x)/2pi
@@ -218,59 +426,120 @@ macro setFloatFlags(a, b) {
 
 # =============================================================================
 # 0xE2 family: LSW = 1110 0010 <hi4> <lo4> ; MSW = 0000 0aaa mem32
-# p_ra (MSW bits 8-10) = RaH. The mem32 ADDRESS is in the MSW low byte, which we do NOT
-# decode (no MSW loc subtable) — the pointer is unrecoverable. SLEIGH forbids reading an
-# uninitialized temp, so we can't introduce a clean "opaque loaded value". Use the legal
-# flow-preserving model: loads keep the dest defined via identity (p_ra = p_ra; value
-# unknown/preserved), converts apply the conversion to the reg's own bits, stores consume
-# the source into a scratch local. (FPU-PCODE-SPEC wanted real *[ram] moves; the address
-# is genuinely unavailable, so this is the honest legal model.)
+# p_ra (MSW bits 8-10) = RaH, and the MSW's LOW 8 bits are a standard C28x loc byte --
+# so the `mem32` / `mem16` operand is decoded by the SAME loc32 / loc16 sub-tables the
+# integer instructions use, just matched in the second word (after the `;`). That is only
+# expressible because the FPU MSW fields share the `instr16` token; see the token comment
+# in tms320c28x.sinc.
+#
+# These used to be modelled as opaque identity moves (`p_ra = p_ra`, stores consumed into a
+# dead local) on the belief that the address was unrecoverable. It isn't. The identity model
+# was also actively harmful: a load that tells the decompiler nothing and a store that goes
+# nowhere means an entire float pipeline has no observable effect and gets eliminated --
+# whole clamp/lerp routines decompiled to nothing but the surrounding pointer arithmetic.
+#
+# Like every other loc16/loc32 user in this language, these are AMODE=0 only (there are no
+# AMODE=1 constructors anywhere in addr.sinc).
+#
 # Exact LSW encodings (spruhs1c): 0xE200 mem32,STF  0xE203 mem32,RaH  0xE213 mem16,RaH
 #   0xE223 MOVD32 RaH,mem32  0xE250 MACF32  0xE280 STF,mem32  0xE284 UI32TOF32  0xE288
 #   I32TOF32  0xE2A0..AF MOV32 RaH,mem32,CNDF  0xE2C4 UI16TOF32  0xE2C8 I16TOF32
-:MOV32 "mem32", "STF"       is op16=0xE200 ; imm16  { local s:4 = STF; }            # store STF -> mem
-:MOV32 mem32d, p_ra         is op16=0xE203 ; mem32d & p_ra { mem32d = p_ra; }        # store RaH -> [DP:off6]
-# Non-direct mem32 modes (indirect *XARn etc.): the address isn't cleanly recoverable from
-# the byte alone, so keep the flow-preserving consume (don't regress those to halt_baddata).
-:MOV32 "mem32", p_ra        is op16=0xE203 ; f_mem_b76!=0b00 & p_ra { local s:4 = p_ra; }
-:MOV16 "mem16", p_ra        is op16=0xE213 ; p_ra   { local s:2 = p_ra:2; }         # store RaH[15:0] -> mem
-:MOVD32 p_ra, "mem32"       is op16=0xE223 ; p_ra   { p_ra = p_ra; }                 # load mem -> RaH (opaque)
-:MACF32 "R7H,R3H", "mem32,*XAR7++"  is op16=0xE250 ; imm16 {   # RPT-capable MAC: R3H*=mem, R7H+=R3H
+:MOV32 loc32, "STF"         is op16=0xE200 ; loc32  { packstf(STF); loc32 = STF; }  # sync sub-regs -> packed, then store
+:MOV32 loc32, p_ra          is op16=0xE203 ; p_ra & loc32 { loc32 = p_ra; }         # store RaH -> mem32
+:MOV16 loc16, p_ra          is op16=0xE213 ; p_ra & loc16 { loc16 = p_ra:2; }       # store RaH[15:0] -> mem16
+# MOVD32 RaH, mem32: RaH = [mem32] AND [mem32+2] = [mem32]. loc32 exports the dereferenced
+# cell rather than the address, so the duplicate store to mem32+2 is not modelled -- the
+# load, which is what the dataflow needs, is.
+:MOVD32 p_ra, loc32         is op16=0xE223 ; p_ra & loc32 { p_ra = loc32; }
+# MACF32 R7H,R3H,mem32,*XAR7++  MSW: 0001 1111 mem32 (no register field -- both operands
+# are memory). Standalone semantics per SPRUHS1C are
+#     R3H = R3H + R2H ;  R2H = [mem32] * [XAR7++]
+# i.e. the accumulate consumes the PREVIOUS product in R2H and only then is R2H overwritten.
+# (The old model multiplied R3H by [XAR7] and accumulated into R7H, which was neither
+# operand pairing nor either destination.) When repeated under RPT the destinations
+# alternate R3H/R7H with R2H/R6H as the temporaries; only the standalone form is modelled.
+:MACF32 "R7H,R3H", loc32, "*XAR7++"  is op16=0xE250 ; op_hi8=0x1F & loc32 {
+    R3H = R3H f+ R2H;
     local a:4 = XAR7;
     local m:4 = *[ram]:4 a;
-    R3H = R3H f* m;
-    R7H = R7H f+ R3H;
+    R2H = loc32 f* m;
     XAR7 = XAR7 + 2;
 }
-:MOV32 "STF", "mem32"       is op16=0xE280 ; imm16  { STF = STF; }                   # load mem -> STF (opaque)
-:UI32TOF32 p_ra, "mem32"    is op16=0xE284 ; p_ra   { p_ra = int2float(p_ra); }
-:I32TOF32 p_ra, "mem32"     is op16=0xE288 ; p_ra   { p_ra = int2float(p_ra); }
-:MOV32 p_ra, "mem32", fcndf is op_hi8=0xE2 & loc_hi4=0b1010 & fcndf ; p_ra { p_ra = p_ra; }
-:UI16TOF32 p_ra, "mem16"    is op16=0xE2C4 ; p_ra   { local v:2 = p_ra:2; p_ra = int2float(v); }
-:I16TOF32 p_ra, "mem16"     is op16=0xE2C8 ; p_ra   { local v:2 = p_ra:2; p_ra = int2float(v); }
+:MOV32 "STF", loc32         is op16=0xE280 ; loc32  { STF = loc32; unpackstf(STF); }  # load mem -> STF, sync sub-regs
+# int -> float converts. int2float is signed, so the unsigned forms widen first.
+:UI32TOF32 p_ra, loc32      is op16=0xE284 ; p_ra & loc32 { local v:8 = zext(loc32); p_ra = int2float(v); }
+:I32TOF32 p_ra, loc32       is op16=0xE288 ; p_ra & loc32 { p_ra = int2float(loc32); }
+# MOV32 RaH, mem32 CNDF (0xE2A? family). UNCF (0b1111) is unconditional + updates the
+# flags from the loaded value (ZI/NI along with ZF/NF, per SPRUHS1C Table 6-14);
+# other codes are conditional and leave the flags alone.
+:MOV32 p_ra, loc32, cndf    is op_hi8=0xE2 & loc_hi4=0b1010 & fcndf=0b1111 & cndf ; p_ra & loc32 {
+    p_ra = loc32;
+    update_stf_mov(p_ra);
+}
+:MOV32 p_ra, loc32, cndf    is op_hi8=0xE2 & loc_hi4=0b1010 & cndf ; p_ra & loc32 {
+    if (!cndf) goto <done>;
+    p_ra = loc32;
+  <done>
+}
+:UI16TOF32 p_ra, loc16      is op16=0xE2C4 ; p_ra & loc16 { local v:4 = zext(loc16); p_ra = int2float(v); }
+:I16TOF32 p_ra, loc16       is op16=0xE2C8 ; p_ra & loc16 { local v:2 = loc16; p_ra = int2float(v); }
 # 0xe27x seen in firmware — undocumented load form, consume both words
 :MOV32 p_ra, "mem32 (e27x)" is op_hi8=0xE2 & loc_hi4=0b0111 ; p_ra  { p_ra = p_ra; }
 
-# CNDF condition codes (FPU), low nibble of the LSW. spruhs1c Table; reserved
-# encodings (6..9) are unused -> name them rsvd so the table is total.
-attach names [ fcndf ]
-  [ "NEQ" "EQ" "GT" "GEQ" "LT" "LEQ" "rsvd6" "rsvd7"
-    "rsvd8" "rsvd9" "TF" "NTF" "LU" "LV" "UNC" "UNCF" ];
+# MOV32 RaH, RbH {,CNDF}   LSW=1110 0110 1100 CNDF : MSW=0000 0000 00bb baaa
+# UNCF (0b1111): unconditional move + MOV-flavoured flag update (ZI/NI plus
+# ZF/NF, per SPRUHS1C Table 6-14).
+# Others: genuinely conditional (was previously an unconditional copy with cndf
+# rendered display-only, which mis-modeled the semantics for the decompiler).
+:MOV32 f_ra, f_rb, cndf  is op_hi8=0xE6 & loc_hi4=0b1100 & fcndf=0b1111 & cndf
+                         ; f_rb & f_ra & f_msw_hi=0 {
+    f_ra = f_rb;
+    update_stf_mov(f_ra);
+}
+:MOV32 f_ra, f_rb, cndf  is op_hi8=0xE6 & loc_hi4=0b1100 & cndf
+                         ; f_rb & f_ra & f_msw_hi=0 {
+    if (!cndf) goto <done>;
+    f_ra = f_rb;
+  <done>
+}
 
-# MOV32 RaH, RbH {,CNDF}   LSW=1110 0110 1100 CNDF : MSW=0000 0000 00bb baaa  (reg-reg)
-# Unconditional move (the common case); the conditional variants still copy (the cond is
-# rendered but we model the move unconditionally — close enough for dataflow).
-:MOV32 f_ra, f_rb, fcndf  is op_hi8=0xE6 & loc_hi4=0b1100 & fcndf
-                          ; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb; }
-
-# Parallel "MPYF32 RdH,ReH,RfH || MOV32 RaH,mem32"  LSW: 1110 0011 0000 fffe ;
-# MSW: eedd daaa mem32.  RdH=ddd(MSW), RfH=fff(LSW), RaH=aaa(MSW). ReH is split across
-# both words so it isn't rendered; model the MPYF32 dest as RdH = RdH * RfH (ReH would be
-# the true 2nd factor, but RfH is the cleanly-decodable one) and the parallel load of RaH.
 attach variables [ p_rf ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
-:MPYF32 p_rd, p_rf, "||MOV32", p_ra, "mem32"
-        is op_hi8=0xE3 & loc_hi4=0b0000 & p_rf
-        ; p_rd & p_ra { p_rd = p_rd f* p_rf; p_ra = p_ra; }   # mul + parallel load (load opaque -> identity)
+attach variables [ p_rd9 p_re12 ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
+
+# --- split registers in the parallel forms -----------------------------------
+# Two of the parallel-form register selectors straddle the word boundary, so no single
+# field can name them. A sub-table whose own pattern spans both words can: the part before
+# its `;` matches in the LSW, the part after in the MSW.
+#
+# p_re_l / p_re_h -- ReH in the "arith || MOV32 mem32" family (0xE0/0xE3). ReH is split:
+# high bit is LSW bit 0 (e), low 2 bits are MSW bits 14-15 (ee), so ReH = (e << 2) | ee.
+# Verified against dis2000: `e30d 6042` = MPYF32 R4H,R5H,R6H ||MOV32 R0H,*-SP[2] -- e=1,
+# ee=1 -> R5H. A single sub-table cannot span the word boundary (a straddling pattern would
+# push the parent's own second-word fields into a third word), so there is one half-table
+# per value of e and the constructors below come in matching pairs.
+p_re_l: "R0H"  is p_re_lo=0 { export R0H; }
+p_re_l: "R1H"  is p_re_lo=1 { export R1H; }
+p_re_l: "R2H"  is p_re_lo=2 { export R2H; }
+p_re_l: "R3H"  is p_re_lo=3 { export R3H; }
+p_re_h: "R4H"  is p_re_lo=0 { export R4H; }
+p_re_h: "R5H"  is p_re_lo=1 { export R5H; }
+p_re_h: "R6H"  is p_re_lo=2 { export R6H; }
+p_re_h: "R7H"  is p_re_lo=3 { export R7H; }
+
+# p_rf7_0 / p_rf7_1 -- RfH in the "MPYF32 || ADDF32/SUBF32" family (0xE74x/0xE75x). Here
+# the split runs the OTHER way: the HIGH 2 bits are LSW bits 0-1 (ff) and the LOW bit is
+# MSW bit 15 (f), so RfH = (ff << 1) | f. Verified against dis2000: `e753 c688` =
+# MPYF32 R0H,R1H,R2H ||SUBF32 R3H,R4H,R7H -- ff=3, f=1 -> R7H (reading the halves the other
+# way round would give R6H). These live in the LSW, selected by the MSW bit, so unlike
+# p_re_* the sub-table is the word-1 operand and the selector is a plain word-2 constraint.
+p_rf7_0: "R0H" is p_ff2=0 { export R0H; }
+p_rf7_0: "R2H" is p_ff2=1 { export R2H; }
+p_rf7_0: "R4H" is p_ff2=2 { export R4H; }
+p_rf7_0: "R6H" is p_ff2=3 { export R6H; }
+p_rf7_1: "R1H" is p_ff2=0 { export R1H; }
+p_rf7_1: "R3H" is p_ff2=1 { export R3H; }
+p_rf7_1: "R5H" is p_ff2=2 { export R5H; }
+p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
 
 # =============================================================================
 # Immediate-operand FP ops (2-word):  RaH = RbH {op} #16FHi
@@ -315,89 +584,270 @@ attach variables [ p_rf ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 :CMPF32 fimm_reg, "#0.0"  is op_hi8=0xE5 & loc_mode5=0b10100 & fimm_reg { local z:4 = 0; setFloatFlags(fimm_reg, z); }
 # ZERO RaH             LSW: 1110 0101 1001 0aaa  (single word)
 :ZERO fimm_reg            is op_hi8=0xE5 & loc_mode5=0b10010 & fimm_reg { fimm_reg = 0; }
+# TESTTF CNDF          LSW: 1110 0101 1000 CNDF  (single word)
+# Evaluate the float condition and latch it into STF's TF flag; a later
+# `MOV32/NEGF32/SWAPF ...,TF|NTF` or `MOVST0 TF` (-> C/TC) tests it. This is the only
+# writer of TF, so without it the TF/NTF conditions can never be anything but stale.
+# Encoding confirmed against asm2000/dis2000: 0xE580=NEQ 0xE581=EQ ... 0xE58E=UNC.
+# The selector must be loc_hi4, not loc_mode5: CNDF occupies bits 0-3 and loc_mode5
+# (bits 3-7) would slice through it.
+:TESTTF cndf              is op_hi8=0xE5 & loc_hi4=0b1000 & cndf { STF_TF = cndf; }
 # NEGF32 RaH,RbH{,CNDF} LSW: 1110 0110 1010 CNDF ; MSW: 0000 0000 00bb baaa
-:NEGF32 f_ra, f_rb, fcndf  is op_hi8=0xE6 & loc_hi4=0b1010 & fcndf
-                           ; f_rb & f_ra & f_msw_hi=0 { local negone:4 = 0xBF800000; f_ra = f_rb f* negone; }
+# UNCF (0b1111): unconditional negate + update flags from the result.
+# Others: conditional; leave flags alone.
+:NEGF32 f_ra, f_rb, cndf  is op_hi8=0xE6 & loc_hi4=0b1010 & fcndf=0b1111 & cndf
+                          ; f_rb & f_ra & f_msw_hi=0 {
+    f_ra = f_rb ^ 0x80000000;
+    update_stf(f_ra);
+}
+:NEGF32 f_ra, f_rb, cndf  is op_hi8=0xE6 & loc_hi4=0b1010 & cndf
+                          ; f_rb & f_ra & f_msw_hi=0 {
+    local val:4 = f_rb;
+    if (!cndf) goto <done>;
+    val = f_rb ^ 0x80000000;
+  <done>
+    f_ra = val;
+}
 # MOVST0 FLAG          LSW: 1010 1101 FFFF FFFF  (copy selected STF flags into ST0)
-# ST0 holds the integer Z/N flags the SB ...,COND decoder reads. setFloatFlags() puts the
-# float compare result in STF[0]=ZF / STF[1]=NF, but the named flags are $(Z)=ST0[4] and
-# $(N)=ST0[5] (slaspec). A flat `ST0 = STF:2` lands them in ST0 bits 0/1, so the SB branch
-# reads ST0[4]/[5] (never set) → constant condition → the decompiler prunes the real arm.
-# Map STF's compare bits into the named ST0 flag fields instead. (imm8 is the flag-select
-# mask; Z+N covers every CMPF32/MAXF32/MINF32 → SB EQ/NEQ/GT/GEQ/LT/LEQ idiom. C/V/TC are
-# untouched — the FPU compare path doesn't set them.)
-:MOVST0 "#"imm8        is op_hi8=0xAD & imm8 {
-    $(Z) = STF[0,1];   # float ZF -> integer Z (ST0[4])
-    $(N) = STF[1,1];   # float NF -> integer N (ST0[5])
+# ST0 holds the integer Z/N flags the SB ...,COND decoder reads, so MOVST0 is the bridge
+# that keeps the CMPF32 -> MOVST0 -> SB(cond) idiom alive. Per SPRUHS1C the mapping is
+# NOT one flag per bit -- several STF flags fold into one ST0 bit:
+#     OV = LVF | LUF      N = NF | NI      Z = ZF | ZI      C = TF      TC = TF
+# and "if any STF flag is not specified, the corresponding ST0 register bit is not
+# modified", so each ST0 bit is a select-gated update rather than an unconditional write.
+# LVF/LUF are additionally auto-cleared in STF when selected.
+#
+# `movst0_flags` carries the display (attach names, above); `imm8` is the same 8 bits as a
+# plain number, because an attach-names field has no value usable in the semantic section.
+# Every sel_* below is a decode-time constant, so the decompiler folds this whole block
+# down to the one or two assignments the mask actually selects (mask 0x14 -> N/Z only,
+# which is what every CMPF32/MAXF32/MINF32 site in PMR/DIR uses).
+:MOVST0 movst0_flags   is op_hi8=0xAD & movst0_flags & imm8 {
+    local mask:1 = imm8;    # sized copy: a bare field has no size for the & below
+    local sel_lvf:1 = (mask & 0x01) != 0;
+    local sel_luf:1 = (mask & 0x02) != 0;
+    local sel_nf:1  = (mask & 0x04) != 0;
+    local sel_ni:1  = (mask & 0x08) != 0;
+    local sel_zf:1  = (mask & 0x10) != 0;
+    local sel_zi:1  = (mask & 0x20) != 0;
+    local sel_tf:1  = (mask & 0x80) != 0;
+
+    local sel_ov:1 = sel_lvf || sel_luf;
+    local ovval:1  = (sel_lvf && STF_LV) || (sel_luf && STF_LU);
+    $(V) = (sel_ov && ovval) || (!sel_ov && $(V));
+
+    local sel_n:1 = sel_nf || sel_ni;
+    local nval:1  = (sel_nf && STF_NF) || (sel_ni && STF_NI);
+    $(N) = (sel_n && nval) || (!sel_n && $(N));
+
+    local sel_z:1 = sel_zf || sel_zi;
+    local zval:1  = (sel_zf && STF_ZF) || (sel_zi && STF_ZI);
+    $(Z) = (sel_z && zval) || (!sel_z && $(Z));
+
+    $(C)  = (sel_tf && STF_TF) || (!sel_tf && $(C));
+    $(TC) = (sel_tf && STF_TF) || (!sel_tf && $(TC));
+
+    # "the LUF or LVF flags are automatically cleared if selected"
+    STF_LV = STF_LV && !sel_lvf;
+    STF_LU = STF_LU && !sel_luf;
 }
 
 # MAXF32 RaH, #16FHi   LSW: 1110 1000 0010 0III ; MSW: IIII IIII IIII Iaaa  (2-word)
 # RaH = max(RaH, imm). imm16 = (LSW[2:0] << 13) | MSW[15:3] (III = HIGH 3 bits; see CMPF32).
-:MAXF32 f_ra, "#"^fimm_hi13  is op_hi8=0xE8 & loc_mode5=0b00100 & fimm_lo3 ; f_ra & fimm_hi13 {
+# Compare updates ZF/NF; selected value flushed through fpu_minmax_output.
+:MAXF32 f_ra, "#"^ctx_fimm16  is op_hi8=0xE8 & loc_mode5=0b00100 & fimm_lo3 ; f_ra & fimm_hi13
+        [ ctx_fimm16 = (fimm_lo3 << 13) | fimm_hi13; ] {
     local imm:4 = (zext(fimm_lo3:4) << 13 | zext(fimm_hi13:4)) << 16;
-    if (f_ra f>= imm) goto inst_next;
+    update_stf_cmp(f_ra, imm);
+    if (f_ra f>= imm) goto <keep>;
     f_ra = imm;
+  <keep>
+    fpu_minmax_output(f_ra);
 }
 # MINF32 RaH, #16FHi   LSW: 1110 1000 0011 0III ; MSW: IIII IIII IIII Iaaa  (2-word)
-:MINF32 f_ra, "#"^fimm_hi13  is op_hi8=0xE8 & loc_mode5=0b00110 & fimm_lo3 ; f_ra & fimm_hi13 {
+:MINF32 f_ra, "#"^ctx_fimm16  is op_hi8=0xE8 & loc_mode5=0b00110 & fimm_lo3 ; f_ra & fimm_hi13
+        [ ctx_fimm16 = (fimm_lo3 << 13) | fimm_hi13; ] {
     local imm:4 = (zext(fimm_lo3:4) << 13 | zext(fimm_hi13:4)) << 16;
-    if (f_ra f<= imm) goto inst_next;
+    update_stf_cmp(f_ra, imm);
+    if (f_ra f<= imm) goto <keep>;
     f_ra = imm;
+  <keep>
+    fpu_minmax_output(f_ra);
 }
 # MAXF32 RaH,RbH||MOV32 RcH,RdH  LSW: 1110 0110 1001 1100 ; MSW: 0000 dddc ccbb baaa
-# RaH=max(RaH,RbH); the parallel MOV32 RcH,RdH copies — RdH not cleanly decodable, model
-# RcH as written from RbH (the available source) so its def survives.
-:MAXF32 f_ra, f_rb, "||MOV32", f_rc  is op16=0xE69C ; f_rc & f_rb & f_ra {
-    setFloatFlags(f_ra, f_rb);
+# The parallel move is CONDITIONAL on the same test as the max, not a free-standing copy:
+#     if (RaH < RbH) { RaH = RbH; RcH = RdH; }
+# (SPRUHS1C p.99.) It used to be modelled as an unconditional `RcH = RbH` -- wrong source
+# *and* wrong control flow. RdH is p_rd9 in this MSW layout (bits 9-11), not p_rd.
+:MAXF32 f_ra, f_rb, "||MOV32", f_rc, p_rd9  is op16=0xE69C ; f_rc & f_rb & f_ra & p_rd9 {
+    update_stf_cmp(f_ra, f_rb);
     if (f_ra f>= f_rb) goto <skip>;
     f_ra = f_rb;
+    f_rc = p_rd9;
   <skip>
-    f_rc = f_rb;
+    fpu_minmax_output(f_ra);
 }
 # MINF32 RaH,RbH||MOV32 RcH,RdH  LSW: 1110 0110 1001 1101 ; MSW: 0000 dddc ccbb baaa
-:MINF32 f_ra, f_rb, "||MOV32", f_rc  is op16=0xE69D ; f_rc & f_rb & f_ra {
-    setFloatFlags(f_ra, f_rb);
+#     if (RaH > RbH) { RaH = RbH; RcH = RdH; }
+:MINF32 f_ra, f_rb, "||MOV32", f_rc, p_rd9  is op16=0xE69D ; f_rc & f_rb & f_ra & p_rd9 {
+    update_stf_cmp(f_ra, f_rb);
     if (f_ra f<= f_rb) goto <skip>;
     f_ra = f_rb;
+    f_rc = p_rd9;
   <skip>
-    f_rc = f_rb;
+    fpu_minmax_output(f_ra);
 }
 # SWAPF RaH,RbH{,CNDF}  LSW: 1110 0110 1110 CNDF ; MSW: 0000 0000 00bb baaa
-:SWAPF f_ra, f_rb, fcndf  is op_hi8=0xE6 & loc_hi4=0b1110 & fcndf
-                          ; f_rb & f_ra & f_msw_hi=0 { local t:4 = f_ra; f_ra = f_rb; f_rb = t; }
+# UNCF (0b1111): unconditional swap; per SPRUHS1C the swap itself doesn't touch flags.
+# Others: conditional swap.
+:SWAPF f_ra, f_rb, cndf  is op_hi8=0xE6 & loc_hi4=0b1110 & fcndf=0b1111 & cndf
+                         ; f_rb & f_ra & f_msw_hi=0 {
+    local t:4 = f_ra; f_ra = f_rb; f_rb = t;
+}
+:SWAPF f_ra, f_rb, cndf  is op_hi8=0xE6 & loc_hi4=0b1110 & cndf
+                         ; f_rb & f_ra & f_msw_hi=0 {
+    if (!cndf) goto <done>;
+    local t:4 = f_ra; f_ra = f_rb; f_rb = t;
+  <done>
+}
 
-# Parallel ADDF32/SUBF32 ||MOV32 forms (LSW 0xE0/0xE3 sub-ops) — 2-word. p_rd (the
-# ADDF32/SUBF32 dest) is in MSW bits 11-13; the 2nd arithmetic source and the MOV32
-# operand are bit-packed across both words and not cleanly decodable. Model the
-# arithmetic dest def (f+/f- against an opaque source) so dataflow continues.
-# 0xE0 sub-ops = "...||MOV32 mem32,RaH" (store side) ; 0xE3 = "...||MOV32 RaH,mem32" (load).
-# loc_hi4 selects the arithmetic op: 0000=MPYF32 0001=ADDF32 0010=SUBF32 (0xE3 0011=MACF32).
-# p_rd (MSW bits 11-13) is the cleanly-decodable arithmetic dest; the 2nd source + MOV32
-# operand are bit-packed/unrecoverable, so keep the dest defined via identity.
-#   MPYF32 RdH,ReH,RfH || MOV32 mem32,RaH   LSW: 1110 0000 0000 fffe
-:MPYF32 p_rd, "||MOV32 mem32"  is op_hi8=0xE0 & loc_hi4=0b0000 ; p_rd { p_rd = p_rd; }
-#   ADDF32 RdH,ReH,RfH || MOV32 mem32,RaH   LSW: 1110 0000 0001 fffe
-:ADDF32 p_rd, "||MOV32 mem32"  is op_hi8=0xE0 & loc_hi4=0b0001 ; p_rd { p_rd = p_rd; }
-#   SUBF32 RdH,ReH,RfH || MOV32 mem32,RaH   LSW: 1110 0000 0010 fffe
-:SUBF32 p_rd, "||MOV32 mem32"  is op_hi8=0xE0 & loc_hi4=0b0010 ; p_rd { p_rd = p_rd; }
-#   ADDF32 ... || MOV32 RaH,mem32  LSW: 1110 0011 0001 fffe
-:ADDF32 p_rd, "||MOV32"  is op_hi8=0xE3 & loc_hi4=0b0001 ; p_rd { p_rd = p_rd; }
-#   SUBF32 ... || MOV32 RaH,mem32  LSW: 1110 0011 0010 fffe
-:SUBF32 p_rd, "||MOV32"  is op_hi8=0xE3 & loc_hi4=0b0010 ; p_rd { p_rd = p_rd; }
-#   MACF32 R3H,R2H,RdH,ReH,RfH || MOV32 RaH,mem32  LSW: 1110 0011 0011 fffe
-:MACF32 p_rd, "||MOV32"  is op_hi8=0xE3 & loc_hi4=0b0011 ; p_rd { p_rd = p_rd; }
-#   MPYF32 RdH,RaH,RbH || ADDF32 R3H,R3H,R2H  LSW: 1110 0111 0100 00ff ; MSW reg fields.
-#   Parallel multiply-add alias (confirmed via dis2000, word 0xe741). Flow-preserving
-#   (the MPYF32 dest p_rd is in the MSW; touch it so dataflow + flow continue).
-:MPYF32 p_rd, "||ADDF32"  is op_hi8=0xE7 & loc_hi4=0b0100 ; p_rd { p_rd = p_rd; }
-#   MPYF32 RdH,RaH,RbH || SUBF32 RdH,ReH,RfH  LSW: 1110 0111 0101 00ff ; MSW reg fields.
-#   The ||SUBF32 sibling (sub-nibble 0101 vs ||ADDF32's 0100). Surfaced in the PCS411 image
-#   (words 0xe751/0xe753 at 0x8837f / 0x94df6 / 0x94e19). Same flow-preserving p_rd touch.
-:MPYF32 p_rd, "||SUBF32"  is op_hi8=0xE7 & loc_hi4=0b0101 ; p_rd { p_rd = p_rd; }
-#   MACF32 R7H,R6H,RdH,ReH,RfH — alias for MPYF32 RdH,ReH,RfH || ADDF32 R7H,R7H,R6H (multiply +
-#   accumulate into R7H). Distinct opcode from the R3H,R2H-accumulator MACF32 alias (the ||ADDF32 at
-#   0xE74x above). LSW: 1110 0011 1100 00ff (op_hi8=0xE3, loc_hi4=0b1100). RdH = p_rd (MSW[13:11]); the
-#   R7H/R6H accumulator pair is fixed by this opcode; ReH/RfH are bit-packed (not cleanly decoded, per
-#   the family convention). Was UNDEF -> halted the whole FPU block. Confirmed via TI dis2000: word pair
-#   e3cb/2e94 @ word 0xa20c1 = "MACF32 R7H, R6H, R5H, R4H, R5H".
-:MACF32 "R7H,R6H,"^p_rd  is op_hi8=0xE3 & loc_hi4=0b1100 ; p_rd { p_rd = p_rd; }
+# =============================================================================
+# Parallel "arith || MOV32 mem32" family — 2-word.
+#   LSW: 1110 00X0 YYYY fffe    MSW: eedd daaa mem32
+# X selects the direction of the parallel move and YYYY the arithmetic op:
+#   0xE0 = "... || MOV32 mem32, RaH"  (store)   0xE3 = "... || MOV32 RaH, mem32"  (load)
+#   YYYY: 0000 MPYF32  0001 ADDF32  0010 SUBF32  0011 MACF32 R3H,R2H  1100 MACF32 R7H,R6H
+# All five register selectors are now decoded: RdH = p_rd (MSW 11-13), RaH = p_ra (MSW
+# 8-10), RfH = p_rf (LSW 1-3), ReH = the split p_re sub-table, and mem32 = loc32 on the
+# MSW's low byte. These used to be `p_rd = p_rd` identity stubs with every operand except
+# the dest dropped from the display, which meant a third of the FPU work in a DSP loop was
+# invisible to both the listing and the decompiler.
+#
+# Source-before-dest ordering: the arithmetic reads ReH/RfH and the parallel MOV32 may
+# target one of them (TI only forbids RaH == RdH), so the arithmetic is evaluated first.
+#
+# MACF32's accumulate consumes the PREVIOUS product out of R2H/R6H before RdH is
+# rewritten, per SPRUHS1C: "R3H = R3H + R2H, RdH = ReH * RfH, RaH = [mem32]".
+#   MPYF32 RdH,ReH,RfH || MOV32 mem32, RaH   LSW: E000 sub 0b0000
+:MPYF32 p_rd, p_re_l, p_rf, "||MOV32", loc32, p_ra
+        is op_hi8=0xE0 & loc_hi4=0b0000 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    p_rd = p_re_l f* p_rf;
+    loc32 = p_ra;
+}
+:MPYF32 p_rd, p_re_h, p_rf, "||MOV32", loc32, p_ra
+        is op_hi8=0xE0 & loc_hi4=0b0000 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    p_rd = p_re_h f* p_rf;
+    loc32 = p_ra;
+}
+#   ADDF32 RdH,ReH,RfH || MOV32 mem32, RaH   LSW: E000 sub 0b0001
+:ADDF32 p_rd, p_re_l, p_rf, "||MOV32", loc32, p_ra
+        is op_hi8=0xE0 & loc_hi4=0b0001 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    p_rd = p_re_l f+ p_rf;
+    loc32 = p_ra;
+}
+:ADDF32 p_rd, p_re_h, p_rf, "||MOV32", loc32, p_ra
+        is op_hi8=0xE0 & loc_hi4=0b0001 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    p_rd = p_re_h f+ p_rf;
+    loc32 = p_ra;
+}
+#   SUBF32 RdH,ReH,RfH || MOV32 mem32, RaH   LSW: E000 sub 0b0010
+:SUBF32 p_rd, p_re_l, p_rf, "||MOV32", loc32, p_ra
+        is op_hi8=0xE0 & loc_hi4=0b0010 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    p_rd = p_re_l f- p_rf;
+    loc32 = p_ra;
+}
+:SUBF32 p_rd, p_re_h, p_rf, "||MOV32", loc32, p_ra
+        is op_hi8=0xE0 & loc_hi4=0b0010 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    p_rd = p_re_h f- p_rf;
+    loc32 = p_ra;
+}
+#   MPYF32 RdH,ReH,RfH || MOV32 RaH, mem32   LSW: E300 sub 0b0000
+:MPYF32 p_rd, p_re_l, p_rf, "||MOV32", p_ra, loc32
+        is op_hi8=0xE3 & loc_hi4=0b0000 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    p_rd = p_re_l f* p_rf;
+    p_ra = loc32;
+}
+:MPYF32 p_rd, p_re_h, p_rf, "||MOV32", p_ra, loc32
+        is op_hi8=0xE3 & loc_hi4=0b0000 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    p_rd = p_re_h f* p_rf;
+    p_ra = loc32;
+}
+#   ADDF32 RdH,ReH,RfH || MOV32 RaH, mem32   LSW: E300 sub 0b0001
+:ADDF32 p_rd, p_re_l, p_rf, "||MOV32", p_ra, loc32
+        is op_hi8=0xE3 & loc_hi4=0b0001 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    p_rd = p_re_l f+ p_rf;
+    p_ra = loc32;
+}
+:ADDF32 p_rd, p_re_h, p_rf, "||MOV32", p_ra, loc32
+        is op_hi8=0xE3 & loc_hi4=0b0001 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    p_rd = p_re_h f+ p_rf;
+    p_ra = loc32;
+}
+#   SUBF32 RdH,ReH,RfH || MOV32 RaH, mem32   LSW: E300 sub 0b0010
+:SUBF32 p_rd, p_re_l, p_rf, "||MOV32", p_ra, loc32
+        is op_hi8=0xE3 & loc_hi4=0b0010 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    p_rd = p_re_l f- p_rf;
+    p_ra = loc32;
+}
+:SUBF32 p_rd, p_re_h, p_rf, "||MOV32", p_ra, loc32
+        is op_hi8=0xE3 & loc_hi4=0b0010 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    p_rd = p_re_h f- p_rf;
+    p_ra = loc32;
+}
+#   MACF32 R3H,R2H,RdH,ReH,RfH || MOV32 RaH, mem32   LSW: E300 sub 0b0011
+:MACF32 "R3H,R2H", p_rd, p_re_l, p_rf, "||MOV32", p_ra, loc32
+        is op_hi8=0xE3 & loc_hi4=0b0011 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    R3H = R3H f+ R2H;
+    p_rd = p_re_l f* p_rf;
+    p_ra = loc32;
+}
+:MACF32 "R3H,R2H", p_rd, p_re_h, p_rf, "||MOV32", p_ra, loc32
+        is op_hi8=0xE3 & loc_hi4=0b0011 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    R3H = R3H f+ R2H;
+    p_rd = p_re_h f* p_rf;
+    p_ra = loc32;
+}
+#   MACF32 R7H,R6H,RdH,ReH,RfH || MOV32 RaH, mem32   LSW: E300 sub 0b1100
+:MACF32 "R7H,R6H", p_rd, p_re_l, p_rf, "||MOV32", p_ra, loc32
+        is op_hi8=0xE3 & loc_hi4=0b1100 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    R7H = R7H f+ R6H;
+    p_rd = p_re_l f* p_rf;
+    p_ra = loc32;
+}
+:MACF32 "R7H,R6H", p_rd, p_re_h, p_rf, "||MOV32", p_ra, loc32
+        is op_hi8=0xE3 & loc_hi4=0b1100 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    R7H = R7H f+ R6H;
+    p_rd = p_re_h f* p_rf;
+    p_ra = loc32;
+}
+
+# =============================================================================
+# Parallel "MPYF32 || ADDF32 / SUBF32" — 2-word, registers only (no memory operand).
+#   LSW: 1110 0111 010Y 00ff    MSW: feee dddc ccbb baaa      (Y: 0 = ADDF32, 1 = SUBF32)
+#   RaH = RbH * RcH ,  RdH = ReH +/- RfH
+# Note the MSW layout differs from the ||MOV32 family above: ddd/eee sit one bit lower
+# (p_rd9 / p_re12), and aaa/bbb/ccc are the ordinary f_ra/f_rb/f_rc.
+:MPYF32 f_ra, f_rb, f_rc, "||ADDF32", p_rd9, p_re12, p_rf7_0
+        is op_hi8=0xE7 & loc_hi4=0b0100 & p_rf7_0 ; f_ra & f_rb & f_rc & p_rd9 & p_re12 & p_rf_lo1=0 {
+    local prod:4 = f_rb f* f_rc;
+    p_rd9 = p_re12 f+ p_rf7_0;
+    f_ra = prod;
+}
+:MPYF32 f_ra, f_rb, f_rc, "||ADDF32", p_rd9, p_re12, p_rf7_1
+        is op_hi8=0xE7 & loc_hi4=0b0100 & p_rf7_1 ; f_ra & f_rb & f_rc & p_rd9 & p_re12 & p_rf_lo1=1 {
+    local prod:4 = f_rb f* f_rc;
+    p_rd9 = p_re12 f+ p_rf7_1;
+    f_ra = prod;
+}
+:MPYF32 f_ra, f_rb, f_rc, "||SUBF32", p_rd9, p_re12, p_rf7_0
+        is op_hi8=0xE7 & loc_hi4=0b0101 & p_rf7_0 ; f_ra & f_rb & f_rc & p_rd9 & p_re12 & p_rf_lo1=0 {
+    local prod:4 = f_rb f* f_rc;
+    p_rd9 = p_re12 f- p_rf7_0;
+    f_ra = prod;
+}
+:MPYF32 f_ra, f_rb, f_rc, "||SUBF32", p_rd9, p_re12, p_rf7_1
+        is op_hi8=0xE7 & loc_hi4=0b0101 & p_rf7_1 ; f_ra & f_rb & f_rc & p_rd9 & p_re12 & p_rf_lo1=1 {
+    local prod:4 = f_rb f* f_rc;
+    p_rd9 = p_re12 f- p_rf7_1;
+    f_ra = prod;
+}

@@ -96,6 +96,18 @@ define register offset=0x58 size=2 [ IFR IER DBGIER ];
 define register offset=0x60 size=4 [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 define register offset=0x90 size=4 [ STF RB ];
 
+# --- STF status flags (unpacked model) ---------------------------------------
+# STF's flag bits split into individual 1-byte registers so the decompiler can
+# track each flag independently -- the CMPF32 -> conditional-branch idiom then
+# survives without the packed STF[0,1] slice reads that the decompiler cannot
+# name in the compiler spec. Mirrors the ST0/ST1 unpacked model above. The
+# packed STF register at 0x90 is materialized on demand by the packstf/unpackstf
+# macros in tms320c28x_fpu.sinc, invoked at the rare STF <-> memory move sites.
+# Adapted from mwdmwd/ghidra-c28x (Apache-2.0); see THIRD-PARTY.md.
+# Field order matches STF bit numbering (SPRUHS1C Table 2-2):
+#   STF[0]=LVF STF[1]=LUF STF[2]=NF STF[3]=ZF STF[4]=NI STF[5]=ZI STF[6]=TF
+define register offset=0x124 size=1 [ STF_LV STF_LU STF_NF STF_ZF STF_NI STF_ZI STF_TF ];
+
 # --- VCU-II registers (F2837x C28x+VCU, spruhs1c ch.5) ------------------------
 # General-purpose VR0-VR8, transition-bit regs, status, and the CRC result reg.
 # Used by the (decode-only) VCU/VCRC instructions -- relevant because CAN-message

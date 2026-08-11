@@ -126,11 +126,36 @@ Files adapted so far:
   `PUSH` / `POP ST0` / `ST1`, the per-flag `SETC` / `CLRC #imm8` bodies, and the
   decoded-signed `PM` convention used by `SPM`.
 - **`data/languages/tms320c28x.slaspec`** (partial) — the `ffc_return` and
-  `switch_canonical` context bit definitions (see #16); and the unpacked
+  `switch_canonical` context bit definitions (see #16); the unpacked
   status-flag model: each ST0/ST1 status bit defined as its own register (the
   `define register` blocks at 0x100 / 0x110) with the `$(NAME)` flag macros
   expanding to those registers, which is what lets the compiler-spec
-  `context_data <tracked_set>` name `PM` / `OVM` / `PAGE0` (SPRU514 Table 7-4).
+  `context_data <tracked_set>` name `PM` / `OVM` / `PAGE0` (SPRU514 Table 7-4);
+  and the STF flag sub-registers at 0x124 (`STF_LV` / `STF_LU` / `STF_NF` /
+  `STF_ZF` / `STF_NI` / `STF_ZI` / `STF_TF`) that the FPU condition-code table
+  reads. See #17.
+- **`data/languages/tms320c28x_fpu.sinc`** (partial) — the `cndf` sub-table
+  (12 float conditions plus `UNC` / `UNCF`) exporting a 1-byte boolean; the
+  operand-conditioning macros `fpu_cmp_operand` and `tmu_condition_operand`
+  (denormal / NaN canonicalisation per SPRUHS1C §7.5.2); `fpu_minmax_output`
+  for MAX/MIN result flushing; the flag-writing macros `update_stf` (arith
+  1-op), `update_stf_cmp` (compare with conditioned operands),
+  `update_stf_mov` (MOV loads: ZI/NI alongside ZF/NF); `packstf` /
+  `unpackstf` for the packed-STF sync on STF ↔ memory moves; the UNCF-vs-
+  conditional split on `MOV32` / `NEGF32` / `SWAPF ... cndf`; and the
+  `MOVST0 → $(Z) / $(N)` forward from `STF_ZF` / `STF_NF` (replacing the
+  previous packed `STF[0,1]` bit slices). Wired at every flag-setting site:
+  CMPF32 (4 forms) → `update_stf_cmp`; MAXF32 / MINF32 (reg-reg, immediate,
+  parallel-with-MOV32) → `update_stf_cmp` + `fpu_minmax_output` on the
+  written result; ABSF32 and NEGF32 UNCF → `update_stf`; MOV32 UNCF loads
+  (mem32, reg) → `update_stf_mov`; TMU inputs (MPY2PIF32, DIV2PIF32, DIVF32,
+  SQRTF32) → `tmu_condition_operand`. See #17.
+  The `TESTTF CNDF` constructor mirrors mwdmwd's one-line `testtf`
+  (`STF_TF = cndf`), though the encoding was independently confirmed against
+  asm2000/dis2000. The `MOVST0` flag-mask decode (its own `movst0_flags` field
+  plus the 256-entry `attach names` list) and the `ctx_fimm16` display fix for
+  the `MAXF32` / `MINF32` `#16FHi` immediates are *not* adapted — mwdmwd renders
+  neither — and are original to this module.
 - **`data/languages/tms320c28x_ext56.sinc`** — *not adapted code*, noted for
   completeness: the `SETC` / `CLRC` mode-bit constructors (`OBJMODE`, `XF`, `OVC`,
   `M0M1MAP`) were wired to write the individual status registers introduced by the
