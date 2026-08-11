@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Nishanth Samala
 // Coverage sweep: attempt to disassemble at EVERY word offset independently and
 // report how many decode vs fail, plus a histogram of the top undecoded opcode
 // words. Used to measure instruction-set coverage against real firmware and to

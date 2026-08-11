@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Nishanth Samala
 // Flow-accurate coverage: walk instructions by their REAL length (not every word
 // offset), so the operand/immediate words of multi-word instructions aren't
 // miscounted as "undecoded". Starts a linear sweep at the block start and steps by

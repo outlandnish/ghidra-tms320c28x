@@ -10,18 +10,44 @@ Two device targets share one SLEIGH core (the C28x instruction set is common; th
   also covering the memory-compatible F2810/F2811. Language `TMS320C28x:LE:32:f2812`;
   peripherals via `SetupF2812.java`. See [docs/c28x/f2812_memmap.md](docs/c28x/f2812_memmap.md).
 
-> **WIP / vibe-coded.** Verify against the SPRU430F/SPRUHS1C reference
-> before trusting any decode for critical work, and please file issues.
+> **WIP / vibe-coded.** This module was substantially generated with the help of
+> Claude Code (an LLM coding agent) working against the TI reference manuals — every
+> constructor, script, and doc has a human in the loop but the initial drafts are
+> LLM-authored. Verify against the SPRU430F / SPRUHS1C reference before trusting any
+> decode for critical work, and please file issues. See [THIRD-PARTY.md](THIRD-PARTY.md)
+> for provenance of TI-derived material.
+>
+> **Not affiliated with Texas Instruments** or the National Security Agency.
+> "TMS320" / "C2000" are TI trademarks used here only to identify the target hardware.
 
 ## Setup — add this processor to your Ghidra
 
-**Requirements:** Ghidra **12.x** (built against 12.1.2). Nothing else — the repo ships a
-prebuilt `data/languages/tms320c28x.sla`, so you don't need to compile anything to use it.
+**Requirements:** Ghidra **12.x** (built against 12.1.2). The compiled `.sla` is a build
+artifact and is not checked into the repo — grab it from a release, from CI artifacts, or
+compile it yourself (see below).
 
 ### Install (pick one)
 
-**Option A — drop-in install (simplest).** Copy the module into your Ghidra processors dir
-so it loads at startup:
+**Option A — packaged extension (recommended).** Download the latest `ghidra-tms320c28x-*.zip`
+from the [GitHub Releases](https://github.com/outlandnish/ghidra-tms320c28x/releases) page
+(published by CI on each release), then in Ghidra:
+**File ▸ Install Extensions ▸ +**, pick the zip, and restart.
+
+To build the zip yourself instead:
+
+```sh
+gradle -PGHIDRA_INSTALL_DIR=$GHIDRA_INSTALL_DIR     # produces dist/*.zip
+```
+
+**Option B — drop-in install.** Copy the module into your Ghidra processors dir so it loads
+at startup. This requires a compiled `data/languages/tms320c28x.sla` — either download it
+from the release page (attached as `tms320c28x.sla`) or compile it locally:
+
+```sh
+"$GHIDRA_INSTALL_DIR/support/sleigh" data/languages/tms320c28x.slaspec
+```
+
+Then:
 
 ```sh
 # Linux / macOS
@@ -32,15 +58,8 @@ cp -r ghidra-tms320c28x "$GHIDRA_INSTALL_DIR/Ghidra/Processors/TMS320C28x"
 Copy-Item -Recurse ghidra-tms320c28x "$env:GHIDRA_INSTALL_DIR\Ghidra\Processors\TMS320C28x"
 ```
 
-The folder must contain `data/languages/` with a compiled `tms320c28x.sla` (it's checked in).
-**Restart Ghidra** — it scans `Processors/` only at startup.
-
-**Option B — packaged extension** (installs via the UI, easier to manage/uninstall):
-
-```sh
-gradle -PGHIDRA_INSTALL_DIR=$GHIDRA_INSTALL_DIR     # produces dist/*.zip
-```
-Then in Ghidra: **File ▸ Install Extensions ▸ +**, pick the `dist/*.zip`, and restart.
+The folder must contain `data/languages/tms320c28x.sla`. **Restart Ghidra** — it scans
+`Processors/` only at startup.
 
 ### Verify it loaded
 
@@ -139,3 +158,15 @@ device memory and label its peripheral frames so XREFs resolve to readable regis
 ## Status
 
 Work in progress. Has successfully decoded several firmware images from production hardware. Expect bugs and verify against the TI reference manual or `dis2000` from the TI C28x SDK.
+
+## License
+
+Licensed under the [Apache License, Version 2.0](LICENSE) — the same license Ghidra
+itself ships under. See [NOTICE](NOTICE) for the required attribution notices and
+[THIRD-PARTY.md](THIRD-PARTY.md) for provenance of TI-derived material.
+
+Apache-2.0 includes an explicit patent grant (§3) and a reciprocal patent-litigation
+clause; if you sue any contributor over patents on this software, your grant terminates.
+Contributions to this repository are accepted under the same license: opening a pull
+request means you agree to license that contribution under Apache-2.0
+(**inbound = outbound** — see [CONTRIBUTING.md](CONTRIBUTING.md)).

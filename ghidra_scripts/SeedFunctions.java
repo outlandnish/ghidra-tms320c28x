@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Nishanth Samala
 // Seed functions in a HEADERLESS C28x firmware image.
 //
 // A raw firmware .bin imported into Ghidra has no symbols and no entry points, so the

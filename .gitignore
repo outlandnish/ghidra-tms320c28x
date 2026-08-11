@@ -1,11 +1,20 @@
-# NOTE: the compiled data/languages/tms320c28x.sla IS committed (prebuilt), so users
-# can load the module without running the SLEIGH compiler. Rebuild + re-commit it after
-# editing any .sinc/.slaspec (support/sleigh data/languages/tms320c28x.slaspec).
+# The compiled data/languages/tms320c28x.sla is a BUILD ARTIFACT and is not tracked.
+# CI (.github/workflows/build.yml) compiles it on every push/PR and publishes it as a
+# release artifact alongside the packaged extension zip. To build locally, run:
+#     "$GHIDRA_INSTALL_DIR/support/sleigh" data/languages/tms320c28x.slaspec
+data/languages/*.sla
 
 # Ghidra extension build output
 build/
 dist/
 .gradle/
+
+# TI-authored artifacts (runtime-lib .text extracts, dis2000 listings, our
+# side-by-side dumps) generated at test time by the parity harnesses. Not
+# redistributable under Apache-2.0 -- never commit these.
+tests/ti_*.bin
+tests/ti_*.txt
+tests/*.sidebyside.txt
 
 # Scratch reference extraction (full instruction detail is large; regenerate from PDF)
 docs/c28x/ch6_instruction_detail.txt

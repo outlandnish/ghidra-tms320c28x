@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Nishanth Samala
 // Find and mark CODE-ADDRESS (jump/switch) tables in a C28x firmware image.
 //
 // THE PROBLEM. The C28x stores a 32-bit code pointer as two 16-bit words: the LOW half at

@@ -1,7 +1,8 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Nishanth Samala
 # Firmware decode-parity: dis2000 (TI ground truth) vs our SLEIGH .sla, over a WORD
-# range of a byte-swapped C28x firmware image. Companion to run_ti_parity.ps1 -- that
-# one checks TI RTS objects; this one checks REAL firmware functions (e.g. the AES /
-# immobilizer routines the emulation-fidelity work targets).
+# range of a byte-swapped C28x firmware image. Checks REAL firmware functions (e.g.
+# the AES / immobilizer routines the emulation-fidelity work targets).
 #
 # How it works:
 #   1. slice [Start, Start+Count) words out of the swapped image (byte off = (w-Base)*2),
@@ -26,11 +27,12 @@ param(
   [int]$Base    = 0x82000,                        # image base word address
   [string]$Tag  = "fn",
   [string]$Ghidra = $env:GHIDRA_INSTALL_DIR,
-  [string]$Ti     = "C:\Users\nisha\Downloads\ti-cgt-c2000_25.11.0.LTS",
+  [string]$Ti     = $env:C2000WARE,
   [string]$Module = (Split-Path -Parent $PSScriptRoot),
   [string]$Work   = "$env:TEMP\c28x-fwparity"
 )
-if (-not $Ghidra) { $Ghidra = "C:\Users\nisha\Downloads\ghidra_12.1.2_PUBLIC_20260605\ghidra_12.1.2_PUBLIC" }
+if (-not $Ti)     { throw "Point -Ti (or `$env:C2000WARE) at your TI C2000 CGT install (with bin\asm2000.exe, bin\dis2000.exe)." }
+if (-not $Ghidra) { throw "Point -Ghidra (or `$env:GHIDRA_INSTALL_DIR) at your Ghidra install." }
 $ErrorActionPreference = "Stop"
 $TiBin = "$Ti\bin"
 New-Item -ItemType Directory -Force $Work | Out-Null

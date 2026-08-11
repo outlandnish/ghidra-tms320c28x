@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Nishanth Samala
 // Finalize materialized ramfuncs. Run AFTER MaterializeSections + auto-analysis have settled — both
 // fixes below depend on background analysis having disassembled the RAM and applied its (bad) marks,
 // which a script on the Swing/EDT thread cannot force (analyzeChanges throws there).

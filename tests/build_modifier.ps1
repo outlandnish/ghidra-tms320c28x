@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Nishanth Samala
 # Compile + install the C28x emulation state modifier (RPTB hardware-loop support).
 #
 # SLEIGH can't model the RPTB zero-overhead block repeat (implicit loop-back at an

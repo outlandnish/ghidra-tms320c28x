@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Nishanth Samala
 // Dump our SLEIGH disassembly of the whole image in a dis2000-comparable format:
 //   <addr8>\t<hexword>\t<MNEMONIC operands>
 // Disassembles linearly at every word (like dis2000 does on a flat .text), so the

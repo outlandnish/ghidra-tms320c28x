@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Nishanth Samala
 # C28x SLEIGH disassembler regression test (run from PowerShell).
 #
 # 1. Recompiles the .sla, 2. reinstalls it into Ghidra, 3. headless-disassembles

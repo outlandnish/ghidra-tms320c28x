@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Nishanth Samala
 // Report instruction/data byte counts AFTER auto-analysis has followed real control
 // flow from entry points. This is the meaningful coverage number: of the bytes Ghidra
 // decided are CODE, how many decoded into instructions vs fell back to undefined.

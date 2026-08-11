@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Nishanth Samala
 # C28x FPU (F2837x / FPU32) instructions.
 # Included by tms320c28x.sinc. Encodings verified against docs/c28x/fpu_instructions.txt
 # (spruhs1c ch.1). Confirmed used in DIR/PMR (~281 ext-ISA words).

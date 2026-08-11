@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Nishanth Samala
 # SLEIGH specification for the TI TMS320C28x fixed-point DSP core.
 # Target device: TMS320F28377D (dual C28x + FPU).
 # Source: SPRU430F - TMS320C28x CPU and Instruction Set Reference Guide.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Nishanth Samala
 // Find and mark FLOAT-CONSTANT data tables in a C28x firmware image.
 //
 // THE PROBLEM. Firmware embeds large tables of IEEE-754 float constants (gain curves,

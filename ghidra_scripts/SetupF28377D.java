@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Nishanth Samala
 // Post-import setup for a raw TMS320F28377D firmware image:
 //   1. Map the device memory map — peripheral MMIO frames AND the on-chip RAM regions
 //      (M0/M1, LS0-5, D0/D1, GS0-15, CPU-to-CPU MSGRAMs) per datasheet SPRS880P Table 7-1.

@@ -1,6 +1,8 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Nishanth Samala
 // Materialize a TI EABI compressed copy-table (__TI_auto_init / "rom_model") for C28x images.
 //
-// Newer (2026+) Tesla C28x firmwares copy their .ramfunc / .cinit sections at C-startup via a
+// Newer C28x firmwares copy their .ramfunc / .cinit sections at C-startup via a
 // COPY TABLE instead of the memcpy-with-constant-args startup that MaterializeSections handles.
 // The table is a list of 6-word records {size:u32, load:u32, run:u32}:
 //   * size != 0  -> RAW copy: copy `size` words from flash `load` to RAM `run`.

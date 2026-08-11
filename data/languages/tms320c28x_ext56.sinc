@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Nishanth Samala
 # C28x 0x56-prefix 2-word "extended" instruction family.
 # Included by tms320c28x.sinc. Encodings from docs/c28x/ch6_instruction_detail.txt.
 #
