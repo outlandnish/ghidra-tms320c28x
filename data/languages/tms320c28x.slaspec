@@ -1,5 +1,12 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Nishanth Samala
+# Copyright the mwdmwd/ghidra-c28x contributors (https://github.com/mwdmwd/ghidra-c28x)
+#
+# Portions adapted from mwdmwd/ghidra-c28x (Apache-2.0): the unpacked status-flag
+# model (each ST0/ST1 status bit defined as its own register in the 0x100/0x110
+# blocks, with the $(NAME) flag macros expanding to those registers) and the
+# ffc_return / switch_canonical decode-context bits. See THIRD-PARTY.md.
+#
 # SLEIGH specification for the TI TMS320C28x fixed-point DSP core.
 # Target device: TMS320F28377D (dual C28x + FPU).
 # Source: SPRU430F - TMS320C28x CPU and Instruction Set Reference Guide.
@@ -60,6 +67,26 @@ define register offset=0x44 size=4 [ PC RPC ];   # 22-bit values held in 32-bit 
 # --- Status registers
 define register offset=0x50 size=2 [ ST0 ST1 ];
 
+# --- Status flags as individual registers (unpacked model) -------------------
+# Every ST0/ST1 status bit is modeled as its own 1-byte register; the packed
+# ST0/ST1 words are assembled/disassembled on demand by the packst0/unpackst0 and
+# packst1/unpackst1 macros (see tms320c28x_more.sinc) -- only PUSH/POP ST0|ST1
+# touch the packed words. This unpacked model lets the decompiler track individual
+# flags (better conditional recovery) and lets the compiler spec assert TI
+# C-runtime boundary values (PM=OVM=PAGE0=0, SPRU514 Table 7-4) via
+# <context_data><tracked_set>, which requires real register names -- a bit-slice
+# like ST0[7,3] cannot be named there (Ghidra rejects the whole language at load
+# with "Unknown register: PM"). Adapted from mwdmwd/ghidra-c28x (Apache-2.0);
+# see the file header and THIRD-PARTY.md.
+#
+# ST0 (SPRU430F 2.3): SXM(0) OVM(1) TC(2) C(3) Z(4) N(5) V(6) PM(7-9) OVC(10-15).
+#   PM holds the DECODED signed product-shift (-6..+1); packst0 converts it to the
+#   raw ST0[7,3] field. OVC is the 6-bit signed overflow counter.
+# ST1 (SPRU430F 2.4): INTM(0) DBGM(1) PAGE0(2) VMAP(3) SPA(4) LOOP(5) EALLOW(6)
+#   IDLESTAT(7) AMODE(8) OBJMODE(9) M0M1MAP(11) XF(12) ARP(13-15).
+define register offset=0x100 size=1 [ SXM OVM TC C Z N V PM OVC ];
+define register offset=0x110 size=1 [ INTM DBGM PAGE0 VMAP SPA LOOP EALLOW IDLESTAT AMODE OBJMODE M0M1MAP XF ARP ];
+
 # --- Interrupt control
 define register offset=0x58 size=2 [ IFR IER DBGIER ];
 
@@ -77,25 +104,26 @@ define register offset=0xA0 size=4 [ VR0 VR1 VR2 VR3 VR4 VR5 VR6 VR7 VR8 ];
 define register offset=0xC8 size=4 [ VT0 VT1 VSTATUS VCRC ];
 
 # =============================================================================
-# Status flags as named bit-fields (subset; expanded as semantics are added).
-# ST0: SXM OVM TC C Z N V PM(3) OVC(6)   ST1: AMODE PAGE0 VMAP ... (SPRU430F 2.3-2.4)
+# Status-flag macros. Each expands to the individual flag REGISTER (unpacked model,
+# defined above); the packed ST0/ST1 words are only materialized by the pack/unpack
+# macros on PUSH/POP ST0|ST1. Keeping the $(NAME) indirection means every instruction
+# body that sets a flag is unchanged by the packed->unpacked switch. (SPRU430F 2.3-2.4.)
 # =============================================================================
-@define SXM   "ST0[0,1]"   # sign-extension mode
-@define OVM   "ST0[1,1]"   # overflow mode
-@define TC    "ST0[2,1]"   # test/control flag
-@define C     "ST0[3,1]"   # carry
-@define Z     "ST0[4,1]"   # zero
-@define N     "ST0[5,1]"   # negative
-@define V     "ST0[6,1]"   # overflow
-@define PM    "ST0[7,3]"   # product shift mode (3-bit field)
-@define AMODE "ST1[8,1]"   # addressing-mode select bit
-# ST1 mode bits (SPRU430F 2.4): INTM=0 DBGM=1 PAGE0=2 VMAP=3 ... EALLOW=6
-@define INTM   "ST1[0,1]"   # interrupt global mask
-@define DBGM   "ST1[1,1]"   # debug enable mask
-@define PAGE0  "ST1[2,1]"   # PAGE0 addressing mode
-@define VMAP   "ST1[3,1]"   # vector map
-@define SPA    "ST1[4,1]"   # stack-pointer alignment bit (ASP/NASP)
-@define EALLOWF "ST1[6,1]"  # emulation/write-protect access enable (EALLOW/EDIS)
+@define SXM   "SXM"       # sign-extension mode        ST0[0]
+@define OVM   "OVM"       # overflow mode              ST0[1]
+@define TC    "TC"        # test/control flag          ST0[2]
+@define C     "C"         # carry                      ST0[3]
+@define Z     "Z"         # zero                       ST0[4]
+@define N     "N"         # negative                   ST0[5]
+@define V     "V"         # overflow                   ST0[6]
+@define PM    "PM"        # product shift mode, signed ST0[7,3]
+@define AMODE "AMODE"     # addressing-mode select bit ST1[8]
+@define INTM   "INTM"     # interrupt global mask      ST1[0]
+@define DBGM   "DBGM"     # debug enable mask          ST1[1]
+@define PAGE0  "PAGE0"    # PAGE0 addressing mode      ST1[2]
+@define VMAP   "VMAP"     # vector map                 ST1[3]
+@define SPA    "SPA"      # stack-pointer alignment    ST1[4]
+@define EALLOWF "EALLOW"  # EALLOW/EDIS write-protect  ST1[6]
 
 # =============================================================================
 # Decode context. AMODE selects the loc16/loc32 field interpretation (Table 5-1).
