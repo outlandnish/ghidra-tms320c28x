@@ -85,7 +85,6 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 		tryRegister("VCRC16P1L", new VcrcBehavior(0x8005L, 16));
 		tryRegister("VCRC32L", new VcrcBehavior(0x04C11DB7L, 32));
 		tryRegister("countSignBits", new CountSignBitsBehavior());
-		tryRegister("FPU_CMP_OPERAND", new FpuConditionBehavior(false, false));
 		tryRegister("TMU_COND_OPERAND", new FpuConditionBehavior(true, false));
 		tryRegister("FPU_MINMAX_FLUSH", new FpuConditionBehavior(false, true));
 	}
@@ -193,16 +192,20 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 	 * internal branches per invocation and land in the decompiled output; see the macro
 	 * comments in tms320c28x_fpu.sinc.
 	 *
-	 * <p>Three variants, differing only in how they treat the sign and the ±0 case:
+	 * <p>Two variants are wired up, differing in how they treat the sign and the ±0 case:
 	 * <ul>
-	 * <li><b>compare input</b> (FPU_CMP_OPERAND): denormal or ±0 becomes +0 (so -0 == +0
-	 * compares equal), NaN becomes +inf with the sign dropped.</li>
-	 * <li><b>TMU input</b> (TMU_COND_OPERAND, {@code signedNaN}): same zero handling, but a
-	 * NaN keeps its sign, becoming ±inf.</li>
+	 * <li><b>TMU input</b> (TMU_COND_OPERAND, {@code signedNaN}): denormal or ±0 becomes
+	 * +0, and a NaN keeps its sign, becoming ±inf.</li>
 	 * <li><b>MAX/MIN result</b> (FPU_MINMAX_FLUSH, {@code preserveZeroSign}): a true ±0
 	 * passes through unchanged (only a non-zero denormal is flushed), because this is a
-	 * value on its way to a register rather than a comparison input.</li>
+	 * value on its way to a register rather than an arithmetic input.</li>
 	 * </ul>
+	 *
+	 * <p>The compare-input variant ({@code signedNaN = false}, sign dropped on NaN) is what
+	 * the FPU applies to CMPF32/MAXF32/MINF32 operands, but the SLEIGH side deliberately
+	 * does not model it -- see the comment on {@code update_stf_cmp} in
+	 * tms320c28x_fpu.sinc. The parameterisation is kept so wiring it back up is a
+	 * one-line change here plus one in the sinc.
 	 */
 	private static final class FpuConditionBehavior implements OpBehaviorOther {
 		private static final long EXP_MASK = 0x7F800000L;

@@ -5,9 +5,9 @@
 # Portions adapted from mwdmwd/ghidra-c28x (Apache-2.0):
 #   * the `cndf` condition sub-table (12 conditions + UNC/UNCF);
 #   * the STF sub-register model (STF_ZF/NF/TF/LV/LU/NI/ZI defined in slaspec);
-#   * the operand-conditioning macros `fpu_cmp_operand` (denormal -> 0, NaN ->
-#     +inf) and `tmu_condition_operand` (TMU input canonicalisation) per
-#     SPRUHS1C §7.5.2;
+#   * the operand-conditioning macro `tmu_condition_operand` (TMU input
+#     canonicalisation) per SPRUHS1C §7.5.2 -- the compare-input analogue was
+#     ported too but is deliberately not wired up; see update_stf_cmp;
 #   * `fpu_minmax_output` (denormal/NaN flush on MAX/MIN result);
 #   * the flag-writing macros `update_stf` (arith 1-op), `update_stf_cmp`
 #     (compare, with conditioned operands), `update_stf_mov` (MOV loads: ZI/NI
@@ -110,7 +110,6 @@ define pcodeop LOG2F32;
 # the MAX/MIN result the same way. See the macro comments below for why these are
 # intrinsics rather than inline p-code. Behaviours live in
 # TMS320C28xEmulateInstructionStateModifier.
-define pcodeop FPU_CMP_OPERAND;    # compare input:  denormal/±0 -> +0, NaN -> +inf
 define pcodeop TMU_COND_OPERAND;   # TMU input:      denormal/±0 -> +0, NaN -> signed inf
 define pcodeop FPU_MINMAX_FLUSH;   # MAX/MIN result: denormal -> ±0 preserved, NaN -> +inf
 
@@ -134,26 +133,6 @@ define pcodeop FPU_MINMAX_FLUSH;   # MAX/MIN result: denormal -> ±0 preserved, 
 # match silicon on the edge-case inputs (denormals are frequent in scaled fixed-
 # point-to-float conversions; NaNs surface in TMU divide-by-zero paths).
 #
-# fpu_cmp_operand: coerce an input for CMPF32/MAXF32/MINF32:
-#   exp == 0                 -> denormal or ±0 -> canonical +0
-#   exp == 0xFF, mantissa==0 -> ±inf           -> pass through
-#   exp == 0xFF, mantissa!=0 -> NaN            -> ±inf (sign preserved)
-#   otherwise (normal)                          -> pass through
-# These three are INTRINSICS rather than inline SLEIGH, deliberately. Written out as
-# if/goto chains they cost ~8 p-code ops and 3 internal branches EACH, and they are
-# invoked on both operands of every compare, on both TMU inputs, and on every MAX/MIN
-# result. The branches become intra-instruction basic blocks, so a float-heavy function
-# picks up a "Removing unreachable block" warning per site and the flush logic itself
-# lands in the decompiled C -- measured at 2.8x the line count on a real PMR function,
-# for edge-case behaviour that changes nothing a reader would conclude.
-#
-# As pcodeops they are one CALLOTHER each: no intra-instruction control flow, one
-# legible call in the listing, and the exact semantics live in
-# TMS320C28xEmulateInstructionStateModifier where the emulator picks them up. The
-# tradeoff is that the decompiler can no longer constant-fold through them.
-macro fpu_cmp_operand(out, in) {
-    out = FPU_CMP_OPERAND(in);
-}
 
 # TMU input conditioning (SPRUHS1C §7.5.2): denormals/negative-zero -> +0,
 # NaN -> signed inf. Applied to DIVF32 / SQRTF32 / MPY2PIF32 / DIV2PIF32 inputs.
