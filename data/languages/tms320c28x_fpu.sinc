@@ -33,27 +33,13 @@
 # opcode; for reg-reg forms the MSW holds the register fields aaa/bbb/ccc.
 
 # --- MSW register fields (second 16-bit word) --------------------------------
-define token fpu_msw (16)
-    f_ra   = (0,2)     # aaa  destination RaH
-    f_rb   = (3,5)     # bbb  source RbH
-    f_rc   = (6,8)     # ccc  source RcH
-    f_msw_hi = (9,15)
-    f_msw_mid = (9,14)  # MSW bits 9-14 (the reg-form's must-be-zero middle bits)
-    f_msw_rnd = (15,15) # MSW bit 15 = round-to-nearest variant selector (F32TO*16R)
-    fimm_hi10 = (6,15)  # #16FHi immediate high 10 bits (MSW: IIII IIII IIbb baaa) ADD/SUB/MPY form
-    fimm_hi13 = (3,15)  # #16FHi immediate high 13 bits (MSW: IIII IIII IIII Iaaa) CMP/MAX/MIN form
-    # parallel "op || MOV32 mem" MSW layout: eedd daaa mem32
-    p_rd    = (11,13)  # ddd  MPYF32 dest RdH
-    p_ra    = (8,10)   # aaa  MOV32 dest RaH
-    p_re_lo = (14,15)  # ee   low 2 bits of ReH (high bit is in the LSW)
-    # 0xE203 store MSW = 0000 0aaa mem32: the mem32 operand lives in the LOW 8 bits of the
-    # MSW (a standard C28x loc byte). b76 selects the addressing mode; off6 is the direct offset.
-    f_mem_b76 = (6,7)  # mem32 addressing-mode selector (00 = @6bit DP-direct)
-    f_mem_off6 = (0,5) # mem32 direct-mode 6-bit offset (combined with DP)
-    # 0xBD/0xBF register-form MOV32 MSW = 0x0F<reg> : the FP reg index sits in MSW bits[2:5]
-    # (dis2000-confirmed: R0H..R7H => MSW byte 0x12,16,1A,1E,22,26,2A,2E = field value 4..11).
-    f_movf_reg = (2,5)
-;
+# The f_* / p_* / fimm_hi* fields are defined on the shared `instr16` token in
+# tms320c28x.sinc, NOT on a token of their own. SLEIGH refuses to combine fields
+# from two different tokens at the same word ("Mismatched tokens when combining
+# patterns") even when both tokens are 16 bits wide, so a private MSW token would
+# make `p_ra & loc32` -- an FPU register selector next to a standard C28x loc byte,
+# which is exactly the MSW layout of every `mem32` form -- impossible to express.
+# See tms320c28x.sinc for the field list.
 attach variables [ f_ra f_rb f_rc ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 attach variables [ fimm_reg ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 attach variables [ p_rd p_ra ] [ R0H R1H R2H R3H R4H R5H R6H R7H ];
