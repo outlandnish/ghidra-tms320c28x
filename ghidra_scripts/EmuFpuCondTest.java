@@ -99,6 +99,23 @@ public class EmuFpuCondTest extends GhidraScript {
 			set("R2H", ONE);
 			runCase();
 			expect("DIVF32 denormal numerator", "R0H", POS_ZERO);
+
+			// --- FPU_UNDERFLOW / FPU_OVERFLOW (LUF/LVF latching) ------------------
+			// DIVF32 latches both flags (SPRUHS1C ch.7 instruction table). The two
+			// negative cases are the point of the whole design: neither is decidable
+			// from the result alone, so they are what proves the intrinsic reads the
+			// operands rather than just inspecting the rounded output.
+			//
+			// 1e-20 / 1e20 = 1e-40 -- non-zero but below the smallest normal, so the
+			// FPU returns zero and latches LUF.
+			latch("DIVF32 underflow", 0x1E3CE508L, 0x60AD78EBL, 1, 0);
+			// 0.0 / 5.0 -- a zero result that is NOT an underflow.
+			latch("DIVF32 legitimate zero", POS_ZERO, 0x40A00000L, 0, 0);
+			// 1e20 / 1e-20 = 1e40 -- too large to represent, so +Inf and LVF.
+			latch("DIVF32 overflow", 0x60AD78EBL, 0x1E3CE508L, 0, 1);
+			// Inf / 2.0 -- an infinite result that is NOT an overflow, because the
+			// operand was already infinite and nothing was lost.
+			latch("DIVF32 inf propagates", POS_INF, 0x40000000L, 0, 0);
 		}
 		finally {
 			emu.dispose();
@@ -112,6 +129,26 @@ public class EmuFpuCondTest extends GhidraScript {
 				println("FAIL " + f);
 			}
 			throw new AssertionError(failures.size() + " FPU conditioning assertion(s) failed");
+		}
+	}
+
+	/**
+	 * Run one DIVF32 with both latches pre-cleared and check what it latched. Clearing
+	 * first makes each case independent -- the flags are sticky, so without it every case
+	 * after the first would inherit the previous verdict.
+	 */
+	private void latch(String what, long a, long b, int wantLu, int wantLv) throws Exception {
+		emu.writeRegister("STF_LU", 0);
+		emu.writeRegister("STF_LV", 0);
+		set("R0H", 0xDEADBEEFL);
+		set("R1H", a);
+		set("R2H", b);
+		runCase();
+		long lu = emu.readRegister("STF_LU").longValue() & 1;
+		long lv = emu.readRegister("STF_LV").longValue() & 1;
+		if (lu != wantLu || lv != wantLv) {
+			failures.add(String.format("%s: LUF=%d LVF=%d, expected %d/%d",
+				what, lu, lv, wantLu, wantLv));
 		}
 	}
 

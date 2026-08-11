@@ -100,3 +100,9 @@ modifier class, so without the jar the emulator refuses to start (verified: it d
 `ClassNotFoundException` rather than passing vacuously). A *misspelled pcodeop name* is
 the quieter failure -- `tryRegister` swallows it and the op stays opaque -- which is why
 every assertion checks a conditioned value rather than merely that stepping succeeded.
+
+It also covers `FPU_UNDERFLOW` / `FPU_OVERFLOW`, the LUF/LVF latching intrinsics. The two
+negative cases there are the whole point of the design: `0.0 / 5.0` produces a zero that
+is *not* an underflow and `Inf / 2.0` an infinity that is *not* an overflow, so neither
+verdict is reachable from the rounded result -- they only pass if the intrinsic is reading
+the operands.
