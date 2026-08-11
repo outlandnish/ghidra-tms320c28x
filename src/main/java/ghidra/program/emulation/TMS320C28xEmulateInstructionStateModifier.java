@@ -85,6 +85,9 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 		tryRegister("VCRC16P1L", new VcrcBehavior(0x8005L, 16));
 		tryRegister("VCRC32L", new VcrcBehavior(0x04C11DB7L, 32));
 		tryRegister("countSignBits", new CountSignBitsBehavior());
+		tryRegister("FPU_CMP_OPERAND", new FpuConditionBehavior(false, false));
+		tryRegister("TMU_COND_OPERAND", new FpuConditionBehavior(true, false));
+		tryRegister("FPU_MINMAX_FLUSH", new FpuConditionBehavior(false, true));
 	}
 
 	private void tryRegister(String name, OpBehaviorOther behavior) {
@@ -182,6 +185,61 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 	// =========================================================================
 	// CALLOTHER behaviors
 	// =========================================================================
+
+	/**
+	 * FPU operand / result conditioning, SPRUHS1C §7.5.2. The C28x FPU is not IEEE-clean:
+	 * denormals are treated as zero and NaNs as infinity. The SLEIGH side calls these as
+	 * intrinsics rather than open-coding the bit tests, because inline they cost three
+	 * internal branches per invocation and land in the decompiled output; see the macro
+	 * comments in tms320c28x_fpu.sinc.
+	 *
+	 * <p>Three variants, differing only in how they treat the sign and the ±0 case:
+	 * <ul>
+	 * <li><b>compare input</b> (FPU_CMP_OPERAND): denormal or ±0 becomes +0 (so -0 == +0
+	 * compares equal), NaN becomes +inf with the sign dropped.</li>
+	 * <li><b>TMU input</b> (TMU_COND_OPERAND, {@code signedNaN}): same zero handling, but a
+	 * NaN keeps its sign, becoming ±inf.</li>
+	 * <li><b>MAX/MIN result</b> (FPU_MINMAX_FLUSH, {@code preserveZeroSign}): a true ±0
+	 * passes through unchanged (only a non-zero denormal is flushed), because this is a
+	 * value on its way to a register rather than a comparison input.</li>
+	 * </ul>
+	 */
+	private static final class FpuConditionBehavior implements OpBehaviorOther {
+		private static final long EXP_MASK = 0x7F800000L;
+		private static final long MANT_MASK = 0x007FFFFFL;
+		private static final long SIGN_MASK = 0x80000000L;
+
+		private final boolean signedNaN;
+		private final boolean preserveZeroSign;
+
+		FpuConditionBehavior(boolean signedNaN, boolean preserveZeroSign) {
+			this.signedNaN = signedNaN;
+			this.preserveZeroSign = preserveZeroSign;
+		}
+
+		@Override
+		public void evaluate(Emulate emu, Varnode out, Varnode[] inputs) {
+			if (out == null || inputs.length < 1) {
+				return;
+			}
+			MemoryState mem = emu.getMemoryState();
+			long v = mem.getValue(inputs[0]) & 0xFFFFFFFFL;
+			long exp = v & EXP_MASK;
+			long result;
+			if (exp == 0) {
+				// zero or denormal
+				result = (preserveZeroSign && (v & MANT_MASK) == 0) ? v : 0L;
+			}
+			else if (exp == EXP_MASK && (v & MANT_MASK) != 0) {
+				// NaN -> infinity
+				result = signedNaN ? ((v & SIGN_MASK) | EXP_MASK) : EXP_MASK;
+			}
+			else {
+				result = v;
+			}
+			mem.setValue(out, result);
+		}
+	}
 
 	/**
 	 * VCU-II CRC accumulate: {@code VCRC = CRCwidth(VCRC, src[7:0])}, MSB-first, no reflection.

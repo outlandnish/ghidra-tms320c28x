@@ -105,6 +105,15 @@ define pcodeop QUADF32;
 define pcodeop IEXP2F32;
 define pcodeop LOG2F32;
 
+# Operand/result conditioning (SPRUHS1C §7.5.2). The C28x FPU is not IEEE-clean: it
+# treats denormals as ±0 and NaNs as ±infinity on compare and TMU inputs, and flushes
+# the MAX/MIN result the same way. See the macro comments below for why these are
+# intrinsics rather than inline p-code. Behaviours live in
+# TMS320C28xEmulateInstructionStateModifier.
+define pcodeop FPU_CMP_OPERAND;    # compare input:  denormal/±0 -> +0, NaN -> +inf
+define pcodeop TMU_COND_OPERAND;   # TMU input:      denormal/±0 -> +0, NaN -> signed inf
+define pcodeop FPU_MINMAX_FLUSH;   # MAX/MIN result: denormal -> ±0 preserved, NaN -> +inf
+
 # --- STF flag model (unpacked) -----------------------------------------------
 # CMPF32/MINF32/MAXF32 set ZF/NF from the comparison; the single-value flag ops
 # (ABSF32, NEGF32 UNCF, ...) set ZF/NF from the result's exponent/sign.
@@ -130,46 +139,32 @@ define pcodeop LOG2F32;
 #   exp == 0xFF, mantissa==0 -> ±inf           -> pass through
 #   exp == 0xFF, mantissa!=0 -> NaN            -> ±inf (sign preserved)
 #   otherwise (normal)                          -> pass through
+# These three are INTRINSICS rather than inline SLEIGH, deliberately. Written out as
+# if/goto chains they cost ~8 p-code ops and 3 internal branches EACH, and they are
+# invoked on both operands of every compare, on both TMU inputs, and on every MAX/MIN
+# result. The branches become intra-instruction basic blocks, so a float-heavy function
+# picks up a "Removing unreachable block" warning per site and the flush logic itself
+# lands in the decompiled C -- measured at 2.8x the line count on a real PMR function,
+# for edge-case behaviour that changes nothing a reader would conclude.
+#
+# As pcodeops they are one CALLOTHER each: no intra-instruction control flow, one
+# legible call in the listing, and the exact semantics live in
+# TMS320C28xEmulateInstructionStateModifier where the emulator picks them up. The
+# tradeoff is that the decompiler can no longer constant-fold through them.
 macro fpu_cmp_operand(out, in) {
-    local exp:4 = in & 0x7F800000;
-    out = in;
-    if (exp != 0) goto <not_zeroish>;
-    out = 0;
-    goto <done>;
-    <not_zeroish>
-    if (exp != 0x7F800000) goto <done>;
-    if ((in & 0x007FFFFF) == 0) goto <done>;
-    out = 0x7F800000;    # NaN -> +inf; sign bit is dropped (mwdmwd matches this)
-    <done>
+    out = FPU_CMP_OPERAND(in);
 }
 
 # TMU input conditioning (SPRUHS1C §7.5.2): denormals/negative-zero -> +0,
 # NaN -> signed inf. Applied to DIVF32 / SQRTF32 / MPY2PIF32 / DIV2PIF32 inputs.
 macro tmu_condition_operand(out, in) {
-    local exp:4 = in & 0x7F800000;
-    if (exp != 0) goto <not_zeroish>;
-    out = 0;
-    goto <done>;
-    <not_zeroish>
-    out = in;
-    if (exp != 0x7F800000) goto <done>;
-    out = (in & 0x80000000) | 0x7F800000;
-    <done>
+    out = TMU_COND_OPERAND(in);
 }
 
 # MAX/MIN output conditioning: SPRUHS1C says the picked value is passed through
 # a denormal-flush + NaN-flush stage before being written to RaH.
 macro fpu_minmax_output(out) {
-    local exp:4 = out & 0x7F800000;
-    if (exp != 0) goto <not_denorm>;
-    if ((out & 0x007FFFFF) == 0) goto <done>;
-    out = 0;
-    goto <done>;
-    <not_denorm>
-    if (exp != 0x7F800000) goto <done>;
-    if ((out & 0x007FFFFF) == 0) goto <done>;
-    out = 0x7F800000;
-    <done>
+    out = FPU_MINMAX_FLUSH(out);
 }
 
 # --- Flag-writing macros (used by the FP instructions) -----------------------
@@ -177,13 +172,23 @@ macro fpu_minmax_output(out) {
 # 2-operand compare (CMPF32/MAXF32/MINF32): condition both operands first, then
 # set ZF/NF from the ordered comparison. `setFloatFlags` is kept as a thin alias
 # so existing call sites (below) don't have to change all at once.
+# Compare operands are deliberately NOT run through fpu_cmp_operand, though the FPU does
+# condition them. Three reasons, in order of weight:
+#   1. It cannot change a conclusion. The conditioning only differs from a plain compare
+#      when an operand is a denormal or a NaN, and for a threshold test the difference is
+#      "treated as 0" vs "treated as ~1e-38" -- it does not flip a real branch. SLEIGH's
+#      own f== / f< already return false for NaN, which is the IEEE answer.
+#   2. It costs the most of any conditioning site, because it touches BOTH operands of
+#      EVERY compare -- including every float constant. Routing constants through an
+#      opaque intrinsic loses their rendering: `if (0.002 < x)` becomes
+#      `t = FPU_CMP_OPERAND(0x3b03126f); if (t < ...)`.
+#   3. Measured on a real PMR function: conditioning both operands costs 79 decompiled
+#      lines against 55 without, for zero change in what the code is doing.
+# The conditioning that DOES survive is the kind that alters a value flowing onward --
+# TMU inputs and the MAX/MIN result -- where the difference is observable downstream.
 macro update_stf_cmp(lhs, rhs) {
-    local lhs_c:4;
-    local rhs_c:4;
-    fpu_cmp_operand(lhs_c, lhs);
-    fpu_cmp_operand(rhs_c, rhs);
-    STF_ZF = (lhs_c f== rhs_c);
-    STF_NF = (lhs_c f< rhs_c);
+    STF_ZF = (lhs f== rhs);
+    STF_NF = (lhs f< rhs);
 }
 macro setFloatFlags(a, b) {
     update_stf_cmp(a, b);
@@ -238,6 +243,22 @@ macro unpackstf(in) {
     STF_RND = (in & 0x200) != 0;
     STF_SHDWS = (in & 0x80000000) != 0;
 }
+
+# --- LUF / LVF: modelled where they are read and written, not latched by arithmetic ---
+# The two latched exception flags are fully wired everywhere software can observe or
+# change them: SETFLG / SAVE write them, RESTORE reloads them, MOVST0 folds them into
+# ST0's OV and auto-clears them, packstf / unpackstf round-trip them through memory, and
+# the `LU` / `LV` conditions in the cndf table read them.
+#
+# What is deliberately NOT modelled is arithmetic LATCHING them -- ADDF32 setting LUF
+# when its result underflows, and so on. Detecting a true underflow needs the operands,
+# not just the result (0.0 * 5.0 gives a zero result that is not an underflow), so it
+# would take an operand-aware intrinsic plus a sticky OR into the flag on EVERY float
+# arithmetic instruction: roughly two extra CALLOTHERs and two register writes each.
+# That is the same per-instruction tax that the conditioning macros were just measured
+# and rewritten to avoid, spent on diagnostic flags that no control flow in either the
+# PMR or DIR image demonstrably reads. If a firmware is found that acts on LUF/LVF, the
+# hook is a single macro at the arithmetic sites.
 
 # --- SETFLG / SAVE flag write ------------------------------------------------
 # Both instructions carry an 11-bit FLAG mask ("which flags to change") and an 11-bit
