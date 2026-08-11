@@ -27,8 +27,31 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 
 # LC *XAR7   0111 0110 0000 0100   (indirect call via XAR7)
 :LC "*XAR7"  is op16=0x7604 { local sp2:4 = SP; *[ram]:4 sp2 = RPC; SP = SP + 2; RPC = inst_next >> 1; call [XAR7]; }
+
 # LB *XAR7   0111 0110 0010 0000   (indirect branch via XAR7)
-:LB "*XAR7"  is op16=0x7620 { goto [XAR7]; }
+# The same opcode is used for BOTH the FFC-helper return sequence AND for switch-table
+# dispatch (MOVL XAR7,#table; ADDB XAR7,idx; LB *XAR7). SLEIGH can't tell them apart on
+# its own, so this splits into three variants dispatched by two analyzer-set context bits:
+#   - switch_canonical=1: set by TMS320C28xSwitchAnalyzer on validated switch dispatches.
+#     Leave XAR7 on BRANCHIND directly so Ghidra's generic Decompiler Switch Analysis sees
+#     the data dependency and recovers case targets.
+#   - ffc_return=1: set by TMS320C28xFfcReturnAnalyzer on the terminal LB of a bounded,
+#     exclusive FFC helper whose body never rewrites XAR7. Emit a real `return`.
+#   - both clear (default): plain indirect branch; only the low 22 bits are architecturally
+#     valid PC, so mask XAR7 before jumping (avoids spurious out-of-map targets in the CFG).
+# The three patterns are pairwise exclusive on the (ffc_return, switch_canonical) pair.
+# Adapted from mwdmwd/ghidra-c28x (Apache-2.0). See THIRD-PARTY.md.
+:LB "*XAR7"  is ffc_return=0 & switch_canonical=1 & op16=0x7620  {
+    goto [XAR7];
+}
+:LB "*XAR7"  is ffc_return=1 & switch_canonical=0 & op16=0x7620  {
+    local target:4 = XAR7 & 0x003fffff;
+    return [target];
+}
+:LB "*XAR7"  is ffc_return=0 & switch_canonical=0 & op16=0x7620  {
+    local target:4 = XAR7 & 0x003fffff;
+    goto [target];
+}
 
 # --- MOVZ ARn, loc16 : load AR, clear ARH (zero-extend) ----------------------
 # AR0..5: 0101 1nnn LLLL LLLL  (nnn via arsel3); AR6/AR7 have distinct opcodes.

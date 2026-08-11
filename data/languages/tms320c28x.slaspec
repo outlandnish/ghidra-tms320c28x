@@ -104,6 +104,13 @@ define register offset=0xC8 size=4 [ VT0 VT1 VSTATUS VCRC ];
 define register offset=0x80 size=4 contextreg;
 define context contextreg
   ctx_AMODE = (0,0)        # 0 = C28x modes (compiler default), 1 = C2xLP-compatible
+  # Analyzer-set context bits for `LB *XAR7` disambiguation. The same opcode
+  # (0x7620) serves as FFC helper return and switch-table dispatch; SLEIGH alone
+  # can't tell them apart. Ghidra analyzers set these context bits on the proven
+  # terminal instructions to select the correct constructor variant. `noflow` so
+  # they only affect the one instruction, not the surrounding flow.
+  ffc_return       = (1,1) noflow  # set by TMS320C28xFfcReturnAnalyzer
+  switch_canonical = (2,2) noflow  # set by TMS320C28xSwitchAnalyzer (see #18)
   # Scratch field for DISPLAY of immediates that are split across both words of a
   # 2-word instruction (the FPU #16FHi forms). SLEIGH can't print an arithmetic
   # expression, so the constructor computes the joined value into this field in a

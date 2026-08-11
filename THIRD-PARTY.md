@@ -109,6 +109,16 @@ Files adapted so far:
   the TI C-runtime state (PM=0 / OVM=0 / PAGE0=0, SPRU514 Table 7-4), extended
   `killedbycall` list (DP + status registers), and the standalone `interrupt`
   prototype. See #15.
+- **`src/main/java/ghidra/app/plugin/core/analysis/TMS320C28xFfcReturnAnalyzer.java`**
+  — wholesale port of their `TMS320C28FfcReturnAnalyzer`; only local changes are
+  the processor-name string ("TMS320C28x" here vs "TMS320C28" upstream) and the
+  class rename. See #16.
+- **`data/languages/tms320c28x_more.sinc`** (partial) — the three-variant
+  `LB *XAR7` constructor split dispatched by (`ffc_return`, `switch_canonical`)
+  SLEIGH context bits, plus the `XAR7 & 0x003fffff` 22-bit PC mask on the
+  branch/return targets. See #16.
+- **`data/languages/tms320c28x.slaspec`** (partial) — the `ffc_return` and
+  `switch_canonical` context bit definitions. See #16.
 
 ## Nothing else
 

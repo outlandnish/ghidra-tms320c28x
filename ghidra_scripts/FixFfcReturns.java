@@ -2,6 +2,13 @@
 // Copyright 2026 Nishanth Samala
 // Fix return flow for functions called via the FFC XAR7,#target calling convention.
 //
+// SUPERSEDED (fallback only). TMS320C28xFfcReturnAnalyzer runs automatically as a
+// Ghidra Analyzer and does this evidence-based (proves each helper is FFC-exclusive,
+// XAR7 is untouched, body is straight-line), setting a SLEIGH context bit that
+// selects a `return` constructor variant for the terminal LB *XAR7. Prefer that;
+// this manual script is kept as a fallback until the analyzer is proven equivalent
+// on production images (planned deletion tracked in the follow-up to issue #16).
+//
 // Background
 // ----------
 // The C28x has two calling conventions:
