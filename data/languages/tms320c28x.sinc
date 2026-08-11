@@ -37,6 +37,9 @@ define token instr16 (16)
     arsel3    = (8,10)      # 3-bit AR selector (the 'nnn' in 0111 1nnn ....) -> AR view
     arsel3x   = (8,10)      # same 3 bits attached to XARn (32-bit) for MOVZ zero-extend
     imm8      = (0,7)       # 8-bit immediate (CCCC CCCC, low byte)
+    movst0_flags = (0,7)    # MOVST0's FLAG select mask. Its own field (not imm8) so that
+                            # `attach names` can render TI's flag list -- imm8 is shared by
+                            # dozens of unrelated instructions and must stay a plain number.
     simm8     = (0,7) signed # 8-bit signed offset (SB)
     cond4     = (0,3)       # 4-bit condition code (COND), low nibble (B/BF)
     cond4hi   = (8,11)      # COND in bits 8..11 (SB: 0110 COND CCCC CCCC)
@@ -66,6 +69,7 @@ define token instr16 (16)
     ax_bit4   = (4,4)       # AX selector in bit 4 (the 'A' in 1111 1111 ssAS SHFT)
     op_lo765  = (5,7)       # bits 5..7 of low byte (AX,#imm shift selector sss)
     p_rf      = (1,3)       # fff  RfH for parallel MPYF32||MOV32 (LSW: 0000 fffe)
+    p_ff2     = (0,1)       # ff   HIGH 2 bits of RfH for MPYF32||ADDF32 (LSW: 0100 00ff)
     shft_hi4  = (8,11)      # SHFT in word2 of MOV ACC,loc16<<#1..15 (0000 SHFT LLLLLLLL)
     imm8_hi   = (8,15)      # high byte of word2 (MOVB loc16,#8bit,COND: CCCC CCCC LLLLLLLL)
     p_re_hi   = (0,0)       # e    high bit of ReH for that parallel form
@@ -74,6 +78,45 @@ define token instr16 (16)
     norm_pm   = (3,3)       # NORM ACC,XARn: bit3 selects ++ (1) vs -- (0)
     setflg_m6 = (0,5)       # SETFLG FPU flag-mask low 6 bits (LSW 1110 0110 00FF FFFF)
     lo_b76    = (6,7)        # top 2 bits of the low byte (SETFLG selector: 00)
+
+    # --- FPU second-word (MSW) fields ----------------------------------------
+    # These describe the SECOND word of a 32-bit FPU instruction, not the opcode
+    # word, and they live here rather than on an FPU-private token on purpose:
+    # SLEIGH will not combine fields from two different tokens at the same word
+    # ("Mismatched tokens when combining patterns"), even when both tokens are
+    # 16 bits. Every FPU `mem32` form has an MSW of `.... .aaa <loc byte>` -- a
+    # register selector alongside a standard C28x addressing-mode byte -- so the
+    # register field and the shared `loc16`/`loc32` sub-tables must come from one
+    # token or the mem32 operand cannot be decoded at all. A field is just a bit
+    # range on a 16-bit word; which word it lands on is decided by where it sits
+    # relative to the `;` in a constructor's pattern, so nothing is lost by
+    # sharing the token, and the overlap with the loc_* / op_* ranges above is
+    # the same kind of aliasing loc_areg / loc_areg16 / fimm_reg already use.
+    f_ra   = (0,2)          # aaa  destination RaH
+    f_rb   = (3,5)          # bbb  source RbH
+    f_rc   = (6,8)          # ccc  source RcH
+    f_msw_hi  = (9,15)
+    f_msw_mid = (9,14)      # MSW bits 9-14 (the reg-form's must-be-zero middle bits)
+    f_msw_rnd = (15,15)     # MSW bit 15 = round-to-nearest variant selector (F32TO*16R)
+    fimm_hi10 = (6,15)      # #16FHi immediate high 10 bits (MSW: IIII IIII IIbb baaa) ADD/SUB/MPY
+    fimm_hi13 = (3,15)      # #16FHi immediate high 13 bits (MSW: IIII IIII IIII Iaaa) CMP/MAX/MIN
+    # parallel "op || MOV32 mem" MSW layout: eedd daaa mem32
+    p_rd    = (11,13)       # ddd  MPYF32 dest RdH
+    p_ra    = (8,10)        # aaa  MOV32 dest RaH
+    p_re_lo = (14,15)       # ee   low 2 bits of ReH (high bit is p_re_hi in the LSW)
+    # "MPYF32 RaH,RbH,RcH || ADDF32/SUBF32 RdH,ReH,RfH" (0xE74x/0xE75x) and
+    # "MAXF32/MINF32 RaH,RbH || MOV32 RcH,RdH" (0xE69C/D) use a DIFFERENT MSW layout --
+    # feee dddc ccbb baaa / 0000 dddc ccbb baaa -- so ddd and eee sit one bit lower than
+    # p_rd/p_re_lo above. aaa/bbb/ccc are the ordinary f_ra/f_rb/f_rc.
+    p_rd9   = (9,11)        # ddd  in the `dddc ccbb baaa` layout
+    p_re12  = (12,14)       # eee  in the `feee dddc ccbb baaa` layout
+    p_rf_lo1 = (15,15)      # f    LOW bit of RfH for 0xE74x/0xE75x (high 2 bits are p_ff2)
+    # NB: the FPU `mem32` / `mem16` operand is the LOW 8 bits of the MSW and is a standard
+    # C28x loc byte, so it needs no fields of its own -- the shared loc16 / loc32 sub-tables
+    # decode it directly when placed after the `;` in a constructor's pattern.
+    # 0xBD/0xBF register-form MOV32 MSW = 0x0F<reg> : the FP reg index sits in MSW bits[2:5]
+    # (dis2000-confirmed: R0H..R7H => MSW byte 0x12,16,1A,1E,22,26,2A,2E = field value 4..11).
+    f_movf_reg = (2,5)
 ;
 
 # --- trailing 16-bit immediate / extension word -------------------------------
