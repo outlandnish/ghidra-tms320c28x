@@ -88,7 +88,24 @@ The processor module conventions (directory layout, `.ldefs`/`.pspec`/`.cspec`
 schema, `sleigh` invocation) come from the public Ghidra extension API and do
 not require attribution.
 
+## Adapted from mwdmwd/ghidra-c28x (Apache-2.0)
+
+An independent C28x Ghidra processor module,
+[`mwdmwd/ghidra-c28x`](https://github.com/mwdmwd/ghidra-c28x), is also
+Apache-2.0-licensed. Its maintainer invited reuse under that license in
+[issue #12](https://github.com/outlandnish/ghidra-tms320c28x/issues/12).
+
+Adoption is tracked by issues labeled
+[`upstream-merge`](https://github.com/outlandnish/ghidra-tms320c28x/issues?q=is%3Aissue%20label%3Aupstream-merge).
+Each merging PR appends the specific file(s) it adapted here, and preserves the
+`mwdmwd` copyright line in the header of any materially-adapted file per
+Apache-2.0 §4(b).
+
+Files adapted so far:
+
+- *(none yet — this section will be extended as each `upstream-merge` PR lands.)*
+
 ## Nothing else
 
-The audit run at license-adoption time turned up no other third-party material.
+Beyond the entries above, no other third-party material has been identified.
 If you discover something that should be listed here, please open an issue.
