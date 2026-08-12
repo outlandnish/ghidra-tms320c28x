@@ -12,14 +12,15 @@
 #
 # This harness exercises the ALLOCATOR directly, in parallel to how
 # run_abi_check.ps1 probes the cspec. It compiles the module's Java tree
-# (analyzers + modifier), drops the resulting JAR into
-# $Ghidra\Ghidra\Processors\TMS320C28x\lib\TMS320C28x.jar alongside the fresh
-# .sla, then runs DumpAbiAnalyzer.java which invokes
-# TMS320C28xAbiAllocator.computeParamStorage for each probe signature.
+# (analyzers + modifier), drops the resulting ghidra-tms320c28x.jar into the
+# installed module's lib/ (extension in $env:APPDATA\ghidra when present,
+# otherwise the drop-in Processors dir) alongside the fresh .sla, then runs
+# DumpAbiAnalyzer.java which invokes TMS320C28xAbiAllocator.computeParamStorage
+# for each probe signature.
 #
 # Usage:  pwsh -File tests\run_abi_analyzer_check.ps1 [-Ghidra <dir>] [-Update]
 #
-# NOTE: rebuilds $mod\lib\TMS320C28x.jar with ALL analyzer + modifier classes.
+# NOTE: rebuilds ghidra-tms320c28x.jar with ALL analyzer + modifier classes.
 # Running build_modifier.ps1 afterwards will overwrite it with just the modifier
 # (its `jar --create` replaces the file). Same last-runner-wins pattern as .sla
 # installs.
@@ -58,26 +59,15 @@ Pop-Location
 if (-not (Test-Path "$bld\tms320c28x.sla")) { throw "SLEIGH compile failed" }
 Copy-Item "$bld\tms320c28x.sla" $lang -Force
 
-# 2. Install cspec + sla + Module.manifest into the drop-in Processors dir.
-$modroot = "$Ghidra\Ghidra\Processors\TMS320C28x"
-$inst = "$modroot\data\languages"
-New-Item -ItemType Directory -Force -Path $inst,"$modroot\lib" | Out-Null
-Copy-Item "$lang\*" $inst -Force
-Copy-Item "$Module\Module.manifest" "$modroot\Module.manifest" -Force
+# 2. Install cspec + sla + Module.manifest. Install-C28xModule picks the
+# installed extension when present, else the drop-in Processors dir --
+# populating both trips Ghidra's dup-language check. Returns the lib/ dir
+# where the compiled jar should go.
+$libDir = Install-C28xModule -Ghidra $Ghidra -Module $Module
 
-# Extensions install (as in run_abi_check.ps1) -- the extension can shadow the
-# drop-in, so patch both if present.
-$extRoot = "$env:APPDATA\ghidra"
-$extInst = Get-ChildItem -Path $extRoot -Filter "ghidra_*" -Directory -ErrorAction SilentlyContinue |
-    ForEach-Object { Get-ChildItem -Path "$($_.FullName)\Extensions\ghidra-tms320c28x\data\languages" -ErrorAction SilentlyContinue |
-        Select-Object -First 1 | ForEach-Object { $_.Directory.FullName } } |
-    Select-Object -First 1
-if ($extInst) {
-    Write-Host "also patching extension install at $extInst"
-    Copy-Item "$lang\*" $extInst -Force -ErrorAction SilentlyContinue
-}
-
-# 3. Compile ALL src/main/java classes and bundle into the extension jar.
+# 3. Compile ALL src/main/java classes and bundle into the extension jar
+# (gradle's naming convention: ghidra-tms320c28x.jar, so a subsequent
+# `gradle buildExtension` won't leave a stale duplicate next to ours).
 $cpParts = @()
 foreach ($sub in @("Framework","Features","Processors")) {
     Get-ChildItem -Path "$Ghidra\Ghidra\$sub" -Recurse -Filter *.jar -ErrorAction SilentlyContinue |
@@ -92,14 +82,9 @@ New-Item -ItemType Directory -Force -Path $classes | Out-Null
 & $javac --release 21 -cp $cp -d $classes @srcs
 if ($LASTEXITCODE -ne 0) { throw "javac failed" }
 
-$jarOut = "$modroot\lib\TMS320C28x.jar"
+$jarOut = Join-Path $libDir "ghidra-tms320c28x.jar"
 & $jartool --create --file $jarOut -C $classes ghidra
 if ($LASTEXITCODE -ne 0) { throw "jar failed" }
-if ($extInst) {
-    # If installed via extension, put the jar there too so its classpath wins.
-    $extLib = Join-Path (Split-Path -Parent $extInst) "..\lib" | Resolve-Path -ErrorAction SilentlyContinue
-    if ($extLib) { Copy-Item $jarOut $extLib -Force -ErrorAction SilentlyContinue }
-}
 
 # 4. Run the allocator probe via DumpAbiAnalyzer.java.
 $ws = "$tmp\run"

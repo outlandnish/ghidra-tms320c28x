@@ -43,26 +43,11 @@ Pop-Location
 if (-not (Test-Path "$bld\tms320c28x.sla")) { throw "SLEIGH compile failed (no .sla)" }
 Copy-Item "$bld\tms320c28x.sla" $lang -Force
 
-# 2. install into Ghidra. Copy to BOTH the drop-in Processors dir AND any
-# previously-installed extension in $env:APPDATA\ghidra -- the extension
-# shadows the drop-in install, so a stale extension will silently mask cspec
-# edits and this harness will run against the wrong spec. Discovered the hard
-# way while debugging this test.
-$modroot = "$Ghidra\Ghidra\Processors\TMS320C28x"
-$inst = "$modroot\data\languages"
-New-Item -ItemType Directory -Force -Path $inst | Out-Null
-Copy-Item "$lang\*" $inst -Force
-Copy-Item "$Module\Module.manifest" "$modroot\Module.manifest" -Force
-
-$extRoot = "$env:APPDATA\ghidra"
-$extInst = Get-ChildItem -Path $extRoot -Filter "ghidra_*" -Directory -ErrorAction SilentlyContinue |
-    ForEach-Object { Get-ChildItem -Path "$($_.FullName)\Extensions\ghidra-tms320c28x\data\languages" -ErrorAction SilentlyContinue |
-        Select-Object -First 1 | ForEach-Object { $_.Directory.FullName } } |
-    Select-Object -First 1
-if ($extInst) {
-    Write-Host "also patching extension install at $extInst"
-    Copy-Item "$lang\*" $extInst -Force -ErrorAction SilentlyContinue
-}
+# 2. install into Ghidra. Install-C28xModule picks the installed extension
+# under $env:APPDATA\ghidra when present, otherwise falls back to the drop-in
+# Processors dir -- populating both trips Ghidra 12.1.2's dup-language check
+# ("Language TMS320C28x:LE:32:default previously defined").
+Install-C28xModule -Ghidra $Ghidra -Module $Module | Out-Null
 
 # 3. import + 4. dump prototypes
 $ws = "$tmp\run"

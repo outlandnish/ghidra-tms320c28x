@@ -55,12 +55,10 @@ if (-not (Test-Path "$bld\tms320c28x.sla")) { throw "SLEIGH compile failed (no .
 Copy-Item "$bld\tms320c28x.sla" $lang -Force
 
 # 2. reinstall into Ghidra (Module.manifest too, so a fresh Ghidra recognizes the
-# directory as a module and discovers the language)
-$modroot = "$Ghidra\Ghidra\Processors\TMS320C28x"
-$inst = "$modroot\data\languages"
-New-Item -ItemType Directory -Force -Path $inst | Out-Null
-Copy-Item "$lang\*" $inst -Force
-Copy-Item "$Module\Module.manifest" "$modroot\Module.manifest" -Force
+# directory as a module and discovers the language). Install-C28xModule prefers
+# the installed extension when present and falls back to the drop-in Processors
+# dir when not -- populating both trips Ghidra 12.1.2's dup-language check.
+Install-C28xModule -Ghidra $Ghidra -Module $Module | Out-Null
 
 $ws = "$tmp\run"; New-Item -ItemType Directory -Force -Path "$ws\proj","$ws\scripts" | Out-Null
 Copy-Item "$Module\ghidra_scripts\DumpDisasm.java" "$ws\scripts\DumpDisasm.java" -Force
