@@ -2,11 +2,10 @@
 
 The 19-line `abi_probe.expected.txt` records what
 `PrototypeModel.getStorageLocations()` produces for a set of C signatures
-under the current `tms320c28x.cspec`. **15 of 19 lines are correct** per
-SPRU514 §7.3 / SPRAC71 EABI. The 4 that differ from SPRU-truth are recorded
-as-is to serve as a regression floor; they represent either a Ghidra cspec
-model limitation or a probe limitation, not a bug we can fix by editing the
-cspec.
+under the current `tms320c28x.cspec`. **17 of 19 lines are correct** per
+SPRU514 §7.3 / SPRAC71 EABI. The 2 that differ from SPRU-truth are recorded
+as-is to serve as a regression floor; they represent Ghidra cspec-model
+limitations, not bugs we can fix by editing the cspec.
 
 **Cases 1 and 2 below are now corrected on real functions by
 `TMS320C28xAbiAnalyzer`** — see `abi_analyzer.expected.txt` +
@@ -19,8 +18,12 @@ installs SPRU storage via `Function.updateFunction(..., CUSTOM_STORAGE,
 **Case 3 (vararg) is now corrected end-to-end** by the analyzer's
 `fn.hasVarArgs()` check — see `abi_applied.expected.txt` +
 `run_abi_applied_check.{sh,ps1}` for the applied-signature probe. **Case 4
-(hidden struct return) remains broken end-to-end** (see below); needs a
-follow-up analyzer patch that synthesizes the XAR6 auto-parameter.
+(hidden struct return) is now fixed at the cspec level** by removing the
+inherited `strategy="register"` attribute (which forced the register-only
+output allocator that skips hidden-ret logic) and adding a
+`<rule><datatype name="struct"/><hidden_return/></rule>` in `<output>`.
+No analyzer synthesis needed — Ghidra's stock `ParamListStandardOut`
+auto-injects the XAR6 auto-parameter now that the rule fires.
 
 ## The four "wrong but recorded" cases
 
@@ -69,19 +72,38 @@ regression floor. The end-to-end path (`ApplyFunctionSignatureCmd` →
 the ellipsis and forces the last named arg to the stack per SPRU §7.3.1's
 `va_list` contiguity rule. See `abi_applied.expected.txt`.
 
-### 4. `abi_ret_struct`  → `struct S3`  (6 bytes) — end-to-end broken, needs follow-up
+### 4. `abi_ret_struct`  → `struct S3`  (6 bytes) — fixed at the cspec level
 - SPRU-truth: `return=AUTO(XAR6)` with a synthetic hidden first parameter
-- What the cspec produces (`abi_probe.expected.txt`): `return=<UNASSIGNED>` with empty `params`
-- What `ApplyFunctionSignatureCmd` produces end-to-end (`abi_applied.expected.txt`): same — `<UNASSIGNED>` / `[]`
+- What the cspec used to produce: `return=<UNASSIGNED>` with empty `params`
+- What the cspec produces now: `return=XAR4  params=[AUTO(XAR6)]` ✓
 
-The applied-signature probe confirms this is **not** just a probe limitation:
-Ghidra's real signature-application path does not consult the cspec's
-`<pentry storage="hiddenret">` for oversized returns either. The analyzer
-would need to synthesize the XAR6 auto-parameter itself. That's non-trivial
-under `CUSTOM_STORAGE` — `AutoParameterImpl` requires a `VariableStorage`
-constructed with an internal auto-flag that no public API exposes. Deferred
-to a follow-up: allocator + analyzer extension that emits a hidden ret ptr
-via whichever `updateFunction` mode preserves auto-parameter tagging.
+Two-part cspec fix, both needed:
+
+1. **Remove `strategy="register"`** from the `<prototype>`. That attribute
+   selects `ParamListRegisterOut` for the output allocator; that class extends
+   `ParamListStandardOut` but overrides `assignMap` to call `assignAddress`
+   and discard the return code — completely bypassing the hidden-ret
+   auto-injection path. Removing the attribute reverts to
+   `ParamListStandardOut`, which honors the code=4 return from the
+   `<hidden_return/>` action.
+
+2. **Add `<rule><datatype name="struct"/><hidden_return/></rule>`** inside
+   `<output>` after the pentries. The `<pentry storage="hiddenret">` on the
+   input side alone does not make Ghidra classify a struct return as
+   hiddenret; Ghidra otherwise spans the output pentries to fit the struct
+   across multiple registers (e.g. 6-byte struct → `AL:PH:PL` join). Stock
+   Ghidra cspecs (Sparc, AARCH64) use exactly this `<rule>` construct to
+   force the classification.
+
+Inherited-from-upstream cspec regression: this bug was in mwdmwd's original
+`ghidra-c28x` cspec too — same `strategy="register"` and no `<output>`
+rule. Confirmed by diffing the full file against our version.
+
+The applied-signature probe (`abi_applied.expected.txt`) reads
+`return=XAR4  params=[AUTO(XAR6)]` — the `XAR4` on the return is Ghidra's
+convention for "the caller reads the returned struct-pointer back through
+XAR4 after the callee has written into the caller-allocated buffer via the
+XAR6 hidden pointer." That matches SPRU §7.3.2.
 
 ## Regenerating the expected file
 

@@ -80,7 +80,7 @@
        `f(ll,int)`, `f(float×N)`) and degrades gracefully on pathological
        signatures. tests/run_abi_check verifies. -->
   <default_proto>
-    <prototype name="__c28x" extrapop="0" stackshift="2" strategy="register">
+    <prototype name="__c28x" extrapop="0" stackshift="2">
       <input>
         <!-- Class 1: hidden return pointer for structure returns (SPRU514 §7.3.2). -->
         <pentry minsize="1" maxsize="4" storage="hiddenret">
@@ -207,6 +207,16 @@
         <pentry minsize="8" maxsize="8">
           <addr space="join" piece1="ACC" piece2="P"/>
         </pentry>
+
+        <!-- Route ALL struct returns through the hiddenret pentry (XAR6) per
+             SPRU514 §7.3.2. Without this <rule>, Ghidra spans the pentries
+             above to fit small structs into a register join (e.g. 6-byte struct
+             into AL:PH:PL) and never triggers hiddenret. Stock Ghidra cspecs
+             like Sparc's use exactly this construct. -->
+        <rule>
+          <datatype name="struct"/>
+          <hidden_return/>
+        </rule>
       </output>
 
       <unaffected>
