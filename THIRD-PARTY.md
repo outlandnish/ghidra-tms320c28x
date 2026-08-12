@@ -160,6 +160,35 @@ Files adapted so far:
   completeness: the `SETC` / `CLRC` mode-bit constructors (`OBJMODE`, `XF`, `OVC`,
   `M0M1MAP`) were wired to write the individual status registers introduced by the
   unpacked flag model above. The register-assignment wiring is this project's own.
+- **`src/main/java/ghidra/app/plugin/core/analysis/TMS320C28xSwitchAnalyzer.java`**
+  — port of their `TMS320C28SwitchAnalyzer`. Recovers the seven TI-compiler switch
+  dispatch shapes (PROGRAM_READ, PROGRAM_READ_SAVED_LONG, NATIVE_PL,
+  NATIVE_SAVED_LONG, NATIVE_SAVED_P, NATIVE_AR6_ZERO, NATIVE_DIRECT), validates a
+  unique unsigned-range guard, checks index-arithmetic consistency, proves the
+  dispatch is a straight-line block, validates the code table and its targets,
+  then sets `switch_canonical=1` on the proven index instruction, the optional
+  range-subtraction, and the terminal `LB *XAR7` so Ghidra's generic Decompiler
+  Switch Analysis can recover case labels. Local changes: processor-name string
+  ("TMS320C28x" vs upstream "TMS320C28"), class rename, and XAR7 detection in
+  `isComputedXar7Branch()` / `isRegisterOperand()`. Upstream matches XAR7 as
+  operand 0 of `LB`; this module's SLEIGH renders `LB *XAR7` with XAR7 baked into
+  the mnemonic literal (zero operands), so the terminal branch is matched by
+  mnemonic + operand-count + `*XAR7` print form + `isJump && isComputed` flow.
+  `isRegisterOperand` also grew an operand-representation fallback for indirect
+  `*XAR7` operands (e.g. `MOVL XAR7,*+XAR7[0]`). See #18. Complements — does not
+  replace — [`ghidra_scripts/MarkJumpTables.java`](ghidra_scripts/MarkJumpTables.java),
+  which is the structured-data marker for the pointer table itself (an original
+  entropy-gated pattern detector, no upstream counterpart).
+- **`data/languages/tms320c28x_ext56.sinc`** (partial, `switch_canonical=1`
+  variants of `MOV ACC,loc16<<#shft` at 0x5603 and `ADD ACC,loc16<<#shft` at
+  0x5604) and **`data/languages/tms320c28x_more.sinc`** (partial,
+  `switch_canonical=1` variant of `SUB ACC,#imm16<<#shft`) — the canonical
+  constructor variants gated on the analyzer-set context bit above. The MOV/ADD
+  canonical variants zero-extend `loc16` instead of sign-extending (which is what
+  lets the decompiler prove the selector's [0, 0xffff] bound and reach the case
+  labels through the subsequent CMP/BF and `LB *XAR7`), and update N/Z; the SUB
+  canonical variant adds `C=1` and N/Z updates for arithmetic-flag parity. The
+  non-canonical (default) constructors are unchanged. See #18.
 
 ## Nothing else
 
