@@ -73,10 +73,18 @@ foreach ($name in $Cases) {
   # 3. headless disassemble
   Copy-Item "$Module\tests\$name.bin" "$ws\$name.bin" -Force
   Push-Location $ws
-  $raw = & "$Ghidra\support\analyzeHeadless.bat" "$ws\proj" "t_$name" `
-    -import "$ws\$name.bin" -processor "TMS320C28x:LE:32:default" `
-    -scriptPath "$ws\scripts" -postScript DumpDisasm.java -noanalysis -overwrite 2>&1
-  Pop-Location
+  # JDK 25 emits sun.misc.Unsafe deprecation warnings on stderr which trip
+  # `$ErrorActionPreference = Stop`; loosen it around the native invocation.
+  $prevEA = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    $raw = & "$Ghidra\support\analyzeHeadless.bat" "$ws\proj" "t_$name" `
+      -import "$ws\$name.bin" -processor "TMS320C28x:LE:32:default" `
+      -scriptPath "$ws\scripts" -postScript DumpDisasm.java -noanalysis -overwrite 2>&1
+  } finally {
+    $ErrorActionPreference = $prevEA
+    Pop-Location
+  }
 
   # 4. compare. Pull "ADDR<tab>BYTES<tab>TEXT" lines, normalize, diff vs expected.
   # Match the DumpDisasm output lines between the BEGIN/END markers. Address may or may
