@@ -46,3 +46,55 @@ function Get-C28xScratchRoot {
   $leaf = (Split-Path -Leaf $full) -replace '[^A-Za-z0-9._-]', '_'
   return (Join-Path $env:TEMP ("c28x-{0}-{1}-{2}" -f $leaf, $hash, $Kind))
 }
+
+# Install-C28xModule -Ghidra <ghidra-root> -Module <worktree-root>
+#
+# Copies data/languages/* and Module.manifest into the location Ghidra actually
+# loads the C28x module from -- and ONLY that one location.
+#
+# Precedence: if an installed extension exists under $env:APPDATA\ghidra\...\
+# Extensions\ghidra-tms320c28x, patch it. Otherwise fall back to the drop-in
+# $Ghidra\Ghidra\Processors\TMS320C28x directory.
+#
+# Populating BOTH is a bug -- Ghidra 12.1.2 detects duplicate <language> and
+# refuses to start with "Language ... previously defined". The extension used to
+# silently shadow the drop-in; it doesn't any more.
+#
+# Returns the path to the "$installedRoot\lib" directory (creating it) so the
+# caller can drop a compiled jar in the right place.
+function Install-C28xModule {
+  param(
+    [Parameter(Mandatory)][string]$Ghidra,
+    [Parameter(Mandatory)][string]$Module
+  )
+  $lang = Join-Path $Module "data\languages"
+  $manifest = Join-Path $Module "Module.manifest"
+
+  # Prefer an installed extension when present.
+  $extRoot = "$env:APPDATA\ghidra"
+  $extDir = $null
+  if (Test-Path $extRoot) {
+    $extDir = Get-ChildItem -Path $extRoot -Filter "ghidra_*" -Directory -ErrorAction SilentlyContinue |
+      ForEach-Object { $p = Join-Path $_.FullName "Extensions\ghidra-tms320c28x"; if (Test-Path $p) { $p } } |
+      Select-Object -First 1
+  }
+
+  if ($extDir) {
+    $inst = Join-Path $extDir "data\languages"
+    $lib  = Join-Path $extDir "lib"
+    New-Item -ItemType Directory -Force -Path $inst,$lib | Out-Null
+    Copy-Item "$lang\*" $inst -Force
+    Copy-Item $manifest (Join-Path $extDir "Module.manifest") -Force
+    Write-Host "installed to extension: $extDir"
+    return $lib
+  }
+
+  $modroot = "$Ghidra\Ghidra\Processors\TMS320C28x"
+  $inst = "$modroot\data\languages"
+  $lib  = "$modroot\lib"
+  New-Item -ItemType Directory -Force -Path $inst,$lib | Out-Null
+  Copy-Item "$lang\*" $inst -Force
+  Copy-Item $manifest "$modroot\Module.manifest" -Force
+  Write-Host "installed to drop-in: $modroot"
+  return $lib
+}
