@@ -1,0 +1,13 @@
+abi_int1             return=AL                   params=[AL]
+abi_int2             return=AL                   params=[AL, AH]
+abi_int3             return=AL                   params=[AL, AH, AR4]
+abi_int4             return=AL                   params=[AL, AH, AR4, AR5]
+abi_long_int         return=ACC                  params=[AH:AL, AR4]
+abi_ptrs             return=AL                   params=[XAR4, XAR5]
+abi_ptr_int          return=AL                   params=[XAR4, AL]
+abi_float4           return=R0H                  params=[R0H, R1H, R2H, R3H]
+abi_float_int        return=R0H                  params=[R0H, AL]
+abi_longlong_int     return=ACC:P                params=[AH:AL:PH:PL, AR4]
+abi_spec_example     return=ACC                  params=[Stack[+2]:4, AH:AL:PH:PL, AR5, XAR4]
+abi_vararg           return=AL                   params=[AL, AH, Stack[+2]:2] varargs=true
+abi_ret_struct       return=XAR4                 params=[AUTO(XAR6)]

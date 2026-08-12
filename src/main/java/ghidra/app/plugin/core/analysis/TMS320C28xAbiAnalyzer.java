@@ -155,7 +155,8 @@ public class TMS320C28xAbiAnalyzer extends AbstractAnalyzer {
 			paramTypes[i] = dt;
 		}
 
-		VariableStorage[] want = TMS320C28xAbiAllocator.computeParamStorage(program, paramTypes);
+		VariableStorage[] want = TMS320C28xAbiAllocator.computeParamStorage(
+			program, paramTypes, fn.hasVarArgs());
 		if (matchesExisting(user, want)) {
 			return false;
 		}

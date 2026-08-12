@@ -2,11 +2,10 @@
 
 The 19-line `abi_probe.expected.txt` records what
 `PrototypeModel.getStorageLocations()` produces for a set of C signatures
-under the current `tms320c28x.cspec`. **15 of 19 lines are correct** per
-SPRU514 §7.3 / SPRAC71 EABI. The 4 that differ from SPRU-truth are recorded
-as-is to serve as a regression floor; they represent either a Ghidra cspec
-model limitation or a probe limitation, not a bug we can fix by editing the
-cspec.
+under the current `tms320c28x.cspec`. **17 of 19 lines are correct** per
+SPRU514 §7.3 / SPRAC71 EABI. The 2 that differ from SPRU-truth are recorded
+as-is to serve as a regression floor; they represent Ghidra cspec-model
+limitations, not bugs we can fix by editing the cspec.
 
 **Cases 1 and 2 below are now corrected on real functions by
 `TMS320C28xAbiAnalyzer`** — see `abi_analyzer.expected.txt` +
@@ -15,6 +14,16 @@ cspec.
 the analyzer can't hook `PrototypeModel.getStorageLocations()` — it
 installs SPRU storage via `Function.updateFunction(..., CUSTOM_STORAGE,
 ...)` after signatures are known (issue #31).
+
+**Case 3 (vararg) is now corrected end-to-end** by the analyzer's
+`fn.hasVarArgs()` check — see `abi_applied.expected.txt` +
+`run_abi_applied_check.{sh,ps1}` for the applied-signature probe. **Case 4
+(hidden struct return) is now fixed at the cspec level** by removing the
+inherited `strategy="register"` attribute (which forced the register-only
+output allocator that skips hidden-ret logic) and adding a
+`<rule><datatype name="struct"/><hidden_return/></rule>` in `<output>`.
+No analyzer synthesis needed — Ghidra's stock `ParamListStandardOut`
+auto-injects the XAR6 auto-parameter now that the rule fires.
 
 ## The four "wrong but recorded" cases
 
@@ -50,29 +59,51 @@ four sub-piece varnodes, and the correct 2-byte narrowing of the
 transcribed `XAR5` is `AR5`. Semantically identical to what `cl2000
 --abi=eabi` emits.
 
-### 3. `abi_vararg_3(int, int, int, ...)`
+### 3. `abi_vararg_3(int, int, int, ...)` — fixed by analyzer
 - SPRU-truth (last named arg must be on stack for `va_list` to work): `[AL, AH, Stack]`
-- What our cspec produces:                                            `[AL, AH, AR4]`
+- What the cspec alone produces (`abi_probe.expected.txt`):           `[AL, AH, AR4]`
+- What `TMS320C28xAbiAnalyzer` produces on an applied signature:      `[AL, AH, Stack[+2]:2]` ✓
 
-This is a **probe limitation**, not a cspec limitation. The probe passes a
-`DataType[]` to `getStorageLocations()`; there's no way in that API to say
-"this signature has an ellipsis." Ghidra's real vararg handling happens at
-function-signature-application time, where the ellipsis is honored via
-`FunctionDefinition.setVarArgs()` and the last named arg is forced to the
-stack. For real vararg functions in a Ghidra project this should work; the
-probe just can't exercise it directly. Left in the fixture as a reminder to
-verify vararg placement empirically if we ever regress.
+The cspec probe is a **probe limitation** — `getStorageLocations(DataType[])`
+has no way to signal an ellipsis, so the entry in `abi_probe.expected.txt`
+records the not-actually-broken (but not vararg-aware) cspec output as a
+regression floor. The end-to-end path (`ApplyFunctionSignatureCmd` →
+`Function.hasVarArgs()` → analyzer) IS vararg-aware: the analyzer detects
+the ellipsis and forces the last named arg to the stack per SPRU §7.3.1's
+`va_list` contiguity rule. See `abi_applied.expected.txt`.
 
-### 4. `abi_ret_struct`  → `struct S3`  (6 bytes)
+### 4. `abi_ret_struct`  → `struct S3`  (6 bytes) — fixed at the cspec level
 - SPRU-truth: `return=AUTO(XAR6)` with a synthetic hidden first parameter
-- What our cspec produces: `return=<UNASSIGNED>` with empty `params`
+- What the cspec used to produce: `return=<UNASSIGNED>` with empty `params`
+- What the cspec produces now: `return=XAR4  params=[AUTO(XAR6)]` ✓
 
-The `<pentry storage="hiddenret">` in the input list is what SHOULD trigger
-Ghidra to synthesize the hidden XAR6 pointer for oversized returns. But
-`getStorageLocations()` called with a struct return type doesn't appear to
-consult the hiddenret pentry the way the real function-analysis path does.
-Real function analysis (via `FunctionUtility.updateFunction`) is expected
-to work correctly. Same "probe can't reach it directly" caveat as vararg.
+Two-part cspec fix, both needed:
+
+1. **Remove `strategy="register"`** from the `<prototype>`. That attribute
+   selects `ParamListRegisterOut` for the output allocator; that class extends
+   `ParamListStandardOut` but overrides `assignMap` to call `assignAddress`
+   and discard the return code — completely bypassing the hidden-ret
+   auto-injection path. Removing the attribute reverts to
+   `ParamListStandardOut`, which honors the code=4 return from the
+   `<hidden_return/>` action.
+
+2. **Add `<rule><datatype name="struct"/><hidden_return/></rule>`** inside
+   `<output>` after the pentries. The `<pentry storage="hiddenret">` on the
+   input side alone does not make Ghidra classify a struct return as
+   hiddenret; Ghidra otherwise spans the output pentries to fit the struct
+   across multiple registers (e.g. 6-byte struct → `AL:PH:PL` join). Stock
+   Ghidra cspecs (Sparc, AARCH64) use exactly this `<rule>` construct to
+   force the classification.
+
+Inherited-from-upstream cspec regression: this bug was in mwdmwd's original
+`ghidra-c28x` cspec too — same `strategy="register"` and no `<output>`
+rule. Confirmed by diffing the full file against our version.
+
+The applied-signature probe (`abi_applied.expected.txt`) reads
+`return=XAR4  params=[AUTO(XAR6)]` — the `XAR4` on the return is Ghidra's
+convention for "the caller reads the returned struct-pointer back through
+XAR4 after the callee has written into the caller-allocated buffer via the
+XAR6 hidden pointer." That matches SPRU §7.3.2.
 
 ## Regenerating the expected file
 
