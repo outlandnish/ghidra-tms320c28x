@@ -62,21 +62,35 @@
     <register name="RPC"/>
   </returnaddress>
 
-  <!-- C28x C/C++ ABI (SPRU514 §7). Argument classes are matched in order:
-         3. hidden return pointer  (struct returns)      -> XAR6
-         2. pointers                                     -> XAR4, XAR5
-         1. 32-bit floats                                -> R0H..R3H
-         0. general integers                             -> ACC, then XAR4/XAR5
-       Anything not placed in registers spills to the stack. -->
+  <!-- C28x EABI (SPRU514 §7.3, ties out to SPRAC71). Argument classes are
+       assigned in this priority order and, within a class, in declaration order:
+         1. hidden return pointer (struct returns)      -> XAR6
+         2. 32-bit floats                               -> R0H, R1H, R2H, R3H
+         3. pointers                                    -> XAR4, XAR5
+         4. first 64-bit int (long long)                -> ACC:P join (ACC high, P low)
+         5. first 32-bit int / long                     -> ACC (AH:AL)
+         6. remaining 16-bit args                       -> AL, AH, XAR4-low, XAR5-low
+                                                          (per SPRU514 §7.3.1 rule f)
+       Anything not placed goes on the stack in reverse declaration order.
+
+       Ghidra's cspec allocates in declaration order and cannot express SPRU's
+       cross-class reservation (`(int a, int b, long c)` where the long PRE-CLAIMS
+       ACC before a/b get looked at). The pentry ordering here matches SPRU
+       exactly for the common cases (`f(int,int,...)`, `f(long,int)`, `f(ptr,int)`,
+       `f(ll,int)`, `f(float×N)`) and degrades gracefully on pathological
+       signatures. tests/run_abi_check verifies. -->
   <default_proto>
     <prototype name="__c28x" extrapop="0" stackshift="2" strategy="register">
       <input>
-        <!-- Class 3: hidden return pointer for structure returns (SPRU514 §7.3.2). -->
+        <!-- Class 1: hidden return pointer for structure returns (SPRU514 §7.3.2). -->
         <pentry minsize="1" maxsize="4" storage="hiddenret">
           <register name="XAR6"/>
         </pentry>
 
-        <!-- Class 2: pointers land in XAR4 then XAR5 (SPRU514 §7.3.1). -->
+        <!-- Class 3: pointers land in XAR4 then XAR5 (SPRU514 §7.3.1 rule e).
+             Ghidra requires pentry order: hiddenret -> ptr -> float -> int, so
+             this block precedes the float pentries even though SPRU numbers
+             the classes 2 (float) / 3 (ptr) the other way. -->
         <pentry minsize="1" maxsize="4" metatype="ptr">
           <register name="XAR4"/>
         </pentry>
@@ -84,27 +98,67 @@
           <register name="XAR5"/>
         </pentry>
 
-        <!-- Class 1: 32-bit floats in R0H..R3H (SPRU514 §7.4). -->
-        <pentry minsize="3" maxsize="4" metatype="float">
+        <!-- Class 2: 32-bit floats in R0H..R3H (SPRU514 §7.4). minsize=1 (was 3)
+             so a bare `float` (which some pentry paths categorize as size≥1) still
+             matches; the maxsize=4 caps it above the FPU32 register width. -->
+        <pentry minsize="1" maxsize="4" metatype="float">
           <register name="R0H"/>
         </pentry>
-        <pentry minsize="3" maxsize="4" metatype="float">
+        <pentry minsize="1" maxsize="4" metatype="float">
           <register name="R1H"/>
         </pentry>
-        <pentry minsize="3" maxsize="4" metatype="float">
+        <pentry minsize="1" maxsize="4" metatype="float">
           <register name="R2H"/>
         </pentry>
-        <pentry minsize="3" maxsize="4" metatype="float">
+        <pentry minsize="1" maxsize="4" metatype="float">
           <register name="R3H"/>
         </pentry>
 
-        <!-- Class 0: general integers. ACC covers 16-bit and 32-bit widths (AL/AH
-             are sub-registers of ACC; listing them separately trips the
-             physical-overlap check). XAR4/XAR5 are reused when the pointer
-             pool is empty. -->
-        <pentry minsize="1" maxsize="4">
-          <register name="ACC"/>
+        <!-- Class 6: remaining 16-bit args go to AL then AH (SPRU514 §7.3.1
+             rule f: "AL, AH, XAR4, XAR5"). Listed BEFORE the ACC / ACC:P joins
+             so those joins satisfy Ghidra's "join must overlap at least one
+             previous entry" rule.
+
+             AR4 / AR5 (SPRU's 3rd/4th 16-bit slots) are NOT listed here as
+             separate pentries; they physically overlap XAR4 / XAR5 in the
+             pointer pool above, and Ghidra's cspec loader rejects that with
+             "Illegal overlap of <pentry>". Instead, when a 16-bit arg reaches
+             this point without matching AL / AH, Ghidra sub-pieces XAR4 down
+             to AR4 automatically (observed by the baseline output where
+             `abi_int3(int,int,int)` lands its 3rd arg in `AR4`). -->
+        <pentry minsize="1" maxsize="2">
+          <register name="AL"/>
         </pentry>
+        <pentry minsize="1" maxsize="2">
+          <register name="AH"/>
+        </pentry>
+
+        <!-- Class 5: first 32-bit int / long -> AH:AL (semantically ACC)
+             (SPRU514 §7.3.1 rule d). Expressed as a join of AH and AL rather
+             than the bare `ACC` register so the AL/AH pentries above don't
+             trip Ghidra's physical-overlap check. minsize=3 skips 16-bit args
+             so they route to Class 6 instead of burning the whole 32-bit slot. -->
+        <pentry minsize="3" maxsize="4">
+          <addr space="join" piece1="AH" piece2="AL"/>
+        </pentry>
+
+        <!-- Class 4: first `long long` -> ACC:P as a 4-piece join
+             (AH:AL:PH:PL semantically = ACC:P) (SPRU514 §7.3.1 rule c). Same
+             overlap-avoidance reason as Class 5. ACC holds the UPPER 32 bits
+             (piece1..piece2), P holds the LOWER 32 (piece3..piece4). minsize=5
+             excludes 32-bit longs, which take the Class 5 slot instead. -->
+        <pentry minsize="5" maxsize="8">
+          <addr space="join" piece1="AH" piece2="AL" piece3="PH" piece4="PL"/>
+        </pentry>
+
+        <!-- Class 6 continued: SPRU rule f says the 3rd/4th 16-bit arg lands
+             in "XAR4, XAR5" (which means the 16-bit AR4 / AR5 low halves).
+             We list XAR4 / XAR5 again here (as generic int slots, no metatype)
+             so that once a 16-bit arg has exhausted AL / AH, Ghidra sub-pieces
+             XAR4 down to AR4 for the third arg. These may look like they
+             overlap the pointer pentries above, but Ghidra distinguishes
+             pentries by their metatype class, so a bare (no-metatype) reuse
+             of the same physical register is accepted. -->
         <pentry minsize="1" maxsize="4">
           <register name="XAR4"/>
         </pentry>
@@ -120,17 +174,38 @@
       </input>
 
       <output>
-        <!-- Float return in R0H; integer/pointer return in ACC (16- or 32-bit).
-             XAR4 also carries 32-bit pointer returns in some ABIs — kept for
-             the compiler outputs that use it. -->
+        <!-- Return placements (SPRU514 §7.3.2 step 6). Matched in order:
+               float                    -> R0H
+               32-bit pointer           -> XAR4        (must precede ACC or the
+                                                        general int pentry catches
+                                                        the 4-byte pointer first)
+               64-bit int (long long)   -> ACC:P join
+               32-bit int / long        -> ACC
+               16-bit int               -> AL          (via the ACC subpiece;
+                                                        an explicit AL pentry
+                                                        overlaps ACC and is
+                                                        rejected by the cspec loader) -->
+        <pentry minsize="1" maxsize="4" metatype="ptr">
+          <register name="XAR4"/>
+        </pentry>
         <pentry minsize="1" maxsize="4" metatype="float">
           <register name="R0H"/>
         </pentry>
+        <!-- 32-bit int in ACC (bare register is fine in the output list;
+             no sibling AL / AH pentries to overlap-check against). -->
         <pentry minsize="1" maxsize="4">
           <register name="ACC"/>
         </pentry>
-        <pentry minsize="1" maxsize="4">
-          <register name="XAR4"/>
+        <!-- 64-bit int in ACC:P join (ACC=high, P=low, per SPRU §7.3.1 rule c).
+             ACC appears in the pentry above so the join satisfies the "overlap
+             at least one previous entry" requirement.
+
+             minsize=8 (not 5) is intentional: a wider range would catch small
+             structure returns (5, 6, 7 bytes) and route them here instead of
+             letting Ghidra fall through to the hidden-XAR6 struct-return path.
+             `long long` is always exactly 8 bytes on this target. -->
+        <pentry minsize="8" maxsize="8">
+          <addr space="join" piece1="ACC" piece2="P"/>
         </pentry>
       </output>
 
