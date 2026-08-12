@@ -73,10 +73,18 @@ $obj = "$ws\abi_probe.obj"
 Copy-Item "$Module\tests\fixtures\abi_probe.obj" $obj -Force
 
 Push-Location $ws
-$raw = & "$Ghidra\support\analyzeHeadless.bat" "$ws\proj" "abi_probe" `
-    -import $obj -processor "TMS320C28x:LE:32:default" `
-    -scriptPath "$ws\scripts" -postScript DumpProtos.java -noanalysis -overwrite 2>&1
-Pop-Location
+# JDK 25 emits sun.misc.Unsafe deprecation warnings on stderr which trip
+# `$ErrorActionPreference = Stop`; loosen it around the native invocation.
+$prevEA = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    $raw = & "$Ghidra\support\analyzeHeadless.bat" "$ws\proj" "abi_probe" `
+        -import $obj -processor "TMS320C28x:LE:32:default" `
+        -scriptPath "$ws\scripts" -postScript DumpProtos.java -noanalysis -overwrite 2>&1
+} finally {
+    $ErrorActionPreference = $prevEA
+    Pop-Location
+}
 
 if ($env:C28X_ABI_DEBUG) {
     Write-Host "--- raw analyzeHeadless output ($($raw.Count) lines) ---"
