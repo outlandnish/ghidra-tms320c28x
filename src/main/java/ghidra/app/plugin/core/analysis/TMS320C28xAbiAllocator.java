@@ -62,6 +62,19 @@ public final class TMS320C28xAbiAllocator {
 	 */
 	public static VariableStorage[] computeParamStorage(Program program, DataType[] paramTypes)
 			throws InvalidInputException {
+		return computeParamStorage(program, paramTypes, false);
+	}
+
+	/**
+	 * SPRU §7.3.1 vararg rule: when a signature has an ellipsis, the last named
+	 * parameter is spilled to the stack so {@code va_list} can walk contiguously
+	 * from that slot into the caller-pushed vararg spill area. Earlier named
+	 * args follow the normal class-priority rules.
+	 *
+	 * @param varArgs true when the signature has trailing ellipsis
+	 */
+	public static VariableStorage[] computeParamStorage(Program program, DataType[] paramTypes,
+			boolean varArgs) throws InvalidInputException {
 		int n = paramTypes.length;
 		VariableStorage[] out = new VariableStorage[n];
 
@@ -197,6 +210,14 @@ public final class TMS320C28xAbiAllocator {
 					stackWords += words(size);
 					break;
 			}
+		}
+
+		// Vararg spill: the last named arg lands on the stack so va_list can walk
+		// contiguously into the caller-pushed vararg area. This runs AFTER the
+		// class-priority pass so earlier named args keep their register slots.
+		if (varArgs && n > 0 && !out[n - 1].isStackStorage()) {
+			int size = paramTypes[n - 1].getLength();
+			out[n - 1] = stackSlot(program, stackWords, size);
 		}
 		return out;
 	}

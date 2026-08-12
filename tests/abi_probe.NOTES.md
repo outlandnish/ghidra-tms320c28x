@@ -16,6 +16,12 @@ the analyzer can't hook `PrototypeModel.getStorageLocations()` — it
 installs SPRU storage via `Function.updateFunction(..., CUSTOM_STORAGE,
 ...)` after signatures are known (issue #31).
 
+**Case 3 (vararg) is now corrected end-to-end** by the analyzer's
+`fn.hasVarArgs()` check — see `abi_applied.expected.txt` +
+`run_abi_applied_check.{sh,ps1}` for the applied-signature probe. **Case 4
+(hidden struct return) remains broken end-to-end** (see below); needs a
+follow-up analyzer patch that synthesizes the XAR6 auto-parameter.
+
 ## The four "wrong but recorded" cases
 
 ### 1. `abi_int_int_long(int, int, long)` — fixed by analyzer
@@ -50,29 +56,32 @@ four sub-piece varnodes, and the correct 2-byte narrowing of the
 transcribed `XAR5` is `AR5`. Semantically identical to what `cl2000
 --abi=eabi` emits.
 
-### 3. `abi_vararg_3(int, int, int, ...)`
+### 3. `abi_vararg_3(int, int, int, ...)` — fixed by analyzer
 - SPRU-truth (last named arg must be on stack for `va_list` to work): `[AL, AH, Stack]`
-- What our cspec produces:                                            `[AL, AH, AR4]`
+- What the cspec alone produces (`abi_probe.expected.txt`):           `[AL, AH, AR4]`
+- What `TMS320C28xAbiAnalyzer` produces on an applied signature:      `[AL, AH, Stack[+2]:2]` ✓
 
-This is a **probe limitation**, not a cspec limitation. The probe passes a
-`DataType[]` to `getStorageLocations()`; there's no way in that API to say
-"this signature has an ellipsis." Ghidra's real vararg handling happens at
-function-signature-application time, where the ellipsis is honored via
-`FunctionDefinition.setVarArgs()` and the last named arg is forced to the
-stack. For real vararg functions in a Ghidra project this should work; the
-probe just can't exercise it directly. Left in the fixture as a reminder to
-verify vararg placement empirically if we ever regress.
+The cspec probe is a **probe limitation** — `getStorageLocations(DataType[])`
+has no way to signal an ellipsis, so the entry in `abi_probe.expected.txt`
+records the not-actually-broken (but not vararg-aware) cspec output as a
+regression floor. The end-to-end path (`ApplyFunctionSignatureCmd` →
+`Function.hasVarArgs()` → analyzer) IS vararg-aware: the analyzer detects
+the ellipsis and forces the last named arg to the stack per SPRU §7.3.1's
+`va_list` contiguity rule. See `abi_applied.expected.txt`.
 
-### 4. `abi_ret_struct`  → `struct S3`  (6 bytes)
+### 4. `abi_ret_struct`  → `struct S3`  (6 bytes) — end-to-end broken, needs follow-up
 - SPRU-truth: `return=AUTO(XAR6)` with a synthetic hidden first parameter
-- What our cspec produces: `return=<UNASSIGNED>` with empty `params`
+- What the cspec produces (`abi_probe.expected.txt`): `return=<UNASSIGNED>` with empty `params`
+- What `ApplyFunctionSignatureCmd` produces end-to-end (`abi_applied.expected.txt`): same — `<UNASSIGNED>` / `[]`
 
-The `<pentry storage="hiddenret">` in the input list is what SHOULD trigger
-Ghidra to synthesize the hidden XAR6 pointer for oversized returns. But
-`getStorageLocations()` called with a struct return type doesn't appear to
-consult the hiddenret pentry the way the real function-analysis path does.
-Real function analysis (via `FunctionUtility.updateFunction`) is expected
-to work correctly. Same "probe can't reach it directly" caveat as vararg.
+The applied-signature probe confirms this is **not** just a probe limitation:
+Ghidra's real signature-application path does not consult the cspec's
+`<pentry storage="hiddenret">` for oversized returns either. The analyzer
+would need to synthesize the XAR6 auto-parameter itself. That's non-trivial
+under `CUSTOM_STORAGE` — `AutoParameterImpl` requires a `VariableStorage`
+constructed with an internal auto-flag that no public API exposes. Deferred
+to a follow-up: allocator + analyzer extension that emits a hidden ret ptr
+via whichever `updateFunction` mode preserves auto-parameter tagging.
 
 ## Regenerating the expected file
 
