@@ -388,7 +388,7 @@ public class TMS320C28xSwitchAnalyzer extends AbstractAnalyzer {
 			!isRegisterMove(finalCopy, "movl", "XAR7", "ACC") ||
 			!isAr6ScaledAdd(indexAdd) ||
 			!isRegisterMove(baseCopy, "movl", "ACC", "XAR7") ||
-			!isSetSxmOnly(setSxm) || tableScalar == null) {
+			!isSxmModeSelect(setSxm) || tableScalar == null) {
 			return null;
 		}
 
@@ -767,8 +767,8 @@ public class TMS320C28xSwitchAnalyzer extends AbstractAnalyzer {
 		MemoryBlock tableBlock = memory.getBlock(table);
 		MemoryBlock branchBlock = memory.getBlock(branch.getMinAddress());
 		if (tableBlock == null || !tableBlock.isInitialized() || !tableBlock.isLoaded() ||
-			!tableBlock.isRead() || tableBlock.isWrite() || branchBlock == null ||
-			!branchBlock.isExecute()) {
+			!tableBlock.isRead() || (tableBlock.isWrite() && !tableBlock.isExecute()) ||
+			branchBlock == null || !branchBlock.isExecute()) {
 			return null;
 		}
 
@@ -945,10 +945,15 @@ public class TMS320C28xSwitchAnalyzer extends AbstractAnalyzer {
 				OperandType.isDynamic(type));
 	}
 
-	private static boolean isSetSxmOnly(Instruction instruction) {
+	// Anchors the ADD's extension mode. TI cl2000 emits SETC SXM for this schedule,
+	// but shipped firmware (e.g. @0x19a76) emits the zero-extending
+	// CLRC SXM for the unsigned switch selector. MOVZ + the unsigned guard prove the
+	// selector is nonnegative, so SETC and CLRC SXM extend it identically and the
+	// switch_canonical ADD constructor already zero-extends -- accept either mode.
+	private static boolean isSxmModeSelect(Instruction instruction) {
 		Scalar mask = scalarOperand(instruction, 0);
-		return isMnemonic(instruction, "setc") && instruction.getNumOperands() == 1 &&
-			mask != null && mask.getUnsignedValue() == 1;
+		return (isMnemonic(instruction, "setc") || isMnemonic(instruction, "clrc")) &&
+			instruction.getNumOperands() == 1 && mask != null && mask.getUnsignedValue() == 1;
 	}
 
 	private static boolean isAr6ScaledAdd(Instruction instruction) {
