@@ -352,15 +352,15 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
 # =============================================================================
 # Register-register 3-operand FP ops:  LSW fixed, MSW = 0000 000c ccbb baaa
 # =============================================================================
-:ADDF32 f_ra, f_rb, f_rc  is op16=0xE710; f_rc & f_rb & f_ra {
+:ADDF32 f_ra, f_rb, f_rc  is rpt_phase=1 & op16=0xE710; f_rc & f_rb & f_ra {
     fpu_latch2($(FPK_ADD), f_rb, f_rc);
     f_ra = f_rb f+ f_rc;
 }
-:SUBF32 f_ra, f_rb, f_rc  is op16=0xE720; f_rc & f_rb & f_ra {
+:SUBF32 f_ra, f_rb, f_rc  is rpt_phase=1 & op16=0xE720; f_rc & f_rb & f_ra {
     fpu_latch2($(FPK_SUB), f_rb, f_rc);
     f_ra = f_rb f- f_rc;
 }
-:MPYF32 f_ra, f_rb, f_rc  is op16=0xE700; f_rc & f_rb & f_ra {
+:MPYF32 f_ra, f_rb, f_rc  is rpt_phase=1 & op16=0xE700; f_rc & f_rb & f_ra {
     fpu_latch2($(FPK_MPY), f_rb, f_rc);
     f_ra = f_rb f* f_rc;
 }
@@ -368,20 +368,20 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
 # =============================================================================
 # Register-register 2-operand ops:  MSW = 0000 0000 00bb baaa
 # =============================================================================
-:ABSF32 f_ra, f_rb     is op16=0xE695; f_rb & f_ra & f_msw_hi=0 { f_ra = abs(f_rb); update_stf(f_ra); }
-:CMPF32 f_ra, f_rb     is op16=0xE694; f_rb & f_ra & f_msw_hi=0 { setFloatFlags(f_ra, f_rb); }
+:ABSF32 f_ra, f_rb     is rpt_phase=1 & op16=0xE695; f_rb & f_ra & f_msw_hi=0 { f_ra = abs(f_rb); update_stf(f_ra); }
+:CMPF32 f_ra, f_rb     is rpt_phase=1 & op16=0xE694; f_rb & f_ra & f_msw_hi=0 { setFloatFlags(f_ra, f_rb); }
 # MAX/MIN: SLEIGH has no ternary — pick the larger/smaller with an if/goto.
 # The compare sets ZF/NF (via update_stf_cmp inside setFloatFlags: denormals ->
 # 0, NaN -> +inf), and the selected value is then denormal/NaN-flushed on its
 # way to RaH (fpu_minmax_output). Applied on both paths of the if/else.
-:MAXF32 f_ra, f_rb     is op16=0xE696; f_rb & f_ra & f_msw_hi=0 {
+:MAXF32 f_ra, f_rb     is rpt_phase=1 & op16=0xE696; f_rb & f_ra & f_msw_hi=0 {
     update_stf_cmp(f_ra, f_rb);
     if (f_ra f>= f_rb) goto <keep>;
     f_ra = f_rb;
   <keep>
     fpu_minmax_output(f_ra);
 }
-:MINF32 f_ra, f_rb     is op16=0xE697; f_rb & f_ra & f_msw_hi=0 {
+:MINF32 f_ra, f_rb     is rpt_phase=1 & op16=0xE697; f_rb & f_ra & f_msw_hi=0 {
     update_stf_cmp(f_ra, f_rb);
     if (f_ra f<= f_rb) goto <keep>;
     f_ra = f_rb;
@@ -389,17 +389,17 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
     fpu_minmax_output(f_ra);
 }
 # SLEIGH has no float literals — use the IEEE-754 bit pattern (1.0f = 0x3F800000).
-:EINVF32 f_ra, f_rb    is op16=0xE693; f_rb & f_ra & f_msw_hi=0 {
+:EINVF32 f_ra, f_rb    is rpt_phase=1 & op16=0xE693; f_rb & f_ra & f_msw_hi=0 {
     local one:4 = 0x3F800000;
     fpu_latch1($(FPK_EINV), f_rb);
     f_ra = one f/ f_rb;
 }       # reciprocal estimate
-:EISQRTF32 f_ra, f_rb  is op16=0xE692; f_rb & f_ra & f_msw_hi=0 {
+:EISQRTF32 f_ra, f_rb  is rpt_phase=1 & op16=0xE692; f_rb & f_ra & f_msw_hi=0 {
     local one:4 = 0x3F800000;
     fpu_latch1($(FPK_EISQR), f_rb);
     f_ra = one f/ sqrt(f_rb);
 } # 1/sqrt estimate
-:FRACF32 f_ra, f_rb    is op16=0xE6F1; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb f- trunc(f_rb); } # fractional part (approx)
+:FRACF32 f_ra, f_rb    is rpt_phase=1 & op16=0xE6F1; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb f- trunc(f_rb); } # fractional part (approx)
 
 # =============================================================================
 # TMU (Trigonometric Math Unit) ops — 0xE27x. MSW reg fields: aaa=RaH dest, bbb=RbH,
@@ -409,74 +409,74 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
 # TMU inputs go through tmu_condition_operand (SPRUHS1C §7.5.2): denormals ->
 # +0, NaN -> signed inf. This makes the arithmetic outputs match silicon on the
 # edge-case inputs, which is exactly the material for the compares that follow.
-:MPY2PIF32 f_ra, f_rb  is op16=0xE270; f_rb & f_ra & f_msw_hi=0 {
+:MPY2PIF32 f_ra, f_rb  is rpt_phase=1 & op16=0xE270; f_rb & f_ra & f_msw_hi=0 {
     local b:4; tmu_condition_operand(b, f_rb);
     local twopi:4 = 0x40C90FDB;
     fpu_latch_lv2($(FPK_MPY), b, twopi);   # LVF only
     f_ra = b f* twopi;
 }
-:DIV2PIF32 f_ra, f_rb  is op16=0xE271; f_rb & f_ra & f_msw_hi=0 {
+:DIV2PIF32 f_ra, f_rb  is rpt_phase=1 & op16=0xE271; f_rb & f_ra & f_msw_hi=0 {
     local b:4; tmu_condition_operand(b, f_rb);
     local twopi:4 = 0x40C90FDB;
     fpu_latch_lu2($(FPK_DIV), b, twopi);   # LUF only
     f_ra = b f/ twopi;
 }
-:IEXP2F32 f_ra, f_rb   is op16=0xE272; f_rb & f_ra & f_msw_hi=0 { f_ra = IEXP2F32(f_rb); }   # 1/2^x estimate
-:LOG2F32 f_ra, f_rb    is op16=0xE273; f_rb & f_ra & f_msw_hi=0 { f_ra = LOG2F32(f_rb); }    # log2(x) estimate
-:DIVF32 f_ra, f_rb, f_rc  is op16=0xE274; f_rc & f_rb & f_ra & f_msw_hi=0 {
+:IEXP2F32 f_ra, f_rb   is rpt_phase=1 & op16=0xE272; f_rb & f_ra & f_msw_hi=0 { f_ra = IEXP2F32(f_rb); }   # 1/2^x estimate
+:LOG2F32 f_ra, f_rb    is rpt_phase=1 & op16=0xE273; f_rb & f_ra & f_msw_hi=0 { f_ra = LOG2F32(f_rb); }    # log2(x) estimate
+:DIVF32 f_ra, f_rb, f_rc  is rpt_phase=1 & op16=0xE274; f_rc & f_rb & f_ra & f_msw_hi=0 {
     local b:4; tmu_condition_operand(b, f_rb);
     local c:4; tmu_condition_operand(c, f_rc);
     fpu_latch2($(FPK_DIV), b, c);
     f_ra = b f/ c;
 }
-:SQRTF32 f_ra, f_rb    is op16=0xE277; f_rb & f_ra & f_msw_hi=0 {
+:SQRTF32 f_ra, f_rb    is rpt_phase=1 & op16=0xE277; f_rb & f_ra & f_msw_hi=0 {
     local b:4; tmu_condition_operand(b, f_rb);
     fpu_latch_lv1($(FPK_SQRT), b);         # LVF only
     f_ra = sqrt(b);
 }
-:SINPUF32 f_ra, f_rb   is op16=0xE278; f_rb & f_ra & f_msw_hi=0 { f_ra = SINPUF32(f_rb); }   # sin(2pi*x)
-:COSPUF32 f_ra, f_rb   is op16=0xE279; f_rb & f_ra & f_msw_hi=0 { f_ra = COSPUF32(f_rb); }   # cos(2pi*x)
-:ATANPUF32 f_ra, f_rb  is op16=0xE27A; f_rb & f_ra & f_msw_hi=0 { f_ra = ATANPUF32(f_rb); }  # atan(x)/2pi
+:SINPUF32 f_ra, f_rb   is rpt_phase=1 & op16=0xE278; f_rb & f_ra & f_msw_hi=0 { f_ra = SINPUF32(f_rb); }   # sin(2pi*x)
+:COSPUF32 f_ra, f_rb   is rpt_phase=1 & op16=0xE279; f_rb & f_ra & f_msw_hi=0 { f_ra = COSPUF32(f_rb); }   # cos(2pi*x)
+:ATANPUF32 f_ra, f_rb  is rpt_phase=1 & op16=0xE27A; f_rb & f_ra & f_msw_hi=0 { f_ra = ATANPUF32(f_rb); }  # atan(x)/2pi
 # QUADF32 RaH,RbH,RcH (+RdH) — quadrant determination for ATANPUF32; two dest regs.
-:QUADF32 f_ra, f_rb, f_rc  is op16=0xE27C; f_rc & f_rb & f_ra { f_ra = QUADF32(f_rb, f_rc); }
+:QUADF32 f_ra, f_rb, f_rc  is rpt_phase=1 & op16=0xE27C; f_rc & f_rb & f_ra { f_ra = QUADF32(f_rb, f_rc); }
 
 # Conversions (reg-reg).  LSW fixed; MSW reg fields. The FP reg holds a float; the
 # int forms hold a 2's-complement int in the 32-bit reg. trunc = float->int (toward 0),
 # int2float = int->float.  For the 16-bit source converts, take the low half.
-:F32TOI32 f_ra, f_rb   is op16=0xE688; f_rb & f_ra & f_msw_hi=0 { f_ra = trunc(f_rb); }
-:F32TOUI32 f_ra, f_rb  is op16=0xE68A; f_rb & f_ra & f_msw_hi=0 { f_ra = trunc(f_rb); }
-:I32TOF32 f_ra, f_rb   is op16=0xE689; f_rb & f_ra & f_msw_hi=0 { f_ra = int2float(f_rb); }
-:UI32TOF32 f_ra, f_rb  is op16=0xE68B; f_rb & f_ra & f_msw_hi=0 { f_ra = int2float(f_rb); }
+:F32TOI32 f_ra, f_rb   is rpt_phase=1 & op16=0xE688; f_rb & f_ra & f_msw_hi=0 { f_ra = trunc(f_rb); }
+:F32TOUI32 f_ra, f_rb  is rpt_phase=1 & op16=0xE68A; f_rb & f_ra & f_msw_hi=0 { f_ra = trunc(f_rb); }
+:I32TOF32 f_ra, f_rb   is rpt_phase=1 & op16=0xE689; f_rb & f_ra & f_msw_hi=0 { f_ra = int2float(f_rb); }
+:UI32TOF32 f_ra, f_rb  is rpt_phase=1 & op16=0xE68B; f_rb & f_ra & f_msw_hi=0 { f_ra = int2float(f_rb); }
 # F32TOI16 / F32TOI16R (0xE68C): float -> SIGNED int16. MSW bit15=1 = round variant
 # (dis2000-confirmed, DIR image). Result sign-extended into the 32-bit reg.
-:F32TOI16 f_ra, f_rb   is op16=0xE68C; f_rb & f_ra & f_msw_mid=0 & f_msw_rnd=0 { local v:2 = trunc(f_rb); f_ra = sext(v); }  # truncate
-:F32TOI16R f_ra, f_rb  is op16=0xE68C; f_rb & f_ra & f_msw_mid=0 & f_msw_rnd=1 { local v:2 = trunc(f_rb); f_ra = sext(v); }  # round
-:I16TOF32 f_ra, f_rb   is op16=0xE68D; f_rb & f_ra & f_msw_hi=0 { local v:2 = f_rb:2; f_ra = int2float(v); }
-:F32TOUI16 f_ra, f_rb  is op16=0xE68E; f_rb & f_ra & f_msw_mid=0 & f_msw_rnd=0 { local v:2 = trunc(f_rb); f_ra = zext(v); }  # float -> uint16 (truncate)
+:F32TOI16 f_ra, f_rb   is rpt_phase=1 & op16=0xE68C; f_rb & f_ra & f_msw_mid=0 & f_msw_rnd=0 { local v:2 = trunc(f_rb); f_ra = sext(v); }  # truncate
+:F32TOI16R f_ra, f_rb  is rpt_phase=1 & op16=0xE68C; f_rb & f_ra & f_msw_mid=0 & f_msw_rnd=1 { local v:2 = trunc(f_rb); f_ra = sext(v); }  # round
+:I16TOF32 f_ra, f_rb   is rpt_phase=1 & op16=0xE68D; f_rb & f_ra & f_msw_hi=0 { local v:2 = f_rb:2; f_ra = int2float(v); }
+:F32TOUI16 f_ra, f_rb  is rpt_phase=1 & op16=0xE68E; f_rb & f_ra & f_msw_mid=0 & f_msw_rnd=0 { local v:2 = trunc(f_rb); f_ra = zext(v); }  # float -> uint16 (truncate)
 # F32TOUI16R — same LSW, MSW bit15=1 selects round-to-nearest. dis2000 confirmed the
 # round variant at word 0xe68e:0x8000 (the f_msw_hi=0 form rejected it). Modeled as the
 # same convert (we don't track the rounding mode bit precisely).
-:F32TOUI16R f_ra, f_rb  is op16=0xE68E; f_rb & f_ra & f_msw_mid=0 & f_msw_rnd=1 { local v:2 = trunc(f_rb); f_ra = zext(v); }  # float -> uint16 (round)
-:UI16TOF32 f_ra, f_rb  is op16=0xE68F; f_rb & f_ra & f_msw_hi=0 { local v:2 = f_rb:2; f_ra = int2float(v); }
+:F32TOUI16R f_ra, f_rb  is rpt_phase=1 & op16=0xE68E; f_rb & f_ra & f_msw_mid=0 & f_msw_rnd=1 { local v:2 = trunc(f_rb); f_ra = zext(v); }  # float -> uint16 (round)
+:UI16TOF32 f_ra, f_rb  is rpt_phase=1 & op16=0xE68F; f_rb & f_ra & f_msw_hi=0 { local v:2 = f_rb:2; f_ra = int2float(v); }
 
 # =============================================================================
 # Stack / control
 # =============================================================================
 # RB is 32-bit; occupies 2 words on the 16-bit word-addressed stack.
-:PUSH "RB"   is op16=0xFFF0 { local a:4 = SP; *[ram]:4 a = RB; SP = SP + 2; }
-:POP "RB"    is op16=0xFFF1 { SP = SP - 2; local a:4 = SP; RB = *[ram]:4 a; }
+:PUSH "RB"   is rpt_phase=1 & op16=0xFFF0 { local a:4 = SP; *[ram]:4 a = RB; SP = SP + 2; }
+:POP "RB"    is rpt_phase=1 & op16=0xFFF1 { SP = SP - 2; local a:4 = SP; RB = *[ram]:4 a; }
 # RESTORE   LSW: 1110 0101 0110 0010 (single word)
 # Copy R0H-R7H and STF back from the shadow register set, and clear SHDWS. Was a `{ }`
 # no-op, which made a SAVE/RESTORE-bracketed ISR look like it clobbered every float
 # register of the code it interrupted.
-:RESTORE     is op16=0xE562 {
+:RESTORE     is rpt_phase=1 & op16=0xE562 {
     R0H = R0H_s; R1H = R1H_s; R2H = R2H_s; R3H = R3H_s;
     R4H = R4H_s; R5H = R5H_s; R6H = R6H_s; R7H = R7H_s;
     STF = STF_s;
     unpackstf(STF);
     STF_SHDWS = 0;
 }
-:ZEROA       is op16=0xE563 { R0H=0; R1H=0; R2H=0; R3H=0; R4H=0; R5H=0; R6H=0; R7H=0; }
+:ZEROA       is rpt_phase=1 & op16=0xE563 { R0H=0; R1H=0; R2H=0; R3H=0; R4H=0; R5H=0; R6H=0; R7H=0; }
 
 # SETFLG FLAG,VALUE   LSW: 1110 0110 00FF FFFF ; MSW: FFFF FVVV VVVV VVVV  (2-word)
 # SAVE   FLAG,VALUE   LSW: 1110 0110 01FF FFFF ; MSW: FFFF FVVV VVVV VVVV  (2-word)
@@ -493,7 +493,7 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
 # SETFLG was `{ STF = STF; }` -- a placeholder that named flags it did not write, so
 # firmware clearing LUF/LVF or switching the rounding mode had no modelled effect at all.
 :SETFLG "#"^ctx_setflg_flag, "#"setflg_v11
-        is op_hi8=0xE6 & lo_b76=0 & setflg_m6 ; setflg_f5 & setflg_v11
+        is rpt_phase=1 & op_hi8=0xE6 & lo_b76=0 & setflg_m6 ; setflg_f5 & setflg_v11
         [ ctx_setflg_flag = (setflg_m6 << 5) | setflg_f5; ] {
     local f5:2 = setflg_f5;
     local m6:2 = setflg_m6;
@@ -505,7 +505,7 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
 # Per SPRUHS1C the status register is copied BEFORE the flag values are changed, so the
 # packstf/copy happens first and SHDWS is set after it.
 :SAVE "#"^ctx_setflg_flag, "#"setflg_v11
-        is op_hi8=0xE6 & lo_b76=1 & setflg_m6 ; setflg_f5 & setflg_v11
+        is rpt_phase=1 & op_hi8=0xE6 & lo_b76=1 & setflg_m6 ; setflg_f5 & setflg_v11
         [ ctx_setflg_flag = (setflg_m6 << 5) | setflg_f5; ] {
     R0H_s = R0H; R1H_s = R1H; R2H_s = R2H; R3H_s = R3H;
     R4H_s = R4H; R5H_s = R5H; R6H_s = R6H; R7H_s = R7H;
@@ -520,19 +520,48 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
 }
 
 # RPTB label, loc16 / #RC   LSW: 1011 0101 Rbbb bbbb ; MSW: (0000 0000 loc16) or (imm16).
-# Block-repeat (hardware loop over the following RSIZE words). The loop itself can't be
-# modeled in plain SLEIGH, but the op MUST emit non-empty p-code and fall through so the
-# block body disassembles as ordinary sequential code (otherwise the body is lost and the
-# function truncates). RSIZE (block size) is the LSW low 7 bits; the count source is the
-# opaque MSW. We record the block size into RB so dataflow has a def, then fall through.
-# This was the residual truncation in FUN_0008fb82 (LSW 0xb51f, MSW 0x00a6).
-:RPTB "#"rptb_rsz^", *loc16"  is op_hi8=0xB5 & rptb_sel=0 & rptb_rsz ; imm16  {
-    local n:1 = rptb_rsz;
-    RB = zext(n);
+# Zero-overhead block repeat: after the RPTB, the CPU runs the following RSIZE+1 words
+# and loops back RB_RC additional times. Now modeled entirely in SLEIGH via the RPTB
+# `^instruction` prefix wrapper in tms320c28x_rpt.sinc.
+#
+# HOW: the `rptb_end` sub-table below computes the block-end byte address as
+# `inst_start + RSIZE + 2` (the +2 accounts for RPTB itself being a 2-word insn,
+# so inst_next = inst_start + 2, and end = inst_next + RSIZE). It arms rptb_flag
+# on THAT address via globalset, so the wrapper fires on the last block insn:
+# there it decrements RB_RC and branches to RB_RSTART (= inst_next of the RPTB)
+# until the count is exhausted. `RB = zext(rsz)` is kept only so PUSH RB captures
+# the same value as before -- the packed 32-bit RB layout at 0x90 is not otherwise
+# reconstructed from the split RB_R* slots. Ported from mwdmwd/ghidra-c28x
+# (Apache-2.0); see THIRD-PARTY.md.
+# The `rptb_end` sub-table computes the block-end address as inst_next + RSIZE
+# (in the addressable-unit units SLEIGH uses for inst_start / inst_next, which
+# is word units in this wordsize=2 space). It arms rptb_flag=1 and rpt_phase=0
+# on that address via globalset, so the wrapper fires on the last block insn.
+# It also exports the address so the parent's display renders the block-end
+# label instead of a raw RSIZE integer (matching TI dis2000 syntax).
+rptb_end: rel  is rptb_rsz
+        [ rel = inst_start + rptb_rsz + 2;
+          rptb_flag=1; rpt_phase=0;
+          globalset(rel, rptb_flag); globalset(rel, rpt_phase); ] {
+    export *:4 rel;
 }
-:RPTB "#"rptb_rsz^", #"imm16  is op_hi8=0xB5 & rptb_sel=1 & rptb_rsz ; imm16  {
-    local n:1 = rptb_rsz;
-    RB = zext(n);
+:RPTB rptb_end^", loc16"  is op_hi8=0xB5 & rptb_sel=0 & rpt_phase=1 & rptb_end & rptb_rsz ; loc16 {
+    local rsz:1 = rptb_rsz;
+    RB_RSIZE = rsz;
+    local count:2 = loc16;
+    RB_RC = count;
+    RB_RA = (count != 0);
+    RB_RSTART = inst_next >> 1;
+    RB = zext(rsz);
+}
+:RPTB rptb_end^", #"^imm16  is op_hi8=0xB5 & rptb_sel=1 & rpt_phase=1 & rptb_end & rptb_rsz ; imm16 {
+    local rsz:1 = rptb_rsz;
+    RB_RSIZE = rsz;
+    local count:2 = imm16;
+    RB_RC = count;
+    RB_RA = (count != 0);
+    RB_RSTART = inst_next >> 1;
+    RB = zext(rsz);
 }
 
 # =============================================================================
@@ -555,12 +584,12 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
 # MOVIZ of 0x46a5 rendered as "#0x6a5" — the semantics were right but the listing lied.
 # Confirmed against TI dis2000 (`e802 352b` = MOVIZ R3,#0x46a5, we printed #0x6a5).
 # Compute the joined value into ctx_fimm16 in a disassembly action and print that.
-:MOVIZ f_ra, "#"^ctx_fimm16  is op_hi8=0xE8 & fimm_hi=0 & fimm_z=0 & fimm_lo3 ; fimm_hi13 & f_ra
+:MOVIZ f_ra, "#"^ctx_fimm16  is rpt_phase=1 & op_hi8=0xE8 & fimm_hi=0 & fimm_z=0 & fimm_lo3 ; fimm_hi13 & f_ra
         [ ctx_fimm16 = (fimm_lo3 << 13) | fimm_hi13; ] {
     local imm:2 = (zext(fimm_lo3:2) << 13) | fimm_hi13:2;
     f_ra = (f_ra & 0x0000FFFF) | (zext(imm) << 16);
 }
-:MOVXI f_ra, "#"^ctx_fimm16  is op_hi8=0xE8 & fimm_hi=0 & fimm_z=1 & fimm_lo3 ; fimm_hi13 & f_ra
+:MOVXI f_ra, "#"^ctx_fimm16  is rpt_phase=1 & op_hi8=0xE8 & fimm_hi=0 & fimm_z=1 & fimm_lo3 ; fimm_hi13 & f_ra
         [ ctx_fimm16 = (fimm_lo3 << 13) | fimm_hi13; ] {
     local imm:2 = (zext(fimm_lo3:2) << 13) | fimm_hi13:2;
     f_ra = (f_ra & 0xFFFF0000) | zext(imm);
@@ -590,16 +619,20 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
 # keeps its opaque FP-reg move (its constant recovery is handled by the value-flow work); the
 # memory form has real load/store p-code so the decompiler tracks the address.
 
+# All four carry `& rpt_phase=1` like every other top-level constructor -- without it the
+# RPT / RPTB `:^instruction` wrappers cannot wrap them and `RPT || <this>` would execute
+# only once. See the phase-bit partition note in tms320c28x_rpt.sinc.
+
 # --- register form (MSW = 0x0F.. FP-reg selector) --------------------------------
-:MOV32 f_movf_reg, loc32  is op_hi8=0xBD & loc32 ; f_msw_b8_15=0x0F & f_msw_b76=0 & f_movf_reg
+:MOV32 f_movf_reg, loc32  is rpt_phase=1 & op_hi8=0xBD & loc32 ; f_msw_b8_15=0x0F & f_msw_b76=0 & f_movf_reg
         { f_movf_reg = loc32; }          # 0xBD: FP reg <- loc32
-:MOV32 loc32, f_movf_reg  is op_hi8=0xBF & loc32 ; f_msw_b8_15=0x0F & f_msw_b76=0 & f_movf_reg
+:MOV32 loc32, f_movf_reg  is rpt_phase=1 & op_hi8=0xBF & loc32 ; f_msw_b8_15=0x0F & f_msw_b76=0 & f_movf_reg
         { loc32 = f_movf_reg; }          # 0xBF: loc32 <- FP reg
 
 # --- absolute-memory form (MSW = 16-bit data address, page 0) --------------------
-:VMOV32 "*(0:"imm16")", loc32  is op_hi8=0xBD & loc32 ; imm16
+:VMOV32 "*(0:"imm16")", loc32  is rpt_phase=1 & op_hi8=0xBD & loc32 ; imm16
         { local a:4 = zext(imm16:2); *[ram]:4 a = loc32; }    # 0xBD: [0:addr] <- loc32
-:VMOV32 loc32, "*(0:"imm16")"  is op_hi8=0xBF & loc32 ; imm16
+:VMOV32 loc32, "*(0:"imm16")"  is rpt_phase=1 & op_hi8=0xBF & loc32 ; imm16
         { local a:4 = zext(imm16:2); loc32 = *[ram]:4 a; }    # 0xBF: loc32 <- [0:addr]
 
 # =============================================================================
@@ -622,13 +655,13 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
 # Exact LSW encodings (spruhs1c): 0xE200 mem32,STF  0xE203 mem32,RaH  0xE213 mem16,RaH
 #   0xE223 MOVD32 RaH,mem32  0xE250 MACF32  0xE280 STF,mem32  0xE284 UI32TOF32  0xE288
 #   I32TOF32  0xE2A0..AF MOV32 RaH,mem32,CNDF  0xE2C4 UI16TOF32  0xE2C8 I16TOF32
-:MOV32 loc32, "STF"         is op16=0xE200 ; loc32  { packstf(STF); loc32 = STF; }  # sync sub-regs -> packed, then store
-:MOV32 loc32, p_ra          is op16=0xE203 ; p_ra & loc32 { loc32 = p_ra; }         # store RaH -> mem32
-:MOV16 loc16, p_ra          is op16=0xE213 ; p_ra & loc16 { loc16 = p_ra:2; }       # store RaH[15:0] -> mem16
+:MOV32 loc32, "STF"         is rpt_phase=1 & op16=0xE200 ; loc32  { packstf(STF); loc32 = STF; }  # sync sub-regs -> packed, then store
+:MOV32 loc32, p_ra          is rpt_phase=1 & op16=0xE203 ; p_ra & loc32 { loc32 = p_ra; }         # store RaH -> mem32
+:MOV16 loc16, p_ra          is rpt_phase=1 & op16=0xE213 ; p_ra & loc16 { loc16 = p_ra:2; }       # store RaH[15:0] -> mem16
 # MOVD32 RaH, mem32: RaH = [mem32] AND [mem32+2] = [mem32]. loc32 exports the dereferenced
 # cell rather than the address, so the duplicate store to mem32+2 is not modelled -- the
 # load, which is what the dataflow needs, is.
-:MOVD32 p_ra, loc32         is op16=0xE223 ; p_ra & loc32 { p_ra = loc32; }
+:MOVD32 p_ra, loc32         is rpt_phase=1 & op16=0xE223 ; p_ra & loc32 { p_ra = loc32; }
 # MACF32 R7H,R3H,mem32,*XAR7++  MSW: 0001 1111 mem32 (no register field -- both operands
 # are memory). Standalone semantics per SPRUHS1C are
 #     R3H = R3H + R2H ;  R2H = [mem32] * [XAR7++]
@@ -636,7 +669,7 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
 # (The old model multiplied R3H by [XAR7] and accumulated into R7H, which was neither
 # operand pairing nor either destination.) When repeated under RPT the destinations
 # alternate R3H/R7H with R2H/R6H as the temporaries; only the standalone form is modelled.
-:MACF32 "R7H,R3H", loc32, "*XAR7++"  is op16=0xE250 ; op_hi8=0x1F & loc32 {
+:MACF32 "R7H,R3H", loc32, "*XAR7++"  is rpt_phase=1 & op16=0xE250 ; op_hi8=0x1F & loc32 {
     fpu_latch2($(FPK_ADD), R3H, R2H);
     R3H = R3H f+ R2H;
     local a:4 = XAR7;
@@ -645,38 +678,38 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
     R2H = loc32 f* m;
     XAR7 = XAR7 + 2;
 }
-:MOV32 "STF", loc32         is op16=0xE280 ; loc32  { STF = loc32; unpackstf(STF); }  # load mem -> STF, sync sub-regs
+:MOV32 "STF", loc32         is rpt_phase=1 & op16=0xE280 ; loc32  { STF = loc32; unpackstf(STF); }  # load mem -> STF, sync sub-regs
 # int -> float converts. int2float is signed, so the unsigned forms widen first.
-:UI32TOF32 p_ra, loc32      is op16=0xE284 ; p_ra & loc32 { local v:8 = zext(loc32); p_ra = int2float(v); }
-:I32TOF32 p_ra, loc32       is op16=0xE288 ; p_ra & loc32 { p_ra = int2float(loc32); }
+:UI32TOF32 p_ra, loc32      is rpt_phase=1 & op16=0xE284 ; p_ra & loc32 { local v:8 = zext(loc32); p_ra = int2float(v); }
+:I32TOF32 p_ra, loc32       is rpt_phase=1 & op16=0xE288 ; p_ra & loc32 { p_ra = int2float(loc32); }
 # MOV32 RaH, mem32 CNDF (0xE2A? family). UNCF (0b1111) is unconditional + updates the
 # flags from the loaded value (ZI/NI along with ZF/NF, per SPRUHS1C Table 6-14);
 # other codes are conditional and leave the flags alone.
-:MOV32 p_ra, loc32, cndf    is op_hi8=0xE2 & loc_hi4=0b1010 & fcndf=0b1111 & cndf ; p_ra & loc32 {
+:MOV32 p_ra, loc32, cndf    is rpt_phase=1 & op_hi8=0xE2 & loc_hi4=0b1010 & fcndf=0b1111 & cndf ; p_ra & loc32 {
     p_ra = loc32;
     update_stf_mov(p_ra);
 }
-:MOV32 p_ra, loc32, cndf    is op_hi8=0xE2 & loc_hi4=0b1010 & cndf ; p_ra & loc32 {
+:MOV32 p_ra, loc32, cndf    is rpt_phase=1 & op_hi8=0xE2 & loc_hi4=0b1010 & cndf ; p_ra & loc32 {
     if (!cndf) goto <done>;
     p_ra = loc32;
   <done>
 }
-:UI16TOF32 p_ra, loc16      is op16=0xE2C4 ; p_ra & loc16 { local v:4 = zext(loc16); p_ra = int2float(v); }
-:I16TOF32 p_ra, loc16       is op16=0xE2C8 ; p_ra & loc16 { local v:2 = loc16; p_ra = int2float(v); }
+:UI16TOF32 p_ra, loc16      is rpt_phase=1 & op16=0xE2C4 ; p_ra & loc16 { local v:4 = zext(loc16); p_ra = int2float(v); }
+:I16TOF32 p_ra, loc16       is rpt_phase=1 & op16=0xE2C8 ; p_ra & loc16 { local v:2 = loc16; p_ra = int2float(v); }
 # 0xe27x seen in firmware — undocumented load form, consume both words
-:MOV32 p_ra, "mem32 (e27x)" is op_hi8=0xE2 & loc_hi4=0b0111 ; p_ra  { p_ra = p_ra; }
+:MOV32 p_ra, "mem32 (e27x)" is rpt_phase=1 & op_hi8=0xE2 & loc_hi4=0b0111 ; p_ra  { p_ra = p_ra; }
 
 # MOV32 RaH, RbH {,CNDF}   LSW=1110 0110 1100 CNDF : MSW=0000 0000 00bb baaa
 # UNCF (0b1111): unconditional move + MOV-flavoured flag update (ZI/NI plus
 # ZF/NF, per SPRUHS1C Table 6-14).
 # Others: genuinely conditional (was previously an unconditional copy with cndf
 # rendered display-only, which mis-modeled the semantics for the decompiler).
-:MOV32 f_ra, f_rb, cndf  is op_hi8=0xE6 & loc_hi4=0b1100 & fcndf=0b1111 & cndf
+:MOV32 f_ra, f_rb, cndf  is rpt_phase=1 & op_hi8=0xE6 & loc_hi4=0b1100 & fcndf=0b1111 & cndf
                          ; f_rb & f_ra & f_msw_hi=0 {
     f_ra = f_rb;
     update_stf_mov(f_ra);
 }
-:MOV32 f_ra, f_rb, cndf  is op_hi8=0xE6 & loc_hi4=0b1100 & cndf
+:MOV32 f_ra, f_rb, cndf  is rpt_phase=1 & op_hi8=0xE6 & loc_hi4=0b1100 & cndf
                          ; f_rb & f_ra & f_msw_hi=0 {
     if (!cndf) goto <done>;
     f_ra = f_rb;
@@ -735,19 +768,19 @@ p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
 # site, and TI dis2000 agrees with this split — word pair `e84c ...` = MPYF32 R0H,#0x3180,R0H,
 # i.e. imm16 = (fimm_lo6 << 10) | fimm_hi10 = (0x0C << 10) | 0x180 = 0x3180.
 # The DISPLAY printed `fimm_hi10` alone (#0x180), so it is computed into ctx_fimm16 below.
-:MPYF32 f_ra, "#"^ctx_fimm16, f_rb  is op_hi8=0xE8 & op_lo_76=0b01 & fimm_lo6 ; f_ra & f_rb & fimm_hi10
+:MPYF32 f_ra, "#"^ctx_fimm16, f_rb  is rpt_phase=1 & op_hi8=0xE8 & op_lo_76=0b01 & fimm_lo6 ; f_ra & f_rb & fimm_hi10
         [ ctx_fimm16 = (fimm_lo6 << 10) | fimm_hi10; ] {
     local imm:4 = (zext(fimm_lo6:4) << 10 | zext(fimm_hi10:4)) << 16;
     fpu_latch2($(FPK_MPY), f_rb, imm);
     f_ra = f_rb f* imm;
 }
-:ADDF32 f_ra, "#"^ctx_fimm16, f_rb  is op_hi8=0xE8 & op_lo_76=0b10 & fimm_lo6 ; f_ra & f_rb & fimm_hi10
+:ADDF32 f_ra, "#"^ctx_fimm16, f_rb  is rpt_phase=1 & op_hi8=0xE8 & op_lo_76=0b10 & fimm_lo6 ; f_ra & f_rb & fimm_hi10
         [ ctx_fimm16 = (fimm_lo6 << 10) | fimm_hi10; ] {
     local imm:4 = (zext(fimm_lo6:4) << 10 | zext(fimm_hi10:4)) << 16;
     fpu_latch2($(FPK_ADD), f_rb, imm);
     f_ra = f_rb f+ imm;
 }
-:SUBF32 f_ra, "#"^ctx_fimm16, f_rb  is op_hi8=0xE8 & op_lo_76=0b11 & fimm_lo6 ; f_ra & f_rb & fimm_hi10
+:SUBF32 f_ra, "#"^ctx_fimm16, f_rb  is rpt_phase=1 & op_hi8=0xE8 & op_lo_76=0b11 & fimm_lo6 ; f_ra & f_rb & fimm_hi10
         [ ctx_fimm16 = (fimm_lo6 << 10) | fimm_hi10; ] {
     local imm:4 = (zext(fimm_lo6:4) << 10 | zext(fimm_hi10:4)) << 16;
     fpu_latch2($(FPK_SUB), f_rb, imm);
@@ -758,15 +791,15 @@ p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
 # imm16 (high 16 bits of the float, low mantissa=0) is split: III (LSW[2:0]) = HIGH 3 bits,
 # MSW[15:3] = LOW 13 bits → imm16 = (fimm_lo3 << 13) | fimm_hi13. (Was backwards — same bug
 # as the MOVIZ/MOVXI fix; verified on a real image: #1.0/#2.0/#5.0 sites now decode right.)
-:CMPF32 f_ra, "#"^ctx_fimm16  is op_hi8=0xE8 & loc_mode5=0b00010 & fimm_lo3 ; f_ra & fimm_hi13
+:CMPF32 f_ra, "#"^ctx_fimm16  is rpt_phase=1 & op_hi8=0xE8 & loc_mode5=0b00010 & fimm_lo3 ; f_ra & fimm_hi13
         [ ctx_fimm16 = (fimm_lo3 << 13) | fimm_hi13; ] {
     local imm:4 = (zext(fimm_lo3:4) << 13 | zext(fimm_hi13:4)) << 16;
     setFloatFlags(f_ra, imm);
 }
 # CMPF32 RaH, #0.0     LSW: 1110 0101 1010 0aaa  (single word). fimm_reg = aaa.
-:CMPF32 fimm_reg, "#0.0"  is op_hi8=0xE5 & loc_mode5=0b10100 & fimm_reg { local z:4 = 0; setFloatFlags(fimm_reg, z); }
+:CMPF32 fimm_reg, "#0.0"  is rpt_phase=1 & op_hi8=0xE5 & loc_mode5=0b10100 & fimm_reg { local z:4 = 0; setFloatFlags(fimm_reg, z); }
 # ZERO RaH             LSW: 1110 0101 1001 0aaa  (single word)
-:ZERO fimm_reg            is op_hi8=0xE5 & loc_mode5=0b10010 & fimm_reg { fimm_reg = 0; }
+:ZERO fimm_reg            is rpt_phase=1 & op_hi8=0xE5 & loc_mode5=0b10010 & fimm_reg { fimm_reg = 0; }
 # TESTTF CNDF          LSW: 1110 0101 1000 CNDF  (single word)
 # Evaluate the float condition and latch it into STF's TF flag; a later
 # `MOV32/NEGF32/SWAPF ...,TF|NTF` or `MOVST0 TF` (-> C/TC) tests it. This is the only
@@ -774,16 +807,16 @@ p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
 # Encoding confirmed against asm2000/dis2000: 0xE580=NEQ 0xE581=EQ ... 0xE58E=UNC.
 # The selector must be loc_hi4, not loc_mode5: CNDF occupies bits 0-3 and loc_mode5
 # (bits 3-7) would slice through it.
-:TESTTF cndf              is op_hi8=0xE5 & loc_hi4=0b1000 & cndf { STF_TF = cndf; }
+:TESTTF cndf              is rpt_phase=1 & op_hi8=0xE5 & loc_hi4=0b1000 & cndf { STF_TF = cndf; }
 # NEGF32 RaH,RbH{,CNDF} LSW: 1110 0110 1010 CNDF ; MSW: 0000 0000 00bb baaa
 # UNCF (0b1111): unconditional negate + update flags from the result.
 # Others: conditional; leave flags alone.
-:NEGF32 f_ra, f_rb, cndf  is op_hi8=0xE6 & loc_hi4=0b1010 & fcndf=0b1111 & cndf
+:NEGF32 f_ra, f_rb, cndf  is rpt_phase=1 & op_hi8=0xE6 & loc_hi4=0b1010 & fcndf=0b1111 & cndf
                           ; f_rb & f_ra & f_msw_hi=0 {
     f_ra = f_rb ^ 0x80000000;
     update_stf(f_ra);
 }
-:NEGF32 f_ra, f_rb, cndf  is op_hi8=0xE6 & loc_hi4=0b1010 & cndf
+:NEGF32 f_ra, f_rb, cndf  is rpt_phase=1 & op_hi8=0xE6 & loc_hi4=0b1010 & cndf
                           ; f_rb & f_ra & f_msw_hi=0 {
     local val:4 = f_rb;
     if (!cndf) goto <done>;
@@ -805,7 +838,7 @@ p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
 # Every sel_* below is a decode-time constant, so the decompiler folds this whole block
 # down to the one or two assignments the mask actually selects (mask 0x14 -> N/Z only,
 # which is what every CMPF32/MAXF32/MINF32 site in PMR/DIR uses).
-:MOVST0 movst0_flags   is op_hi8=0xAD & movst0_flags & imm8 {
+:MOVST0 movst0_flags   is rpt_phase=1 & op_hi8=0xAD & movst0_flags & imm8 {
     local mask:1 = imm8;    # sized copy: a bare field has no size for the & below
     local sel_lvf:1 = (mask & 0x01) != 0;
     local sel_luf:1 = (mask & 0x02) != 0;
@@ -838,7 +871,7 @@ p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
 # MAXF32 RaH, #16FHi   LSW: 1110 1000 0010 0III ; MSW: IIII IIII IIII Iaaa  (2-word)
 # RaH = max(RaH, imm). imm16 = (LSW[2:0] << 13) | MSW[15:3] (III = HIGH 3 bits; see CMPF32).
 # Compare updates ZF/NF; selected value flushed through fpu_minmax_output.
-:MAXF32 f_ra, "#"^ctx_fimm16  is op_hi8=0xE8 & loc_mode5=0b00100 & fimm_lo3 ; f_ra & fimm_hi13
+:MAXF32 f_ra, "#"^ctx_fimm16  is rpt_phase=1 & op_hi8=0xE8 & loc_mode5=0b00100 & fimm_lo3 ; f_ra & fimm_hi13
         [ ctx_fimm16 = (fimm_lo3 << 13) | fimm_hi13; ] {
     local imm:4 = (zext(fimm_lo3:4) << 13 | zext(fimm_hi13:4)) << 16;
     update_stf_cmp(f_ra, imm);
@@ -848,7 +881,7 @@ p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
     fpu_minmax_output(f_ra);
 }
 # MINF32 RaH, #16FHi   LSW: 1110 1000 0011 0III ; MSW: IIII IIII IIII Iaaa  (2-word)
-:MINF32 f_ra, "#"^ctx_fimm16  is op_hi8=0xE8 & loc_mode5=0b00110 & fimm_lo3 ; f_ra & fimm_hi13
+:MINF32 f_ra, "#"^ctx_fimm16  is rpt_phase=1 & op_hi8=0xE8 & loc_mode5=0b00110 & fimm_lo3 ; f_ra & fimm_hi13
         [ ctx_fimm16 = (fimm_lo3 << 13) | fimm_hi13; ] {
     local imm:4 = (zext(fimm_lo3:4) << 13 | zext(fimm_hi13:4)) << 16;
     update_stf_cmp(f_ra, imm);
@@ -862,7 +895,7 @@ p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
 #     if (RaH < RbH) { RaH = RbH; RcH = RdH; }
 # (SPRUHS1C p.99.) It used to be modelled as an unconditional `RcH = RbH` -- wrong source
 # *and* wrong control flow. RdH is p_rd9 in this MSW layout (bits 9-11), not p_rd.
-:MAXF32 f_ra, f_rb, "||MOV32", f_rc, p_rd9  is op16=0xE69C ; f_rc & f_rb & f_ra & p_rd9 {
+:MAXF32 f_ra, f_rb, "||MOV32", f_rc, p_rd9  is rpt_phase=1 & op16=0xE69C ; f_rc & f_rb & f_ra & p_rd9 {
     update_stf_cmp(f_ra, f_rb);
     if (f_ra f>= f_rb) goto <skip>;
     f_ra = f_rb;
@@ -872,7 +905,7 @@ p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
 }
 # MINF32 RaH,RbH||MOV32 RcH,RdH  LSW: 1110 0110 1001 1101 ; MSW: 0000 dddc ccbb baaa
 #     if (RaH > RbH) { RaH = RbH; RcH = RdH; }
-:MINF32 f_ra, f_rb, "||MOV32", f_rc, p_rd9  is op16=0xE69D ; f_rc & f_rb & f_ra & p_rd9 {
+:MINF32 f_ra, f_rb, "||MOV32", f_rc, p_rd9  is rpt_phase=1 & op16=0xE69D ; f_rc & f_rb & f_ra & p_rd9 {
     update_stf_cmp(f_ra, f_rb);
     if (f_ra f<= f_rb) goto <skip>;
     f_ra = f_rb;
@@ -883,11 +916,11 @@ p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
 # SWAPF RaH,RbH{,CNDF}  LSW: 1110 0110 1110 CNDF ; MSW: 0000 0000 00bb baaa
 # UNCF (0b1111): unconditional swap; per SPRUHS1C the swap itself doesn't touch flags.
 # Others: conditional swap.
-:SWAPF f_ra, f_rb, cndf  is op_hi8=0xE6 & loc_hi4=0b1110 & fcndf=0b1111 & cndf
+:SWAPF f_ra, f_rb, cndf  is rpt_phase=1 & op_hi8=0xE6 & loc_hi4=0b1110 & fcndf=0b1111 & cndf
                          ; f_rb & f_ra & f_msw_hi=0 {
     local t:4 = f_ra; f_ra = f_rb; f_rb = t;
 }
-:SWAPF f_ra, f_rb, cndf  is op_hi8=0xE6 & loc_hi4=0b1110 & cndf
+:SWAPF f_ra, f_rb, cndf  is rpt_phase=1 & op_hi8=0xE6 & loc_hi4=0b1110 & cndf
                          ; f_rb & f_ra & f_msw_hi=0 {
     if (!cndf) goto <done>;
     local t:4 = f_ra; f_ra = f_rb; f_rb = t;
@@ -913,85 +946,85 @@ p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
 # rewritten, per SPRUHS1C: "R3H = R3H + R2H, RdH = ReH * RfH, RaH = [mem32]".
 #   MPYF32 RdH,ReH,RfH || MOV32 mem32, RaH   LSW: E000 sub 0b0000
 :MPYF32 p_rd, p_re_l, p_rf, "||MOV32", loc32, p_ra
-        is op_hi8=0xE0 & loc_hi4=0b0000 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+        is rpt_phase=1 & op_hi8=0xE0 & loc_hi4=0b0000 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
     fpu_latch2($(FPK_MPY), p_re_l, p_rf);
     p_rd = p_re_l f* p_rf;
     loc32 = p_ra;
 }
 :MPYF32 p_rd, p_re_h, p_rf, "||MOV32", loc32, p_ra
-        is op_hi8=0xE0 & loc_hi4=0b0000 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+        is rpt_phase=1 & op_hi8=0xE0 & loc_hi4=0b0000 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
     fpu_latch2($(FPK_MPY), p_re_h, p_rf);
     p_rd = p_re_h f* p_rf;
     loc32 = p_ra;
 }
 #   ADDF32 RdH,ReH,RfH || MOV32 mem32, RaH   LSW: E000 sub 0b0001
 :ADDF32 p_rd, p_re_l, p_rf, "||MOV32", loc32, p_ra
-        is op_hi8=0xE0 & loc_hi4=0b0001 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+        is rpt_phase=1 & op_hi8=0xE0 & loc_hi4=0b0001 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
     fpu_latch2($(FPK_ADD), p_re_l, p_rf);
     p_rd = p_re_l f+ p_rf;
     loc32 = p_ra;
 }
 :ADDF32 p_rd, p_re_h, p_rf, "||MOV32", loc32, p_ra
-        is op_hi8=0xE0 & loc_hi4=0b0001 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+        is rpt_phase=1 & op_hi8=0xE0 & loc_hi4=0b0001 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
     fpu_latch2($(FPK_ADD), p_re_h, p_rf);
     p_rd = p_re_h f+ p_rf;
     loc32 = p_ra;
 }
 #   SUBF32 RdH,ReH,RfH || MOV32 mem32, RaH   LSW: E000 sub 0b0010
 :SUBF32 p_rd, p_re_l, p_rf, "||MOV32", loc32, p_ra
-        is op_hi8=0xE0 & loc_hi4=0b0010 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+        is rpt_phase=1 & op_hi8=0xE0 & loc_hi4=0b0010 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
     fpu_latch2($(FPK_SUB), p_re_l, p_rf);
     p_rd = p_re_l f- p_rf;
     loc32 = p_ra;
 }
 :SUBF32 p_rd, p_re_h, p_rf, "||MOV32", loc32, p_ra
-        is op_hi8=0xE0 & loc_hi4=0b0010 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+        is rpt_phase=1 & op_hi8=0xE0 & loc_hi4=0b0010 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
     fpu_latch2($(FPK_SUB), p_re_h, p_rf);
     p_rd = p_re_h f- p_rf;
     loc32 = p_ra;
 }
 #   MPYF32 RdH,ReH,RfH || MOV32 RaH, mem32   LSW: E300 sub 0b0000
 :MPYF32 p_rd, p_re_l, p_rf, "||MOV32", p_ra, loc32
-        is op_hi8=0xE3 & loc_hi4=0b0000 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+        is rpt_phase=1 & op_hi8=0xE3 & loc_hi4=0b0000 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
     fpu_latch2($(FPK_MPY), p_re_l, p_rf);
     p_rd = p_re_l f* p_rf;
     p_ra = loc32;
 }
 :MPYF32 p_rd, p_re_h, p_rf, "||MOV32", p_ra, loc32
-        is op_hi8=0xE3 & loc_hi4=0b0000 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+        is rpt_phase=1 & op_hi8=0xE3 & loc_hi4=0b0000 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
     fpu_latch2($(FPK_MPY), p_re_h, p_rf);
     p_rd = p_re_h f* p_rf;
     p_ra = loc32;
 }
 #   ADDF32 RdH,ReH,RfH || MOV32 RaH, mem32   LSW: E300 sub 0b0001
 :ADDF32 p_rd, p_re_l, p_rf, "||MOV32", p_ra, loc32
-        is op_hi8=0xE3 & loc_hi4=0b0001 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+        is rpt_phase=1 & op_hi8=0xE3 & loc_hi4=0b0001 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
     fpu_latch2($(FPK_ADD), p_re_l, p_rf);
     p_rd = p_re_l f+ p_rf;
     p_ra = loc32;
 }
 :ADDF32 p_rd, p_re_h, p_rf, "||MOV32", p_ra, loc32
-        is op_hi8=0xE3 & loc_hi4=0b0001 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+        is rpt_phase=1 & op_hi8=0xE3 & loc_hi4=0b0001 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
     fpu_latch2($(FPK_ADD), p_re_h, p_rf);
     p_rd = p_re_h f+ p_rf;
     p_ra = loc32;
 }
 #   SUBF32 RdH,ReH,RfH || MOV32 RaH, mem32   LSW: E300 sub 0b0010
 :SUBF32 p_rd, p_re_l, p_rf, "||MOV32", p_ra, loc32
-        is op_hi8=0xE3 & loc_hi4=0b0010 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+        is rpt_phase=1 & op_hi8=0xE3 & loc_hi4=0b0010 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
     fpu_latch2($(FPK_SUB), p_re_l, p_rf);
     p_rd = p_re_l f- p_rf;
     p_ra = loc32;
 }
 :SUBF32 p_rd, p_re_h, p_rf, "||MOV32", p_ra, loc32
-        is op_hi8=0xE3 & loc_hi4=0b0010 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+        is rpt_phase=1 & op_hi8=0xE3 & loc_hi4=0b0010 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
     fpu_latch2($(FPK_SUB), p_re_h, p_rf);
     p_rd = p_re_h f- p_rf;
     p_ra = loc32;
 }
 #   MACF32 R3H,R2H,RdH,ReH,RfH || MOV32 RaH, mem32   LSW: E300 sub 0b0011
 :MACF32 "R3H,R2H", p_rd, p_re_l, p_rf, "||MOV32", p_ra, loc32
-        is op_hi8=0xE3 & loc_hi4=0b0011 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+        is rpt_phase=1 & op_hi8=0xE3 & loc_hi4=0b0011 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
     fpu_latch2($(FPK_ADD), R3H, R2H);
     R3H = R3H f+ R2H;
     fpu_latch2($(FPK_MPY), p_re_l, p_rf);
@@ -999,7 +1032,7 @@ p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
     p_ra = loc32;
 }
 :MACF32 "R3H,R2H", p_rd, p_re_h, p_rf, "||MOV32", p_ra, loc32
-        is op_hi8=0xE3 & loc_hi4=0b0011 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+        is rpt_phase=1 & op_hi8=0xE3 & loc_hi4=0b0011 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
     fpu_latch2($(FPK_ADD), R3H, R2H);
     R3H = R3H f+ R2H;
     fpu_latch2($(FPK_MPY), p_re_h, p_rf);
@@ -1008,7 +1041,7 @@ p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
 }
 #   MACF32 R7H,R6H,RdH,ReH,RfH || MOV32 RaH, mem32   LSW: E300 sub 0b1100
 :MACF32 "R7H,R6H", p_rd, p_re_l, p_rf, "||MOV32", p_ra, loc32
-        is op_hi8=0xE3 & loc_hi4=0b1100 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+        is rpt_phase=1 & op_hi8=0xE3 & loc_hi4=0b1100 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
     fpu_latch2($(FPK_ADD), R7H, R6H);
     R7H = R7H f+ R6H;
     fpu_latch2($(FPK_MPY), p_re_l, p_rf);
@@ -1016,7 +1049,7 @@ p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
     p_ra = loc32;
 }
 :MACF32 "R7H,R6H", p_rd, p_re_h, p_rf, "||MOV32", p_ra, loc32
-        is op_hi8=0xE3 & loc_hi4=0b1100 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+        is rpt_phase=1 & op_hi8=0xE3 & loc_hi4=0b1100 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
     fpu_latch2($(FPK_ADD), R7H, R6H);
     R7H = R7H f+ R6H;
     fpu_latch2($(FPK_MPY), p_re_h, p_rf);
@@ -1031,7 +1064,7 @@ p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
 # Note the MSW layout differs from the ||MOV32 family above: ddd/eee sit one bit lower
 # (p_rd9 / p_re12), and aaa/bbb/ccc are the ordinary f_ra/f_rb/f_rc.
 :MPYF32 f_ra, f_rb, f_rc, "||ADDF32", p_rd9, p_re12, p_rf7_0
-        is op_hi8=0xE7 & loc_hi4=0b0100 & p_rf7_0 ; f_ra & f_rb & f_rc & p_rd9 & p_re12 & p_rf_lo1=0 {
+        is rpt_phase=1 & op_hi8=0xE7 & loc_hi4=0b0100 & p_rf7_0 ; f_ra & f_rb & f_rc & p_rd9 & p_re12 & p_rf_lo1=0 {
     fpu_latch2($(FPK_MPY), f_rb, f_rc);
     local prod:4 = f_rb f* f_rc;
     fpu_latch2($(FPK_ADD), p_re12, p_rf7_0);
@@ -1039,7 +1072,7 @@ p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
     f_ra = prod;
 }
 :MPYF32 f_ra, f_rb, f_rc, "||ADDF32", p_rd9, p_re12, p_rf7_1
-        is op_hi8=0xE7 & loc_hi4=0b0100 & p_rf7_1 ; f_ra & f_rb & f_rc & p_rd9 & p_re12 & p_rf_lo1=1 {
+        is rpt_phase=1 & op_hi8=0xE7 & loc_hi4=0b0100 & p_rf7_1 ; f_ra & f_rb & f_rc & p_rd9 & p_re12 & p_rf_lo1=1 {
     fpu_latch2($(FPK_MPY), f_rb, f_rc);
     local prod:4 = f_rb f* f_rc;
     fpu_latch2($(FPK_ADD), p_re12, p_rf7_1);
@@ -1047,7 +1080,7 @@ p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
     f_ra = prod;
 }
 :MPYF32 f_ra, f_rb, f_rc, "||SUBF32", p_rd9, p_re12, p_rf7_0
-        is op_hi8=0xE7 & loc_hi4=0b0101 & p_rf7_0 ; f_ra & f_rb & f_rc & p_rd9 & p_re12 & p_rf_lo1=0 {
+        is rpt_phase=1 & op_hi8=0xE7 & loc_hi4=0b0101 & p_rf7_0 ; f_ra & f_rb & f_rc & p_rd9 & p_re12 & p_rf_lo1=0 {
     fpu_latch2($(FPK_MPY), f_rb, f_rc);
     local prod:4 = f_rb f* f_rc;
     fpu_latch2($(FPK_SUB), p_re12, p_rf7_0);
@@ -1055,7 +1088,7 @@ p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
     f_ra = prod;
 }
 :MPYF32 f_ra, f_rb, f_rc, "||SUBF32", p_rd9, p_re12, p_rf7_1
-        is op_hi8=0xE7 & loc_hi4=0b0101 & p_rf7_1 ; f_ra & f_rb & f_rc & p_rd9 & p_re12 & p_rf_lo1=1 {
+        is rpt_phase=1 & op_hi8=0xE7 & loc_hi4=0b0101 & p_rf7_1 ; f_ra & f_rb & f_rc & p_rd9 & p_re12 & p_rf_lo1=1 {
     fpu_latch2($(FPK_MPY), f_rb, f_rc);
     local prod:4 = f_rb f* f_rc;
     fpu_latch2($(FPK_SUB), p_re12, p_rf7_1);

@@ -189,6 +189,85 @@ Files adapted so far:
   labels through the subsequent CMP/BF and `LB *XAR7`), and update N/Z; the SUB
   canonical variant adds `C=1` and N/Z updates for arithmetic-flag parity. The
   non-canonical (default) constructors are unchanged. See #18.
+- **`data/languages/tms320c28x_rpt.sinc`** (new) and **`data/languages/tms320c28x.slaspec`**
+  (partial: `RPTC` / `RB_RSTART` / `RB_RC` / `RB_RE` / `RB_RSIZE` / `RB_RA`
+  register slots + `rpt_active` / `rptb_flag` / `rpt_phase` context bits) —
+  pure-SLEIGH loop models for RPT and RPTB via `:^instruction` prefix wrappers
+  that match on the `rpt_active` / `rptb_flag` context bit and re-execute the
+  wrapped instruction while the register-backed counter (`RPTC` / `RB_RC`) is
+  non-zero. The body constructors in `tms320c28x_more.sinc` (RPT) and
+  `tms320c28x_fpu.sinc` (RPTB, including the `rptb_end` sub-table that computes
+  the block-end address and `globalset`s `rptb_flag` there) are the other half
+  of the pattern. Makes both loops visible to the decompiler, which the previous
+  Java `EmulateInstructionStateModifier` approach never did (it was
+  emulation-only). Retires the RPTB half of that callback outright; the RPT half
+  is retained for emulation only — see "Emulator cannot arm `inst_next`" below.
+  See #19.
+
+  **Divergence from mwdmwd upstream — phase-bit partition on every base constructor.**
+  Upstream's wrappers pattern-match on `rpt_phase=0 & rpt_active=1 & instruction`
+  and rely on the wrapper being "more constrained" than the base to win the
+  SLEIGH pattern-resolution race. In practice `sleigh -l` reports the wrapper
+  and every base constructor as *"Constructor patterns cannot be distinguished"*
+  and (on Ghidra 12.x) the resolver picks the base — the wrapper is silently a
+  no-op and the loop never fires. Every shipped Ghidra processor that uses
+  `:^instruction` (ARM `ItCond`, avr8, 8051, Hexagon, M16C) fixes this by
+  giving base constructors a positive-phase constraint that the wrapper's
+  pattern negates. We do the same: every top-level `:MNEMONIC` constructor
+  carries `& rpt_phase=1`; the pspec seeds `rpt_phase=1` as the ram-space
+  default; RPT / RPTB globalset `rpt_phase=0` alongside `rpt_active` /
+  `rptb_flag` at the wrapped address. The wrapper matches uniquely there and
+  its local `[ rpt_phase=1; ]` action restores phase=1 for the inner
+  `build instruction` re-parse. The wrappers also carry mutual-exclusion on
+  the counterpart bit (`rpt_active=1 & rptb_flag=0` vs `rptb_flag=1 & rpt_active=0`)
+  because sleigh's ambiguity checker treats their pattern spaces as overlapping
+  otherwise, even though RPT and RPTB cannot arm the same address in practice.
+
+  **RB_RSTART address units.** `RB_RSTART = inst_next >> 1` (word units), not
+  `= inst_next` (which stores Ghidra's byte offset). The wrapper's
+  `goto [RB_RSTART]` treats the register value as a raw PC (word units on this
+  wordsize=2 space), so without the shift the branch lands at 2× the intended
+  address. Upstream's `= inst_next` form works only on architectures whose
+  PC and register-file agree on units; this is documented for the next port.
+
+  **`rpt_phase` must be `noflow`.** All three dispatch bits are declared
+  `noflow`. It is tempting to leave `rpt_phase` flowing on the theory that the
+  wrapper's local `[ rpt_phase=1; ]` action bounds its scope — it does not. That
+  action applies to the wrapper's own parse and never commits to the following
+  address, so a flowing `globalset(inst_next, rpt_phase)` leaves `rpt_phase=0`
+  live *past* the repeated instruction. At RPT+2 nothing can then match: the base
+  forms require `rpt_phase=1`, the RPT wrapper requires `rpt_active=1` (already
+  dropped, being `noflow`) and the RPTB wrapper requires `rptb_flag=1`. The
+  address decodes as `<UNDEF>`. Measured on a byte-swapped F28377D production
+  image over `0x82000+0x8000`: 57 extra UNDEFs and 3 extra length-skews versus
+  `main`, 42 of them exactly two words after an RPT opcode.
+
+  **Emulator cannot arm `inst_next`.** Ghidra's emulator applies a `globalset`
+  context commit one instruction too late — the value written for the target
+  address only becomes visible after that instruction has already been decoded
+  and executed. RPTB is unaffected because its target is the block-end address,
+  several instructions ahead. RPT targets `inst_next`, so under emulation the
+  base constructor always wins and the wrapper's p-code never runs (`RPTC` is
+  never decremented). The RPT arm / re-issue logic therefore stays in
+  `postExecuteCallback`; the SLEIGH wrapper remains the decompiler model.
+  Disassembly is unaffected — firmware decode parity against TI `dis2000` is
+  identical to `main`. See `docs/EMULATION.md` for the measured context dump.
+- **`data/languages/tms320c28x_ext56.sinc`** (partial, `CSB ACC` body) —
+  pure-SLEIGH port of upstream's `csb` at `tms320c28.sinc:2314` using SLEIGH's
+  built-in `lzcount`: for non-negative ACC, `lzcount(ACC)` gives the leading
+  redundant sign bits; for negative ACC, `lzcount(~ACC)` gives the leading
+  ones. Retires the `countSignBits` CALLOTHER from the Java state modifier.
+  See #19.
+
+Deferred (tracked as a follow-up):
+
+- **VCRC8L / VCRC16P1L / VCRC32L** are not ported. Upstream mwdmwd/ghidra-c28x
+  does not implement VCU-II at all, so there is no reference to lean on, and a
+  pure-SLEIGH port would need an 8× manually unrolled MSB-first bit loop per
+  instruction (~30 pcode ops). The `VCRC` pcodeop is kept in the Java modifier
+  because its intrinsic name (`VCRC = VCRC8L(VCRC, src)`) is what makes CAN CRC
+  compute/check code identifiable in the decompiler — the unrolled form would
+  replace that with an unreadable shift-and-XOR salad.
 
 ## Nothing else
 

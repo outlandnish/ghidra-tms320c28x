@@ -24,17 +24,17 @@
 # Ghidra records a real CALL/JUMP reference. The parent constructor just references it.
 lcdest: reloc  is op_hi8=0x00 & op_lo_76=0b10 & loc_off6 ; imm16  [ reloc = (loc_off6 << 16) | imm16; ] { export *[ram]:4 reloc; }
 lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc_off6 << 16) | imm16; ] { export *[ram]:4 reloc; }
-:LC lcdest  is lcdest {
+:LC lcdest  is rpt_phase=1 & lcdest {
     local sp2:4 = SP; *[ram]:4 sp2 = RPC; SP = SP + 2;
     RPC = inst_next >> 1;
     call lcdest;
 }
-:LB lbdest  is lbdest {
+:LB lbdest  is rpt_phase=1 & lbdest {
     goto lbdest;
 }
 
 # LC *XAR7   0111 0110 0000 0100   (indirect call via XAR7)
-:LC "*XAR7"  is op16=0x7604 { local sp2:4 = SP; *[ram]:4 sp2 = RPC; SP = SP + 2; RPC = inst_next >> 1; call [XAR7]; }
+:LC "*XAR7"  is rpt_phase=1 & op16=0x7604 { local sp2:4 = SP; *[ram]:4 sp2 = RPC; SP = SP + 2; RPC = inst_next >> 1; call [XAR7]; }
 
 # LB *XAR7   0111 0110 0010 0000   (indirect branch via XAR7)
 # The same opcode is used for BOTH the FFC-helper return sequence AND for switch-table
@@ -49,14 +49,14 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 #     valid PC, so mask XAR7 before jumping (avoids spurious out-of-map targets in the CFG).
 # The three patterns are pairwise exclusive on the (ffc_return, switch_canonical) pair.
 # Adapted from mwdmwd/ghidra-c28x (Apache-2.0). See THIRD-PARTY.md.
-:LB "*XAR7"  is ffc_return=0 & switch_canonical=1 & op16=0x7620  {
+:LB "*XAR7"  is rpt_phase=1 & ffc_return=0 & switch_canonical=1 & op16=0x7620  {
     goto [XAR7];
 }
-:LB "*XAR7"  is ffc_return=1 & switch_canonical=0 & op16=0x7620  {
+:LB "*XAR7"  is rpt_phase=1 & ffc_return=1 & switch_canonical=0 & op16=0x7620  {
     local target:4 = XAR7 & 0x003fffff;
     return [target];
 }
-:LB "*XAR7"  is ffc_return=0 & switch_canonical=0 & op16=0x7620  {
+:LB "*XAR7"  is rpt_phase=1 & ffc_return=0 & switch_canonical=0 & op16=0x7620  {
     local target:4 = XAR7 & 0x003fffff;
     goto [target];
 }
@@ -66,48 +66,48 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 # Display the 16-bit AR (arsel3) but WRITE the full 32-bit XARn (arsel3x) zero-extended,
 # so ARnH is cleared as MOVZ requires. (Writing only the 16-bit AR left ARnH stale and
 # the decompiler rebuilt XARn as CONCAT22(stale_hi, lo) at every pointer use.)
-:MOVZ arsel3, loc16  is op_hi5=0b01011 & arsel3 & arsel3x & loc16  {
+:MOVZ arsel3, loc16  is rpt_phase=1 & op_hi5=0b01011 & arsel3 & arsel3x & loc16  {
     arsel3x = zext(loc16);
 }
-:MOVZ "AR6", loc16   is op_hi8=0x88 & loc16  { XAR6 = zext(loc16); }
-:MOVZ "AR7", loc16   is op_hi8=0x80 & loc16  { XAR7 = zext(loc16); }
+:MOVZ "AR6", loc16   is rpt_phase=1 & op_hi8=0x88 & loc16  { XAR6 = zext(loc16); }
+:MOVZ "AR7", loc16   is rpt_phase=1 & op_hi8=0x80 & loc16  { XAR7 = zext(loc16); }
 
 # MOVZ DP, #10bit   1011 10CC CCCC CCCC   -- load low 10 bits of DP, clear rest
-:MOVZ "DP", "#"dp10  is op_hi_6=0b101110 & dp10  {
+:MOVZ "DP", "#"dp10  is rpt_phase=1 & op_hi_6=0b101110 & dp10  {
     DP = dp10;
 }
 
 # --- 16-bit / 32-bit moves ---------------------------------------------------
 # MOVDL XT,loc32    1010 0110 LLLL LLLL  -- store XT to loc32, then load XT from it
-:MOVDL "XT", loc32  is op_hi8=0xA6 & loc32  { loc32 = XT; XT = loc32; }
+:MOVDL "XT", loc32  is rpt_phase=1 & op_hi8=0xA6 & loc32  { loc32 = XT; XT = loc32; }
 # MOVAD T,loc16     1010 0111 LLLL LLLL  -- T=loc16; ACC+=P (like MOVA, addr variant)
-:MOVAD "T", loc16   is op_hi8=0xA7 & loc16  { ACC = ACC + P; T = loc16; }
+:MOVAD "T", loc16   is rpt_phase=1 & op_hi8=0xA7 & loc16  { ACC = ACC + P; T = loc16; }
 # DMOV loc16        1010 0101 LLLL LLLL  -- data move [loc16+1]=[loc16] (delay line)
-:DMOV loc16         is op_hi8=0xA5 & loc16  { }   # decode-only (memory shuffle)
+:DMOV loc16         is rpt_phase=1 & op_hi8=0xA5 & loc16  { }   # decode-only (memory shuffle)
 
 # --- byte moves --------------------------------------------------------------
 # MOVB AX.LSB, loc16   1100 011A LLLL LLLL
 # Spec: load AX.LSB with the low byte AND CLEAR AX.MSB (zero-extend the byte into the
 # full 16-bit AX). Preserving the MSB (the old & 0xFF00 form) was wrong.
 # NB: the AR0/AR1-indexed byte forms are BYTE-ADDRESSED (see below) and are excluded here.
-:MOVB AX^".LSB", loc16  is op_hi7=0x63 & AX & loc_mode5!=0b10010 & loc_mode5!=0b10011 & loc16  {
+:MOVB AX^".LSB", loc16  is rpt_phase=1 & op_hi7=0x63 & AX & loc_mode5!=0b10010 & loc_mode5!=0b10011 & loc16  {
     local b:2 = loc16 & 0xFF;
     AX = b;
 }
 # MOVB AX.MSB, loc16   0011 100A LLLL LLLL  -- load MSB of AX, LSB left unchanged.
-:MOVB AX^".MSB", loc16  is op_hi7=0x1C & AX & loc_mode5!=0b10010 & loc_mode5!=0b10011 & loc16  {
+:MOVB AX^".MSB", loc16  is rpt_phase=1 & op_hi7=0x1C & AX & loc_mode5!=0b10010 & loc_mode5!=0b10011 & loc16  {
     AX = (AX & 0x00FF) | ((loc16 & 0xFF) << 8);
 }
 # MOVB loc16, AX.LSB   0011 110A LLLL LLLL  -- store low byte of AX into loc16.
 # (Spec writes only 8 bits of loc16, the other byte by address parity; we approximate
 # with a 16-bit zero-extended store, which is fine for decompilation.)
 # NB: the AR0/AR1-indexed byte forms are BYTE-ADDRESSED (see below) and are excluded here.
-:MOVB loc16, AX^".LSB"  is op_hi7=0x1E & AX & loc_mode5!=0b10010 & loc_mode5!=0b10011 & loc16  { loc16 = AX & 0xFF; }
+:MOVB loc16, AX^".LSB"  is rpt_phase=1 & op_hi7=0x1E & AX & loc_mode5!=0b10010 & loc_mode5!=0b10011 & loc16  { loc16 = AX & 0xFF; }
 # Byte-addressed store counterparts of the MOVB AX.LSB,*+XARn[ARm] loads above: effective byte
 # addr = (XARn<<1)+ARm, byte lane = ARm&1. A whole-word store would clobber the adjacent packed
 # byte, so read-modify-write only the target lane (fatal otherwise for a byte-packed array such
 # as an AES state/S-box written back a byte at a time). ram is wordsize=2 -> word = byteaddr>>1.
-:MOVB "*+"loc_areg"[AR0]", AX^".LSB"  is op_hi7=0x1E & AX & ctx_AMODE=0 & loc_mode5=0b10010 & loc_areg {
+:MOVB "*+"loc_areg"[AR0]", AX^".LSB"  is rpt_phase=1 & op_hi7=0x1E & AX & ctx_AMODE=0 & loc_mode5=0b10010 & loc_areg {
     local ba:4 = (loc_areg << 1) + zext(AR0);
     local wa:4 = ba >> 1;
     local sh:2 = zext(ba:1 & 1) << 3;
@@ -115,7 +115,7 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
     local mask:2 = ~(0xFF << sh);
     *[ram]:2 wa = (wv & mask) | ((AX & 0xFF) << sh);
 }
-:MOVB "*+"loc_areg"[AR1]", AX^".LSB"  is op_hi7=0x1E & AX & ctx_AMODE=0 & loc_mode5=0b10011 & loc_areg {
+:MOVB "*+"loc_areg"[AR1]", AX^".LSB"  is rpt_phase=1 & op_hi7=0x1E & AX & ctx_AMODE=0 & loc_mode5=0b10011 & loc_areg {
     local ba:4 = (loc_areg << 1) + zext(AR1);
     local wa:4 = ba >> 1;
     local sh:2 = zext(ba:1 & 1) << 3;
@@ -130,25 +130,25 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 # above computes a WORD addr (XARn+ARm) and reads the low byte, i.e. byte[2*ARm] (only the
 # even entries) -- fatal for a byte-packed table such as an AES S-box (256 packed bytes).
 # ram is wordsize=2, so word addr = (byteaddr>>1) and lane picks the high/low byte.
-:MOVB AX^".LSB", "*+"loc_areg"[AR0]"  is op_hi7=0x63 & AX & ctx_AMODE=0 & loc_mode5=0b10010 & loc_areg {
+:MOVB AX^".LSB", "*+"loc_areg"[AR0]"  is rpt_phase=1 & op_hi7=0x63 & AX & ctx_AMODE=0 & loc_mode5=0b10010 & loc_areg {
     local ba:4 = (loc_areg << 1) + zext(AR0);
     local wv:2 = *[ram]:2 (ba >> 1);
     local sh:2 = zext(ba:1 & 1) << 3;
     AX = (wv >> sh) & 0xFF;
 }
-:MOVB AX^".LSB", "*+"loc_areg"[AR1]"  is op_hi7=0x63 & AX & ctx_AMODE=0 & loc_mode5=0b10011 & loc_areg {
+:MOVB AX^".LSB", "*+"loc_areg"[AR1]"  is rpt_phase=1 & op_hi7=0x63 & AX & ctx_AMODE=0 & loc_mode5=0b10011 & loc_areg {
     local ba:4 = (loc_areg << 1) + zext(AR1);
     local wv:2 = *[ram]:2 (ba >> 1);
     local sh:2 = zext(ba:1 & 1) << 3;
     AX = (wv >> sh) & 0xFF;
 }
-:MOVB AX^".MSB", "*+"loc_areg"[AR0]"  is op_hi7=0x1C & AX & ctx_AMODE=0 & loc_mode5=0b10010 & loc_areg {
+:MOVB AX^".MSB", "*+"loc_areg"[AR0]"  is rpt_phase=1 & op_hi7=0x1C & AX & ctx_AMODE=0 & loc_mode5=0b10010 & loc_areg {
     local ba:4 = (loc_areg << 1) + zext(AR0);
     local wv:2 = *[ram]:2 (ba >> 1);
     local sh:2 = zext(ba:1 & 1) << 3;
     AX = (AX & 0x00FF) | (((wv >> sh) & 0xFF) << 8);
 }
-:MOVB AX^".MSB", "*+"loc_areg"[AR1]"  is op_hi7=0x1C & AX & ctx_AMODE=0 & loc_mode5=0b10011 & loc_areg {
+:MOVB AX^".MSB", "*+"loc_areg"[AR1]"  is rpt_phase=1 & op_hi7=0x1C & AX & ctx_AMODE=0 & loc_mode5=0b10011 & loc_areg {
     local ba:4 = (loc_areg << 1) + zext(AR1);
     local wv:2 = *[ram]:2 (ba >> 1);
     local sh:2 = zext(ba:1 & 1) << 3;
@@ -157,13 +157,13 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 
 # --- ALU additions -----------------------------------------------------------
 # SUBU ACC, loc16   0000 0001 LLLL LLLL   (subtract unsigned)
-:SUBU ACCreg, loc16  is op_hi8=0x01 & ACCreg & loc16  { ACC = ACC - zext(loc16); }
+:SUBU ACCreg, loc16  is rpt_phase=1 & op_hi8=0x01 & ACCreg & loc16  { ACC = ACC - zext(loc16); }
 # SUBB ACC, #8bit   0001 1001 CCCC CCCC
-:SUBB ACCreg, "#"imm8  is op_hi8=0x19 & ACCreg & imm8  { ACC = ACC - zext(imm8:1); }
+:SUBB ACCreg, "#"imm8  is rpt_phase=1 & op_hi8=0x19 & ACCreg & imm8  { ACC = ACC - zext(imm8:1); }
 # ADDB ACC, #8bit   0000 1001 CCCC CCCC
-:ADDB ACCreg, "#"imm8  is op_hi8=0x09 & ACCreg & imm8  { ACC = ACC + zext(imm8:1); }
+:ADDB ACCreg, "#"imm8  is rpt_phase=1 & op_hi8=0x09 & ACCreg & imm8  { ACC = ACC + zext(imm8:1); }
 # ADDB AX, #8bit    1001 110A CCCC CCCC
-:ADDB AX, "#"imm8   is op_hi7=0x4E & AX & imm8  {
+:ADDB AX, "#"imm8   is rpt_phase=1 & op_hi7=0x4E & AX & imm8  {
     local b:2 = zext(imm8:1);
     $(C) = carry(AX, b); $(V) = scarry(AX, b);
     AX = AX + b; setNZ16(AX);
@@ -173,7 +173,7 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 # else ACC=ACC<<1. With the RPT hardware-loop modeled, RPT #15 || SUBCU now emulates a full
 # 16-bit unsigned division (AL=quotient, AH=remainder). Compute in 64-bit so the 33-bit temp and
 # its sign are exact; the else path is written first, then overridden when temp>0 (no label).
-:SUBCU ACCreg, loc16  is op_hi8=0x1F & ACCreg & loc16  {
+:SUBCU ACCreg, loc16  is rpt_phase=1 & op_hi8=0x1F & ACCreg & loc16  {
     local num:8 = zext(ACC) << 1;
     local den:8 = zext(loc16) << 16;
     local temp:8 = num - den;
@@ -184,15 +184,15 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 
 # --- multiply additions ------------------------------------------------------
 # MPYXU ACC,T,loc16   0011 0000 LLLL LLLL  (signed x unsigned -> ACC)
-:MPYXU ACCreg, Treg, loc16  is op_hi8=0x30 & ACCreg & Treg & loc16  {
+:MPYXU ACCreg, Treg, loc16  is rpt_phase=1 & op_hi8=0x30 & ACCreg & Treg & loc16  {
     local a:4 = sext(T); local b:4 = zext(loc16); ACC = a * b;
 }
 # MPYXU P,T,loc16     0011 0010 LLLL LLLL
-:MPYXU Preg, Treg, loc16  is op_hi8=0x32 & Preg & Treg & loc16  {
+:MPYXU Preg, Treg, loc16  is rpt_phase=1 & op_hi8=0x32 & Preg & Treg & loc16  {
     local a:4 = sext(T); local b:4 = zext(loc16); P = a * b;
 }
 # XMACD P,loc16,*pma  1010 0100 LLLL LLLL : pma   (mac with data move) decode-only-ish
-:XMACD Preg, loc16, "*"imm16  is op_hi8=0xA4 & Preg & loc16 ; imm16 {
+:XMACD Preg, loc16, "*"imm16  is rpt_phase=1 & op_hi8=0xA4 & Preg & loc16 ; imm16 {
     ACC = ACC + P;
     local pma:4 = zext(imm16:2);
     local pv:2 = *[ram]:2 pma;
@@ -207,21 +207,21 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 # word1 low 6 bits = const[21:16], word2 = const[15:0].
 # XAR0-3: 1000 1101 nnCC CCCC ; XAR4-5: 1000 1111 0nCC ; XAR6-7: 0111 0110 1xCC
 # =============================================================================
-:MOVL "XAR0", "#"xar22  is op_hi8=0x8D & op_lo_76=0b00 & loc_off6 ; imm16
+:MOVL "XAR0", "#"xar22  is rpt_phase=1 & op_hi8=0x8D & op_lo_76=0b00 & loc_off6 ; imm16
         [ xar22 = (loc_off6 << 16) | imm16; ] { XAR0 = xar22; }
-:MOVL "XAR1", "#"xar22  is op_hi8=0x8D & op_lo_76=0b01 & loc_off6 ; imm16
+:MOVL "XAR1", "#"xar22  is rpt_phase=1 & op_hi8=0x8D & op_lo_76=0b01 & loc_off6 ; imm16
         [ xar22 = (loc_off6 << 16) | imm16; ] { XAR1 = xar22; }
-:MOVL "XAR2", "#"xar22  is op_hi8=0x8D & op_lo_76=0b10 & loc_off6 ; imm16
+:MOVL "XAR2", "#"xar22  is rpt_phase=1 & op_hi8=0x8D & op_lo_76=0b10 & loc_off6 ; imm16
         [ xar22 = (loc_off6 << 16) | imm16; ] { XAR2 = xar22; }
-:MOVL "XAR3", "#"xar22  is op_hi8=0x8D & op_lo_76=0b11 & loc_off6 ; imm16
+:MOVL "XAR3", "#"xar22  is rpt_phase=1 & op_hi8=0x8D & op_lo_76=0b11 & loc_off6 ; imm16
         [ xar22 = (loc_off6 << 16) | imm16; ] { XAR3 = xar22; }
-:MOVL "XAR4", "#"xar22  is op_hi8=0x8F & op_lo_76=0b00 & loc_off6 ; imm16
+:MOVL "XAR4", "#"xar22  is rpt_phase=1 & op_hi8=0x8F & op_lo_76=0b00 & loc_off6 ; imm16
         [ xar22 = (loc_off6 << 16) | imm16; ] { XAR4 = xar22; }
-:MOVL "XAR5", "#"xar22  is op_hi8=0x8F & op_lo_76=0b01 & loc_off6 ; imm16
+:MOVL "XAR5", "#"xar22  is rpt_phase=1 & op_hi8=0x8F & op_lo_76=0b01 & loc_off6 ; imm16
         [ xar22 = (loc_off6 << 16) | imm16; ] { XAR5 = xar22; }
-:MOVL "XAR6", "#"xar22  is op_hi8=0x76 & op_lo_76=0b10 & loc_off6 ; imm16
+:MOVL "XAR6", "#"xar22  is rpt_phase=1 & op_hi8=0x76 & op_lo_76=0b10 & loc_off6 ; imm16
         [ xar22 = (loc_off6 << 16) | imm16; ] { XAR6 = xar22; }
-:MOVL "XAR7", "#"xar22  is op_hi8=0x76 & op_lo_76=0b11 & loc_off6 ; imm16
+:MOVL "XAR7", "#"xar22  is rpt_phase=1 & op_hi8=0x76 & op_lo_76=0b11 & loc_off6 ; imm16
         [ xar22 = (loc_off6 << 16) | imm16; ] { XAR7 = xar22; }
 
 # =============================================================================
@@ -232,10 +232,10 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 # e.g. 0x85a9 MOV ACC,@AL then 0x097f ADDB ACC,#127 were merged).
 # XMAC P,loc16,*(pma)   1000 0100 LLLL LLLL : pma  (decode-only MAC variant)
 # =============================================================================
-:MOV ACCreg, loc16^"<<#0"  is op_hi8=0x85 & ACCreg & loc16 {
+:MOV ACCreg, loc16^"<<#0"  is rpt_phase=1 & op_hi8=0x85 & ACCreg & loc16 {
     ACC = sext(loc16);
 }
-:XMAC Preg, loc16, "*pma"  is op_hi8=0x84 & Preg & loc16 ; imm16 {
+:XMAC Preg, loc16, "*pma"  is rpt_phase=1 & op_hi8=0x84 & Preg & loc16 ; imm16 {
     ACC = ACC + P;
     local pma:4 = zext(imm16:2);
     local pv:2 = *[ram]:2 pma;
@@ -247,32 +247,32 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 # Batch 2: common store/stack/program-memory ops found breaking real code runs.
 # =============================================================================
 # OR loc16, AX     1001 100A LLLL LLLL  (A bit -> AL/AH)
-:OR loc16, AX     is op_hi7=0x4C & loc16 & AX  { loc16 = loc16 | AX; }
+:OR loc16, AX     is rpt_phase=1 & op_hi7=0x4C & loc16 & AX  { loc16 = loc16 | AX; }
 # AND loc16, AX    1100 000A LLLL LLLL  (store-side AND: [loc16] &= AX). Was MISSING —
 # the truncation point in CAN_rxDispatch (0x9595c = 0xC092). N/Z set per SPRU430F.
-:AND loc16, AX    is op_hi7=0x60 & loc16 & AX  { loc16 = loc16 & AX; setNZ16(loc16); }
+:AND loc16, AX    is rpt_phase=1 & op_hi7=0x60 & loc16 & AX  { loc16 = loc16 & AX; setNZ16(loc16); }
 # ANDB AX, #8bit   1001 000A CCCC CCCC
-:ANDB AX, "#"imm8  is op_hi7=0x48 & AX & imm8  { AX = AX & zext(imm8:1); setNZ16(AX); }
+:ANDB AX, "#"imm8  is rpt_phase=1 & op_hi7=0x48 & AX & imm8  { AX = AX & zext(imm8:1); setNZ16(AX); }
 # PUSH loc16       0010 0010 LLLL LLLL  (push 16-bit value: *SP++ = loc16)
-:PUSH loc16  is op_hi8=0x22 & loc16  {
+:PUSH loc16  is rpt_phase=1 & op_hi8=0x22 & loc16  {
     local sp:4 = SP; local v:2 = loc16; *[ram]:2 sp = v; SP = SP + 1;
 }
 # POP loc16        0010 1010 LLLL LLLL
-:POP loc16   is op_hi8=0x2A & loc16  {
+:POP loc16   is rpt_phase=1 & op_hi8=0x2A & loc16  {
     SP = SP - 1; local sp:4 = SP; loc16 = *[ram]:2 sp;
 }
 # MOV IER, loc16   0010 0011 LLLL LLLL
-:MOV "IER", loc16  is op_hi8=0x23 & loc16  { IER = loc16; }
+:MOV "IER", loc16  is rpt_phase=1 & op_hi8=0x23 & loc16  { IER = loc16; }
 # PREAD loc16,*XAR7   0010 0100 LLLL LLLL  (read program memory @XAR7 -> loc16)
-:PREAD loc16, "*XAR7"  is op_hi8=0x24 & loc16  {
+:PREAD loc16, "*XAR7"  is rpt_phase=1 & op_hi8=0x24 & loc16  {
     loc16 = *[ram]:2 XAR7;
 }
 # PWRITE *XAR7,loc16  0010 0110 LLLL LLLL  (write loc16 -> program memory @XAR7)
-:PWRITE "*XAR7", loc16  is op_hi8=0x26 & loc16  {
+:PWRITE "*XAR7", loc16  is rpt_phase=1 & op_hi8=0x26 & loc16  {
     *[ram]:2 XAR7 = loc16;
 }
 # LOOPNZ loc16,#16bit  0010 1110 LLLL LLLL : iiii...  (decode-only loop)
-:LOOPNZ loc16, "#"imm16  is op_hi8=0x2E & loc16 ; imm16  { }
+:LOOPNZ loc16, "#"imm16  is rpt_phase=1 & op_hi8=0x2E & loc16 ; imm16  { }
 # LOOPZ loc16,#16bit   (0010 1010? no -- check) -- skip, POP uses 0x2a
 
 # =============================================================================
@@ -281,15 +281,15 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 # word1 = opcode + loc ; word2 = 16-bit immediate.
 # =============================================================================
 # ADD loc16,#16bit   0000 1000 LLLL LLLL : iiii
-:ADD loc16, "#"imm16  is op_hi8=0x08 & loc16 ; imm16  { loc16 = loc16 + imm16:2; }
+:ADD loc16, "#"imm16  is rpt_phase=1 & op_hi8=0x08 & loc16 ; imm16  { loc16 = loc16 + imm16:2; }
 # AND loc16,#16bit   0001 1000 LLLL LLLL : iiii
-:AND loc16, "#"imm16  is op_hi8=0x18 & loc16 ; imm16  { loc16 = loc16 & imm16:2; }
+:AND loc16, "#"imm16  is rpt_phase=1 & op_hi8=0x18 & loc16 ; imm16  { loc16 = loc16 & imm16:2; }
 # OR loc16,#16bit    0001 1010 LLLL LLLL : iiii
-:OR loc16, "#"imm16   is op_hi8=0x1A & loc16 ; imm16  { loc16 = loc16 | imm16:2; }
+:OR loc16, "#"imm16   is rpt_phase=1 & op_hi8=0x1A & loc16 ; imm16  { loc16 = loc16 | imm16:2; }
 # XOR loc16,#16bit   0001 1100 LLLL LLLL : iiii
-:XOR loc16, "#"imm16  is op_hi8=0x1C & loc16 ; imm16  { loc16 = loc16 ^ imm16:2; }
+:XOR loc16, "#"imm16  is rpt_phase=1 & op_hi8=0x1C & loc16 ; imm16  { loc16 = loc16 ^ imm16:2; }
 # XPREAD loc16,*(pma)  1010 1100 MMMM MMMM : pma  (program-mem read, single-word form)
-:XPREAD loc16, "*(pma)"  is op_hi8=0xAC & loc16 ; imm16  {
+:XPREAD loc16, "*(pma)"  is rpt_phase=1 & op_hi8=0xAC & loc16 ; imm16  {
     local pma:4 = zext(imm16:2);
     loc16 = *[ram]:2 pma;
 }
@@ -370,22 +370,22 @@ macro unpackst1(in) {
     INTM     = in[0,1];
 }
 
-:POP "IFR"       is op16=0x0002 { pop16(IFR); }
-:POP "AR1H:AR0H" is op16=0x0003 { SP = SP - 2; }               # decode-only (pair pop)
-:POP "RPC"       is op16=0x0007 { SP = SP - 2; local a:4 = SP; RPC = *[ram]:4 a; }
-:PUSH "RPC"      is op16=0x0004 { local a:4 = SP; *[ram]:4 a = RPC; SP = SP + 2; }
+:POP "IFR"       is rpt_phase=1 & op16=0x0002 { pop16(IFR); }
+:POP "AR1H:AR0H" is rpt_phase=1 & op16=0x0003 { SP = SP - 2; }               # decode-only (pair pop)
+:POP "RPC"       is rpt_phase=1 & op16=0x0007 { SP = SP - 2; local a:4 = SP; RPC = *[ram]:4 a; }
+:PUSH "RPC"      is rpt_phase=1 & op16=0x0004 { local a:4 = SP; *[ram]:4 a = RPC; SP = SP + 2; }
 # PUSH/POP P (32-bit product reg). 0x761d / 0x7611. dis2000-confirmed (PCS411 0x9167c).
-:PUSH "P"        is op16=0x761D { local a:4 = SP; *[ram]:4 a = P; SP = SP + 2; }
-:POP "P"         is op16=0x7611 { SP = SP - 2; local a:4 = SP; P = *[ram]:4 a; }
-:PUSH "AR1H:AR0H" is op16=0x0005 { SP = SP + 2; }              # decode-only (pair push)
-:POP "DP"        is op16=0x7603 { pop16(DP); }
-:POP "ST0"       is op16=0x7613 { pop16(ST0); unpackst0(ST0); }
-:POP "ST1"       is op16=0x7600 { pop16(ST1); unpackst1(ST1); }
-:POP "DBGIER"    is op16=0x7612 { pop16(DBGIER); }
-:PUSH "IFR"      is op16=0x760A { push16(IFR); }
-:PUSH "DP"       is op16=0x760B { push16(DP); }
-:PUSH "ST0"      is op16=0x7618 { packst0(ST0); push16(ST0); }
-:PUSH "ST1"      is op16=0x7608 { packst1(ST1); push16(ST1); }
+:PUSH "P"        is rpt_phase=1 & op16=0x761D { local a:4 = SP; *[ram]:4 a = P; SP = SP + 2; }
+:POP "P"         is rpt_phase=1 & op16=0x7611 { SP = SP - 2; local a:4 = SP; P = *[ram]:4 a; }
+:PUSH "AR1H:AR0H" is rpt_phase=1 & op16=0x0005 { SP = SP + 2; }              # decode-only (pair push)
+:POP "DP"        is rpt_phase=1 & op16=0x7603 { pop16(DP); }
+:POP "ST0"       is rpt_phase=1 & op16=0x7613 { pop16(ST0); unpackst0(ST0); }
+:POP "ST1"       is rpt_phase=1 & op16=0x7600 { pop16(ST1); unpackst1(ST1); }
+:POP "DBGIER"    is rpt_phase=1 & op16=0x7612 { pop16(DBGIER); }
+:PUSH "IFR"      is rpt_phase=1 & op16=0x760A { push16(IFR); }
+:PUSH "DP"       is rpt_phase=1 & op16=0x760B { push16(DP); }
+:PUSH "ST0"      is rpt_phase=1 & op16=0x7618 { packst0(ST0); push16(ST0); }
+:PUSH "ST1"      is rpt_phase=1 & op16=0x7608 { packst1(ST1); push16(ST1); }
 
 # =============================================================================
 # Batch 5: AX shifts (0xFF-prefix), SP byte-add, MOVL ACC,P — from TI rts validation.
@@ -393,25 +393,25 @@ macro unpackst1(in) {
 # Shifts of AX by T(3:0).  The AX selector is bit 0 of the word (AXb0), NOT bit 8,
 # and the sub-opcode occupies bits 1..7 (op_lo71).  1111 1111 0110 0ssA.
 # ASR AX,T   1111 1111 0110 010A  (arithmetic shift right by T)
-:ASR AXb0, "T"  is op_hi8=0xFF & op_lo71=0b0110010 & AXb0  {
+:ASR AXb0, "T"  is rpt_phase=1 & op_hi8=0xFF & op_lo71=0b0110010 & AXb0  {
     local sh:2 = T & 0xf; AXb0 = AXb0 s>> sh;
 }
 # LSR AX,T   1111 1111 0110 001A
-:LSR AXb0, "T"  is op_hi8=0xFF & op_lo71=0b0110001 & AXb0  {
+:LSR AXb0, "T"  is rpt_phase=1 & op_hi8=0xFF & op_lo71=0b0110001 & AXb0  {
     local sh:2 = T & 0xf; AXb0 = AXb0 >> sh;
 }
 # LSL AX,T   1111 1111 0110 011A  (logical shift left by T)
-:LSL AXb0, "T"  is op_hi8=0xFF & op_lo71=0b0110011 & AXb0  {
+:LSL AXb0, "T"  is rpt_phase=1 & op_hi8=0xFF & op_lo71=0b0110011 & AXb0  {
     local sh:2 = T & 0xf; AXb0 = AXb0 << sh;
 }
 # ADDB SP,#7bit   1111 1110 0CCC CCCC  (stack adjust). bit7=0 distinguishes from
 # SUBB SP,#7bit (1111 1110 1CCC CCCC, bit7=1) — must constrain bit7 or ADDB greedily
 # swallows SUBB too (caught vs TI dis2000).
-:ADDB "SP", "#"sp7  is op_hi8=0xFE & loc_b7=0 & sp7  { SP = SP + sp7; }
+:ADDB "SP", "#"sp7  is rpt_phase=1 & op_hi8=0xFE & loc_b7=0 & sp7  { SP = SP + sp7; }
 # SUBB SP,#7bit   1111 1110 1CCC CCCC
-:SUBB "SP", "#"sp7  is op_hi8=0xFE & loc_b7=1 & sp7  { SP = SP - sp7; }
+:SUBB "SP", "#"sp7  is rpt_phase=1 & op_hi8=0xFE & loc_b7=1 & sp7  { SP = SP - sp7; }
 # MOVL ACC,P   0001 0110 1010 1100  (move P to ACC)
-:MOVL ACCreg, "P"  is op16=0x16AC & ACCreg  { ACC = P; }
+:MOVL ACCreg, "P"  is rpt_phase=1 & op16=0x16AC & ACCreg  { ACC = P; }
 
 # =============================================================================
 # Batch 6: MOVL XARn,loc32 / SUBB XARn,#7bit / MOV ACC,loc16<<#16 — the remaining
@@ -421,25 +421,25 @@ macro unpackst1(in) {
 # MOVL XARn, loc32 — load a 32-bit aux register from loc32. Per-register opcodes
 # (SPRU430F): XAR0=0x8E XAR1=0x8B XAR2=0x86 XAR3=0x82 XAR4=0x8A XAR5=0x83
 #             XAR6=0xC4 XAR7=0xC5.  word = opcode<<8 | loc32.
-:MOVL "XAR0", loc32  is op_hi8=0x8E & loc32 { XAR0 = loc32; }
-:MOVL "XAR1", loc32  is op_hi8=0x8B & loc32 { XAR1 = loc32; }
-:MOVL "XAR2", loc32  is op_hi8=0x86 & loc32 { XAR2 = loc32; }
-:MOVL "XAR3", loc32  is op_hi8=0x82 & loc32 { XAR3 = loc32; }
-:MOVL "XAR4", loc32  is op_hi8=0x8A & loc32 { XAR4 = loc32; }
-:MOVL "XAR5", loc32  is op_hi8=0x83 & loc32 { XAR5 = loc32; }
-:MOVL "XAR6", loc32  is op_hi8=0xC4 & loc32 { XAR6 = loc32; }
-:MOVL "XAR7", loc32  is op_hi8=0xC5 & loc32 { XAR7 = loc32; }
+:MOVL "XAR0", loc32  is rpt_phase=1 & op_hi8=0x8E & loc32 { XAR0 = loc32; }
+:MOVL "XAR1", loc32  is rpt_phase=1 & op_hi8=0x8B & loc32 { XAR1 = loc32; }
+:MOVL "XAR2", loc32  is rpt_phase=1 & op_hi8=0x86 & loc32 { XAR2 = loc32; }
+:MOVL "XAR3", loc32  is rpt_phase=1 & op_hi8=0x82 & loc32 { XAR3 = loc32; }
+:MOVL "XAR4", loc32  is rpt_phase=1 & op_hi8=0x8A & loc32 { XAR4 = loc32; }
+:MOVL "XAR5", loc32  is rpt_phase=1 & op_hi8=0x83 & loc32 { XAR5 = loc32; }
+:MOVL "XAR6", loc32  is rpt_phase=1 & op_hi8=0xC4 & loc32 { XAR6 = loc32; }
+:MOVL "XAR7", loc32  is rpt_phase=1 & op_hi8=0xC5 & loc32 { XAR7 = loc32; }
 
 # SUBB XARn, #7bit   1101 1nnn 1CCC CCCC  -- subtract 7-bit const from XARn.
 # nnn (xarn_hi3, bits 8..10) selects the register; bit7=1 distinguishes the SUBB
 # form. Top 5 bits 11011 (op_hi5). Attach nnn to the XARn list.
 attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
-:SUBB xarn_hi3, "#"sp7  is op_hi5=0b11011 & xarn_hi3 & loc_b7=1 & sp7 {
+:SUBB xarn_hi3, "#"sp7  is rpt_phase=1 & op_hi5=0b11011 & xarn_hi3 & loc_b7=1 & sp7 {
     xarn_hi3 = xarn_hi3 - zext(sp7:1);
 }
 
 # MOV ACC, loc16 <<#16   0010 0101 LLLL LLLL  (single word; high 16 of loc into ACC)
-:MOV ACCreg, loc16^"<<#16"  is op_hi8=0x25 & ACCreg & loc16 {
+:MOV ACCreg, loc16^"<<#16"  is rpt_phase=1 & op_hi8=0x25 & ACCreg & loc16 {
     local v:4 = zext(loc16); ACC = v << 16;
 }
 
@@ -448,13 +448,13 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 # =============================================================================
 # ASR/LSR/LSL AX,#1..16   1111 1111 sssA SHFT  (sss: ASR=101 LSR=110 LSL=100,
 # A=bit4 selects AL/AH, SHFT=0 means 16). Single word. SPRU430F ch6.
-:ASR AXb4, "#"shcount  is op_hi8=0xFF & op_lo765=0b101 & AXb4 & shcount {
+:ASR AXb4, "#"shcount  is rpt_phase=1 & op_hi8=0xFF & op_lo765=0b101 & AXb4 & shcount {
     AXb4 = AXb4 s>> shcount;
 }
-:LSR AXb4, "#"shcount  is op_hi8=0xFF & op_lo765=0b110 & AXb4 & shcount {
+:LSR AXb4, "#"shcount  is rpt_phase=1 & op_hi8=0xFF & op_lo765=0b110 & AXb4 & shcount {
     AXb4 = AXb4 >> shcount;
 }
-:LSL AXb4, "#"shcount  is op_hi8=0xFF & op_lo765=0b100 & AXb4 & shcount {
+:LSL AXb4, "#"shcount  is rpt_phase=1 & op_hi8=0xFF & op_lo765=0b100 & AXb4 & shcount {
     AXb4 = AXb4 << shcount;
 }
 
@@ -462,19 +462,19 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 # single-bit forms get named operands; general mask form prints the hex mask.
 # (CLRC Mode is 0011 1101; add if it shows up.) ST0/ST1 are the flag registers;
 # decode-only OR-in is enough for readable disasm without modeling every bit.
-:SETC "SXM"   is op16=0x3B01 { $(SXM) = 1; }
-:SETC "OVM"   is op16=0x3B02 { $(OVM) = 1; }
-:SETC "TC"    is op16=0x3B04 { $(TC)  = 1; }
-:SETC "C"     is op16=0x3B08 { $(C)   = 1; }
-:SETC "INTM"  is op16=0x3B10 { $(INTM)  = 1; }
-:SETC "DBGM"  is op16=0x3B20 { $(DBGM)  = 1; }
-:SETC "PAGE0" is op16=0x3B40 { $(PAGE0) = 1; }
-:SETC "VMAP"  is op16=0x3B80 { $(VMAP)  = 1; }
+:SETC "SXM"   is rpt_phase=1 & op16=0x3B01 { $(SXM) = 1; }
+:SETC "OVM"   is rpt_phase=1 & op16=0x3B02 { $(OVM) = 1; }
+:SETC "TC"    is rpt_phase=1 & op16=0x3B04 { $(TC)  = 1; }
+:SETC "C"     is rpt_phase=1 & op16=0x3B08 { $(C)   = 1; }
+:SETC "INTM"  is rpt_phase=1 & op16=0x3B10 { $(INTM)  = 1; }
+:SETC "DBGM"  is rpt_phase=1 & op16=0x3B20 { $(DBGM)  = 1; }
+:SETC "PAGE0" is rpt_phase=1 & op16=0x3B40 { $(PAGE0) = 1; }
+:SETC "VMAP"  is rpt_phase=1 & op16=0x3B80 { $(VMAP)  = 1; }
 # General mask (multi-bit combos, e.g. SETC #0x30 = INTM|DBGM). imm8 bit i selects
 # a flag: 0=SXM 1=OVM 2=TC 3=C 4=INTM 5=DBGM 6=PAGE0 7=VMAP (SPRU430F; matches the
 # single-flag opcodes 0x3B01..0x3B80 above). Set each selected flag on its own
 # register. Adapted from mwdmwd/ghidra-c28x (Apache-2.0).
-:SETC "#"imm8  is op_hi8=0x3B & imm8 {
+:SETC "#"imm8  is rpt_phase=1 & op_hi8=0x3B & imm8 {
     local m:1 = imm8;
     $(SXM)   = $(SXM)   || (m[0,1] != 0);
     $(OVM)   = $(OVM)   || (m[1,1] != 0);
@@ -491,24 +491,24 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 # =============================================================================
 # MOVB XAR0..5,#8bit  1101 0nnn CCCC CCCC ; XAR6=1011 1110, XAR7=1011 0110.
 # Per-register opcodes (XAR0..5 = 0xD0..0xD5) to avoid claiming 0xD6/0xD7.
-:MOVB "XAR0", "#"imm8  is op_hi8=0xD0 & imm8 { XAR0 = zext(imm8:1); }
-:MOVB "XAR1", "#"imm8  is op_hi8=0xD1 & imm8 { XAR1 = zext(imm8:1); }
-:MOVB "XAR2", "#"imm8  is op_hi8=0xD2 & imm8 { XAR2 = zext(imm8:1); }
-:MOVB "XAR3", "#"imm8  is op_hi8=0xD3 & imm8 { XAR3 = zext(imm8:1); }
-:MOVB "XAR4", "#"imm8  is op_hi8=0xD4 & imm8 { XAR4 = zext(imm8:1); }
-:MOVB "XAR5", "#"imm8  is op_hi8=0xD5 & imm8 { XAR5 = zext(imm8:1); }
-:MOVB "XAR6", "#"imm8  is op_hi8=0xBE & imm8 { XAR6 = zext(imm8:1); }
-:MOVB "XAR7", "#"imm8  is op_hi8=0xB6 & imm8 { XAR7 = zext(imm8:1); }
+:MOVB "XAR0", "#"imm8  is rpt_phase=1 & op_hi8=0xD0 & imm8 { XAR0 = zext(imm8:1); }
+:MOVB "XAR1", "#"imm8  is rpt_phase=1 & op_hi8=0xD1 & imm8 { XAR1 = zext(imm8:1); }
+:MOVB "XAR2", "#"imm8  is rpt_phase=1 & op_hi8=0xD2 & imm8 { XAR2 = zext(imm8:1); }
+:MOVB "XAR3", "#"imm8  is rpt_phase=1 & op_hi8=0xD3 & imm8 { XAR3 = zext(imm8:1); }
+:MOVB "XAR4", "#"imm8  is rpt_phase=1 & op_hi8=0xD4 & imm8 { XAR4 = zext(imm8:1); }
+:MOVB "XAR5", "#"imm8  is rpt_phase=1 & op_hi8=0xD5 & imm8 { XAR5 = zext(imm8:1); }
+:MOVB "XAR6", "#"imm8  is rpt_phase=1 & op_hi8=0xBE & imm8 { XAR6 = zext(imm8:1); }
+:MOVB "XAR7", "#"imm8  is rpt_phase=1 & op_hi8=0xB6 & imm8 { XAR7 = zext(imm8:1); }
 
 # TEST ACC   1111 1111 0101 1000  (set Z/N from ACC; decode-only flags)
-:TEST "ACC"  is op16=0xFF58 { $(Z) = (ACC == 0); $(N) = (ACC s< 0); }
+:TEST "ACC"  is rpt_phase=1 & op16=0xFF58 { $(Z) = (ACC == 0); $(N) = (ACC s< 0); }
 
 # SAT ACC   1111 1111 0101 0111  (saturate ACC per OVC; modeled flow-preserving —
 # the OVC-driven clamp isn't tracked, so write ACC so dataflow continues).
-:SAT "ACC"  is op16=0xFF57 { ACC = ACC; }
+:SAT "ACC"  is rpt_phase=1 & op16=0xFF57 { ACC = ACC; }
 
 # ROL ACC   1111 1111 0101 0011  (rotate ACC left through carry: C<-b31, b0<-C).
-:ROL "ACC"  is op16=0xFF53 {
+:ROL "ACC"  is rpt_phase=1 & op16=0xFF53 {
     local oldc:4 = zext($(C));
     $(C) = ((ACC >> 31) & 1) != 0;
     ACC = (ACC << 1) | oldc;
@@ -517,18 +517,18 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 # NORM ACC,XARn++/--   1111 1111 0111 Xnnn  (normalize ACC, post-inc/dec XARn; X=bit3
 # selects ++/--, nnn=ARn via loc_areg). The normalize-shift isn't tracked; model the AR
 # post-modify and write ACC so dataflow + flow continue. Was the truncation behind 0xff77.
-:NORM "ACC,"loc_areg^"++"  is op_hi8=0xFF & op_lo765=0b011 & norm_pm=1 & loc_areg { ACC = ACC; loc_areg = loc_areg + 1; }
-:NORM "ACC,"loc_areg^"--"  is op_hi8=0xFF & op_lo765=0b011 & norm_pm=0 & loc_areg { ACC = ACC; loc_areg = loc_areg + (-1); }
+:NORM "ACC,"loc_areg^"++"  is rpt_phase=1 & op_hi8=0xFF & op_lo765=0b011 & norm_pm=1 & loc_areg { ACC = ACC; loc_areg = loc_areg + 1; }
+:NORM "ACC,"loc_areg^"--"  is rpt_phase=1 & op_hi8=0xFF & op_lo765=0b011 & norm_pm=0 & loc_areg { ACC = ACC; loc_areg = loc_areg + (-1); }
 
 # =============================================================================
 # Batch 9: final rts-validation gaps — MOV ACC,#16bit<<#shift, CMPB AX,#8bit.
 # =============================================================================
 # MOV ACC,#16bit<<#0..15   1111 1111 0010 SHFT : iiii iiii iiii iiii  (2-word)
-:MOV ACCreg, "#"imm16^"<<#"^shft4 is op_hi8=0xFF & loc_hi4=0b0010 & shft4 & ACCreg ; imm16 {
+:MOV ACCreg, "#"imm16^"<<#"^shft4 is rpt_phase=1 & op_hi8=0xFF & loc_hi4=0b0010 & shft4 & ACCreg ; imm16 {
     local v:4 = zext(imm16:2); local s:4 = zext(shft4:1); ACC = v << s;
 }
 # CMPB AX,#8bit   0101 001A CCCC CCCC  (compare AX with zero-ext 8-bit; set flags)
-:CMPB AX, "#"imm8  is op_hi7=0x29 & AX & imm8 {
+:CMPB AX, "#"imm8  is rpt_phase=1 & op_hi7=0x29 & AX & imm8 {
     local b:2 = zext(imm8:1);
     local r:2 = AX - b;
     $(C) = !(AX < b); $(V) = sborrow(AX, b);
@@ -542,7 +542,7 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 # ADDU ACC, loc16   0000 1101 LLLL LLLL  -- add zero-extended 16-bit word to ACC.
 # Was MISSING — the truncation point in CAN_postRxEvent (word 0x0da0 = ADDU ACC,@AR0);
 # its empty slot orphaned the following word and broke the CFG. ACC = ACC + 0:[loc16].
-:ADDU ACCreg, loc16  is op_hi8=0x0D & ACCreg & loc16  {
+:ADDU ACCreg, loc16  is rpt_phase=1 & op_hi8=0x0D & ACCreg & loc16  {
     local b:4 = zext(loc16);
     $(C) = carry(ACC, b);
     ACC = ACC + b;
@@ -550,18 +550,18 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 }
 # MOVH loc16, ACC<<1   1011 0011 LLLL LLLL  -- store high word of (ACC<<1) to loc16.
 # dis2000-confirmed (DIR image, op_hi8=0xB3). loc16 = bits 16..31 of (ACC<<1).
-:MOVH loc16, "ACC<<1"  is op_hi8=0xB3 & loc16  { local v:4 = ACC << 1; loc16 = v(2); }
+:MOVH loc16, "ACC<<1"  is rpt_phase=1 & op_hi8=0xB3 & loc16  { local v:4 = ACC << 1; loc16 = v(2); }
 # MOVH loc16, P     0101 0111 LLLL LLLL  -- store high 16 bits of P to loc16.
 # Also MISSING — the next truncation in CAN_postRxEvent (word 0x5703 = MOVH @3,P, in an
 # RPT/PREAD block-copy idiom). [loc16] = (P << PM) >> 16; PM (product-shift) not tracked
 # in decode, so model the common PM=0 case: store the high word PH.
-:MOVH loc16, "P"  is op_hi8=0x57 & loc16  { loc16 = PH; }
+:MOVH loc16, "P"  is rpt_phase=1 & op_hi8=0x57 & loc16  { loc16 = PH; }
 # MOV loc16, P      0011 1111 LLLL LLLL  -- store low 16 bits of P (PM=0 modeled) to loc16.
-:MOV loc16, "P"   is op_hi8=0x3F & loc16  { loc16 = PL; }
+:MOV loc16, "P"   is rpt_phase=1 & op_hi8=0x3F & loc16  { loc16 = PL; }
 # MOVU ACC, loc16   0000 1110 LLLL LLLL  -- load ACC with zero-extended 16-bit word.
-:MOVU ACCreg, loc16  is op_hi8=0x0E & ACCreg & loc16  { ACC = zext(loc16); setNZ32(ACC); }
+:MOVU ACCreg, loc16  is rpt_phase=1 & op_hi8=0x0E & ACCreg & loc16  { ACC = zext(loc16); setNZ32(ACC); }
 # ADDCU ACC, loc16  0000 1100 LLLL LLLL  -- ACC = ACC + 0:[loc16] + C  (add unsigned w/ carry)
-:ADDCU ACCreg, loc16  is op_hi8=0x0C & ACCreg & loc16  {
+:ADDCU ACCreg, loc16  is rpt_phase=1 & op_hi8=0x0C & ACCreg & loc16  {
     local b:4 = zext(loc16);
     local cin:4 = zext($(C));
     $(C) = carry(ACC, b);          # approx: carry from the loc16 add (ignores the +C ripple)
@@ -569,7 +569,7 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
     setNZ32(ACC);
 }
 # SBBU ACC, loc16   0001 1101 LLLL LLLL  -- ACC = ACC - 0:[loc16] - ~C  (subtract unsigned w/ borrow)
-:SBBU ACCreg, loc16  is op_hi8=0x1D & ACCreg & loc16  {
+:SBBU ACCreg, loc16  is rpt_phase=1 & op_hi8=0x1D & ACCreg & loc16  {
     local b:4 = zext(loc16);
     local nborrow:4 = zext($(C) == 0);   # ~C as 0/1
     ACC = ACC - b - nborrow;
@@ -578,16 +578,16 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 
 # CLRC mode   0010 1001 CCCC CCCC  -- clear status bits per 8-bit mask (counterpart
 # to SETC mode / 0x3B). Named single-bit forms + general mask. EINT = CLRC INTM.
-:CLRC "SXM"   is op16=0x2901 { $(SXM) = 0; }
-:CLRC "OVM"   is op16=0x2902 { $(OVM) = 0; }
-:CLRC "TC"    is op16=0x2904 { $(TC)  = 0; }
-:CLRC "C"     is op16=0x2908 { $(C)   = 0; }
-:EINT         is op16=0x2910 { $(INTM)  = 0; }   # CLRC INTM (enable interrupts)
-:CLRC "DBGM"  is op16=0x2920 { $(DBGM)  = 0; }
-:CLRC "PAGE0" is op16=0x2940 { $(PAGE0) = 0; }
-:CLRC "VMAP"  is op16=0x2980 { $(VMAP)  = 0; }
+:CLRC "SXM"   is rpt_phase=1 & op16=0x2901 { $(SXM) = 0; }
+:CLRC "OVM"   is rpt_phase=1 & op16=0x2902 { $(OVM) = 0; }
+:CLRC "TC"    is rpt_phase=1 & op16=0x2904 { $(TC)  = 0; }
+:CLRC "C"     is rpt_phase=1 & op16=0x2908 { $(C)   = 0; }
+:EINT         is rpt_phase=1 & op16=0x2910 { $(INTM)  = 0; }   # CLRC INTM (enable interrupts)
+:CLRC "DBGM"  is rpt_phase=1 & op16=0x2920 { $(DBGM)  = 0; }
+:CLRC "PAGE0" is rpt_phase=1 & op16=0x2940 { $(PAGE0) = 0; }
+:CLRC "VMAP"  is rpt_phase=1 & op16=0x2980 { $(VMAP)  = 0; }
 # General mask: clear each flag selected by imm8 (same bit->flag map as SETC #imm8).
-:CLRC "#"imm8  is op_hi8=0x29 & imm8 {
+:CLRC "#"imm8  is rpt_phase=1 & op_hi8=0x29 & imm8 {
     local m:1 = imm8;
     $(SXM)   = $(SXM)   && (m[0,1] == 0);
     $(OVM)   = $(OVM)   && (m[1,1] == 0);
@@ -600,50 +600,64 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 }
 
 # RPT #8bit   1111 0110 CCCC CCCC  -- repeat next instruction (count+1 times).
-# The hardware repeat-counter (RPTC) isn't modeled, but the body must be non-empty
-# or the decompiler treats it as a bad instruction and truncates. Read the count
-# into a scratch so dataflow continues; the actual repeat is left to disassembly.
-:RPT "#"imm8  is op_hi8=0xF6 & imm8  { local c:2 = zext(imm8:1) + 1; }
 # RPT loc16   1111 0111 LLLL LLLL  -- repeat count from [loc16] (+1).
-:RPT loc16    is op_hi8=0xF7 & loc16 { local c:2 = loc16 + 1; }
+#
+# The loop is realised by the `:^instruction is rpt_phase=0 & rpt_active=1 &
+# instruction` wrapper in tms320c28x_rpt.sinc: the body here loads the raw N
+# into RPTC and, at inst_next, arms rpt_active=1 alongside dropping rpt_phase
+# to 0 (the wrapper's decode-time trigger -- see the "phase-bit partition"
+# comment in tms320c28x_rpt.sinc for why both bits are required). The wrapper
+# builds the repeated instruction once, then decrements RPTC and jumps back to
+# inst_start N more times. Total executions = N + 1, matching SPRU430F.
+# Ported from mwdmwd/ghidra-c28x (Apache-2.0); see THIRD-PARTY.md.
+:RPT "#"imm8  is op_hi8=0xF6 & imm8 & rpt_phase=1
+        [ rpt_active=1; rpt_phase=0;
+          globalset(inst_next, rpt_active); globalset(inst_next, rpt_phase); ] {
+    RPTC = zext(imm8:1);
+}
+:RPT loc16    is op_hi8=0xF7 & loc16 & rpt_phase=1
+        [ rpt_active=1; rpt_phase=0;
+          globalset(inst_next, rpt_active); globalset(inst_next, rpt_phase); ] {
+    RPTC = loc16;
+}
 
 # XOR loc16, AX   1111 001A LLLL LLLL  -- store-side XOR (loc ^= AX). A bit -> AL/AH.
-:XOR loc16, AX  is op_hi7=0x79 & loc16 & AX  { loc16 = loc16 ^ AX; }
+:XOR loc16, AX  is rpt_phase=1 & op_hi7=0x79 & loc16 & AX  { loc16 = loc16 ^ AX; }
 
 # =============================================================================
 # Batch 11: more top misses from the byte-swapped F28377D production firmware sweep.
 # =============================================================================
 # ADDB XARn,#7bit   1101 1nnn 0CCC CCCC  (bit7=0; SUBB XARn is the bit7=1 form).
-:ADDB xarn_hi3, "#"sp7  is op_hi5=0b11011 & xarn_hi3 & loc_b7=0 & sp7 {
+:ADDB xarn_hi3, "#"sp7  is rpt_phase=1 & op_hi5=0b11011 & xarn_hi3 & loc_b7=0 & sp7 {
     xarn_hi3 = xarn_hi3 + zext(sp7:1);
 }
 
 # --- 0xFF-prefix fixed/shift forms ------------------------------------------
 # ABS ACC          1111 1111 0101 0110   (ACC = |ACC|; decode-only on the V/sat edge)
-:ABS "ACC"   is op16=0xFF56 {
+:ABS "ACC"   is rpt_phase=1 & op16=0xFF56 {
     if (ACC s>= 0) goto inst_next;
     ACC = -ACC;
 }
 # MOVL P,ACC       1111 1111 0101 1010
-:MOVL "P", ACCreg  is op16=0xFF5A & ACCreg { P = ACC; }
+:MOVL "P", ACCreg  is rpt_phase=1 & op16=0xFF5A & ACCreg { P = ACC; }
 # SPM PM           1111 1111 0110 1xxx  (set product shift mode). PM now holds the
 # DECODED signed shift amount (-6..+1); packst0 re-encodes it to the raw ST0[7,3]
 # field as (1 - shift). Matches mwdmwd/ghidra-c28x's PM convention.
-:SPM "+1"  is op16=0xFF68 { $(PM) =  1; }
-:SPM "0"   is op16=0xFF69 { $(PM) =  0; }
-:SPM "-1"  is op16=0xFF6A { $(PM) = -1; }
-:SPM "-2"  is op16=0xFF6B { $(PM) = -2; }
-:SPM "-3"  is op16=0xFF6C { $(PM) = -3; }
-:SPM "-4"  is op16=0xFF6D { $(PM) = -4; }
-:SPM "-5"  is op16=0xFF6E { $(PM) = -5; }
-:SPM "-6"  is op16=0xFF6F { $(PM) = -6; }
+:SPM "+1"  is rpt_phase=1 & op16=0xFF68 { $(PM) =  1; }
+:SPM "0"   is rpt_phase=1 & op16=0xFF69 { $(PM) =  0; }
+:SPM "-1"  is rpt_phase=1 & op16=0xFF6A { $(PM) = -1; }
+:SPM "-2"  is rpt_phase=1 & op16=0xFF6B { $(PM) = -2; }
+:SPM "-3"  is rpt_phase=1 & op16=0xFF6C { $(PM) = -3; }
+:SPM "-4"  is rpt_phase=1 & op16=0xFF6D { $(PM) = -4; }
+:SPM "-5"  is rpt_phase=1 & op16=0xFF6E { $(PM) = -5; }
+:SPM "-6"  is rpt_phase=1 & op16=0xFF6F { $(PM) = -6; }
 # ADD ACC,#16bit<<#0..15   1111 1111 0001 SHFT : iiii iiii iiii iiii  (2-word)
-:ADD ACCreg, "#"imm16^"<<#"^shft4  is op_hi8=0xFF & loc_hi4=0b0001 & shft4 & ACCreg ; imm16 {
+:ADD ACCreg, "#"imm16^"<<#"^shft4  is rpt_phase=1 & op_hi8=0xFF & loc_hi4=0b0001 & shft4 & ACCreg ; imm16 {
     local v:4 = zext(imm16:2); local s:4 = zext(shft4:1); ACC = ACC + (v << s);
 }
 # LSL ACC,#1..16   1111 1111 0011 SHFT  (logical shift left ACC; SHFT=0 -> 16). Single
 # word. C = last bit shifted out (= ACC bit 32-sh, pre-shift); N/Z from the result.
-:LSL ACCreg, "#"shcount  is op_hi8=0xFF & loc_hi4=0b0011 & ACCreg & shcount {
+:LSL ACCreg, "#"shcount  is rpt_phase=1 & op_hi8=0xFF & loc_hi4=0b0011 & ACCreg & shcount {
     local sh:4 = zext(shcount);
     $(C) = ((ACC >> (32 - sh)) & 1) != 0;
     ACC = ACC << sh;
@@ -651,7 +665,7 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 }
 # SFR ACC,#1..16   1111 1111 0100 SHFT  (shift ACC right; SHFT=0 -> 16). Single word.
 # Reuse the shcount subtable (= shft4+1) used by the AX immediate shifts.
-:SFR ACCreg, "#"shcount  is op_hi8=0xFF & loc_hi4=0b0100 & ACCreg & shcount {
+:SFR ACCreg, "#"shcount  is rpt_phase=1 & op_hi8=0xFF & loc_hi4=0b0100 & ACCreg & shcount {
     ACC = ACC >> shcount;
 }
 # SUB ACC,#16bit<<#0..15   1111 1111 0000 SHFT : iiii  (2-word; counterpart to the
@@ -664,19 +678,19 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 # The flag-set + carry pair matches TI's own semantics for the operation and lets the
 # subsequent CMPB/CMPL bounds check reason from the post-SUB ACC. Adapted from
 # mwdmwd/ghidra-c28x (Apache-2.0); see THIRD-PARTY.md.
-:SUB ACCreg, "#"imm16^"<<#"^shft4  is switch_canonical=1 & op_hi8=0xFF & loc_hi4=0b0000 & shft4 & ACCreg ; imm16 {
+:SUB ACCreg, "#"imm16^"<<#"^shft4  is rpt_phase=1 & switch_canonical=1 & op_hi8=0xFF & loc_hi4=0b0000 & shft4 & ACCreg ; imm16 {
     local v:4 = zext(imm16:2); local s:4 = zext(shft4:1);
     ACC = ACC - (v << s);
     $(C) = 1;
     setNZ32(ACC);
 }
-:SUB ACCreg, "#"imm16^"<<#"^shft4  is op_hi8=0xFF & loc_hi4=0b0000 & shft4 & ACCreg ; imm16 {
+:SUB ACCreg, "#"imm16^"<<#"^shft4  is rpt_phase=1 & op_hi8=0xFF & loc_hi4=0b0000 & shft4 & ACCreg ; imm16 {
     local v:4 = zext(imm16:2); local s:4 = zext(shft4:1); ACC = ACC - (v << s);
 }
 # NOT AX   1111 1111 0101 111A  (complement AL/AH; A=bit0).
-:NOT AXb0  is op_hi8=0xFF & op_lo71=0b0101111 & AXb0  { AXb0 = ~AXb0; setNZ16(AXb0); }
+:NOT AXb0  is rpt_phase=1 & op_hi8=0xFF & op_lo71=0b0101111 & AXb0  { AXb0 = ~AXb0; setNZ16(AXb0); }
 # NEG AX   1111 1111 0101 110A  (negate AL/AH; A=bit0). dis2000-confirmed (DIR image).
-:NEG AXb0  is op_hi8=0xFF & op_lo71=0b0101110 & AXb0  {
+:NEG AXb0  is rpt_phase=1 & op_hi8=0xFF & op_lo71=0b0101110 & AXb0  {
     $(C) = (AXb0 == 0);  # carry set only when result is 0 (per SPRU430F)
     $(V) = (AXb0 == 0x8000);
     AXb0 = -AXb0;
@@ -689,7 +703,7 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 # ADD ACC, loc16 <<#0   1000 0001 LLLL LLLL  (single word; base form of the
 # ADD ACC,loc16<<#shift family). Sign-extended per SXM=1 (common case). Was the
 # truncation in the first fragment of FUN_0009099d (word 0x81a3).
-:ADD ACCreg, loc16  is op_hi8=0x81 & ACCreg & loc16 {
+:ADD ACCreg, loc16  is rpt_phase=1 & op_hi8=0x81 & ACCreg & loc16 {
     local b:4 = sext(loc16);
     $(C) = carry(ACC, b);
     $(V) = scarry(ACC, b);
@@ -698,7 +712,7 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 }
 # SUB ACC, loc16 <<#0   1010 1110 LLLL LLLL  (single word; SUB counterpart of the
 # 0x81 ADD base form). Was the truncation behind word 0xae3e.
-:SUB ACCreg, loc16  is op_hi8=0xAE & ACCreg & loc16 {
+:SUB ACCreg, loc16  is rpt_phase=1 & op_hi8=0xAE & ACCreg & loc16 {
     local b:4 = sext(loc16);
     $(C) = !(ACC < b);
     $(V) = sborrow(ACC, b);
@@ -706,23 +720,23 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
     setNZ32(ACC);
 }
 # ADD ACC, loc16 <<#16   0000 0101 LLLL LLLL  (single word; add loc<<16 to ACC).
-:ADD ACCreg, loc16^"<<#16"  is op_hi8=0x05 & ACCreg & loc16 {
+:ADD ACCreg, loc16^"<<#16"  is rpt_phase=1 & op_hi8=0x05 & ACCreg & loc16 {
     local v:4 = zext(loc16) << 16; ACC = ACC + v;
 }
 # CMP loc16, #16bitSigned   0001 1011 LLLL LLLL : iiii  (2-word; flags only).
-:CMP loc16, "#"simm16  is op_hi8=0x1B & loc16 ; simm16 {
+:CMP loc16, "#"simm16  is rpt_phase=1 & op_hi8=0x1B & loc16 ; simm16 {
     local x:2 = loc16; local y:2 = simm16:2; local r:2 = x - y;
     $(N) = (r s< 0); $(Z) = (r == 0);
 }
 # MPYU ACC,T,loc16   0011 0110 LLLL LLLL  (unsigned 16x16 -> ACC).
-:MPYU ACCreg, Treg, loc16  is op_hi8=0x36 & ACCreg & Treg & loc16 {
+:MPYU ACCreg, Treg, loc16  is rpt_phase=1 & op_hi8=0x36 & ACCreg & Treg & loc16 {
     local a:4 = zext(T); local b:4 = zext(loc16); ACC = a * b;
 }
 # SUB loc16, AX   0111 010A LLLL LLLL  (reverse-subtract: loc16 = AX - loc16).
-:SUB loc16, AX  is op_hi7=0x3A & loc16 & AX  { loc16 = AX - loc16; }
+:SUB loc16, AX  is rpt_phase=1 & op_hi7=0x3A & loc16 & AX  { loc16 = AX - loc16; }
 # SUBR loc16, AX  1110 101A LLLL LLLL  (reverse-subtract store: [loc16] = AX - [loc16]).
 # Confirmed via dis2000 (word 0xeaa8) — the binary-pattern grep missed it. C/V/N/Z.
-:SUBR loc16, AX  is op_hi7=0x75 & loc16 & AX  {
+:SUBR loc16, AX  is rpt_phase=1 & op_hi7=0x75 & loc16 & AX  {
     local m:2 = loc16;
     $(C) = !(AX < m);
     $(V) = sborrow(AX, m);
@@ -731,7 +745,7 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 }
 # ADD loc16, AX   0111 001A LLLL LLLL  (store-side add: [loc16] = [loc16] + AX). Was
 # MISSING — truncation in FUN_000900f8 (word 0x72a6 = ADD *+XAR2[AR0],AL). C/V/N/Z.
-:ADD loc16, AX  is op_hi7=0x39 & loc16 & AX  {
+:ADD loc16, AX  is rpt_phase=1 & op_hi7=0x39 & loc16 & AX  {
     local m:2 = loc16;
     $(C) = carry(m, AX);
     $(V) = scarry(m, AX);
@@ -746,7 +760,7 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 # MOV loc16, *(0:16bit)   1111 0101 LLLL LLLL : CCCC CCCC CCCC CCCC  (2-word).
 # Move the 16-bit value at absolute data address 0:imm16 into loc16. Was the
 # truncation after FUN_00093327 / FUN_00093407 (load form).
-:MOV loc16, "*(0:"imm16")"  is op_hi8=0xF5 & loc16 ; imm16  {
+:MOV loc16, "*(0:"imm16")"  is rpt_phase=1 & op_hi8=0xF5 & loc16 ; imm16  {
     local a:4 = zext(imm16:2);
     loc16 = *[ram]:2 a;
     setNZ16(loc16);
@@ -754,7 +768,7 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 # MOV *(0:16bit), loc16   1111 0100 LLLL LLLL : CCCC CCCC CCCC CCCC  (2-word).
 # Store counterpart of the above: [0:imm16] = [loc16]. The next gap behind the
 # 0xF5 load once flow continued past it (word 0xf4a9 after FUN_00093327/407).
-:MOV "*(0:"imm16"),"^loc16  is op_hi8=0xF4 & loc16 ; imm16  {
+:MOV "*(0:"imm16"),"^loc16  is rpt_phase=1 & op_hi8=0xF4 & loc16 ; imm16  {
     local a:4 = zext(imm16:2);
     *[ram]:2 a = loc16;
 }

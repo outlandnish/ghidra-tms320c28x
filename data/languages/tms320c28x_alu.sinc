@@ -19,7 +19,7 @@
 # 16-bit ADD / SUB on AX (AL/AH), with full flags
 # =============================================================================
 # ADD AX, loc16     1001 010A LLLL LLLL
-:ADD AX, loc16   is op_hi7=0x4A & AX & loc16  {
+:ADD AX, loc16   is rpt_phase=1 & op_hi7=0x4A & AX & loc16  {
     local b:2 = loc16;
     $(C) = carry(AX, b);
     $(V) = scarry(AX, b);
@@ -28,7 +28,7 @@
 }
 
 # SUB AX, loc16     1001 111A LLLL LLLL
-:SUB AX, loc16   is op_hi7=0x4F & AX & loc16  {
+:SUB AX, loc16   is rpt_phase=1 & op_hi7=0x4F & AX & loc16  {
     local b:2 = loc16;
     $(C) = !(AX < b);            # C set when no borrow
     $(V) = sborrow(AX, b);
@@ -40,39 +40,39 @@
 # 16-bit logical ops on AX
 # =============================================================================
 # AND AX, loc16          1100 111A LLLL LLLL                       (1-word)  AX = AX & [loc16]
-:AND AX, loc16   is op_hi7=0x67 & AX & loc16  { AX = AX & loc16; setNZ16(AX); }
+:AND AX, loc16   is rpt_phase=1 & op_hi7=0x67 & AX & loc16  { AX = AX & loc16; setNZ16(AX); }
 # AND AX, loc16, #16bit  1100 110A LLLL LLLL : iiii iiii iiii iiii (2-word)  AX = [loc16] & imm16
 # (the 0x66 slot was previously mis-modeled as the 1-word AND AX,loc16, which both decoded
 #  the wrong instruction and consumed one word too few — fixed: 1-word is 0x67, this is 0x66.)
-:AND AX, loc16, "#"imm16  is op_hi7=0x66 & AX & loc16 ; imm16 { AX = loc16 & imm16:2; setNZ16(AX); }
+:AND AX, loc16, "#"imm16  is rpt_phase=1 & op_hi7=0x66 & AX & loc16 ; imm16 { AX = loc16 & imm16:2; setNZ16(AX); }
 # OR AX, loc16      1100 101A LLLL LLLL
-:OR  AX, loc16   is op_hi7=0x65 & AX & loc16  { AX = AX | loc16; setNZ16(AX); }
+:OR  AX, loc16   is rpt_phase=1 & op_hi7=0x65 & AX & loc16  { AX = AX | loc16; setNZ16(AX); }
 # XOR AX, loc16     0111 000A LLLL LLLL
-:XOR AX, loc16   is op_hi7=0x38 & AX & loc16  { AX = AX ^ loc16; setNZ16(AX); }
+:XOR AX, loc16   is rpt_phase=1 & op_hi7=0x38 & AX & loc16  { AX = AX ^ loc16; setNZ16(AX); }
 
 # 8-bit-immediate logical forms (single-word; zero-extended #8bit). N/Z set per
 # SPRU430F. ORB found in real firmware as the flow-truncating gap (bit-flag set
 # loops). ANDB AX,#imm8 already lives in more.sinc (op_hi7=0x48).
 # ORB AX, #8bit     0101 000A CCCC CCCC
-:ORB  AX, "#"imm8  is op_hi7=0x28 & AX & imm8  { AX = AX | zext(imm8:1); setNZ16(AX); }
+:ORB  AX, "#"imm8  is rpt_phase=1 & op_hi7=0x28 & AX & imm8  { AX = AX | zext(imm8:1); setNZ16(AX); }
 # XORB AX, #8bit    1111 000A CCCC CCCC
-:XORB AX, "#"imm8  is op_hi7=0x78 & AX & imm8  { AX = AX ^ zext(imm8:1); setNZ16(AX); }
+:XORB AX, "#"imm8  is rpt_phase=1 & op_hi7=0x78 & AX & imm8  { AX = AX ^ zext(imm8:1); setNZ16(AX); }
 
 # =============================================================================
 # 16-bit logical ops on ACC (single-word forms)
 # =============================================================================
 # AND ACC, loc16    1000 1001 LLLL LLLL
-:AND ACCreg, loc16  is op_hi8=0x89 & ACCreg & loc16  { ACC = ACC & zext(loc16); setNZ32(ACC); }
+:AND ACCreg, loc16  is rpt_phase=1 & op_hi8=0x89 & ACCreg & loc16  { ACC = ACC & zext(loc16); setNZ32(ACC); }
 # OR ACC, loc16     1010 1111 LLLL LLLL
-:OR ACCreg, loc16   is op_hi8=0xAF & ACCreg & loc16  { ACC = ACC | zext(loc16); setNZ32(ACC); }
+:OR ACCreg, loc16   is rpt_phase=1 & op_hi8=0xAF & ACCreg & loc16  { ACC = ACC | zext(loc16); setNZ32(ACC); }
 # XOR ACC, loc16    1011 0111 LLLL LLLL
-:XOR ACCreg, loc16  is op_hi8=0xB7 & ACCreg & loc16  { ACC = ACC ^ zext(loc16); setNZ32(ACC); }
+:XOR ACCreg, loc16  is rpt_phase=1 & op_hi8=0xB7 & ACCreg & loc16  { ACC = ACC ^ zext(loc16); setNZ32(ACC); }
 
 # =============================================================================
 # CMP (compare = subtract, set flags, discard result)
 # =============================================================================
 # CMP AX, loc16     0101 010A LLLL LLLL
-:CMP AX, loc16   is op_hi7=0x2A & AX & loc16  {
+:CMP AX, loc16   is rpt_phase=1 & op_hi7=0x2A & AX & loc16  {
     local b:2 = loc16;
     local r:2 = AX - b;
     $(C) = !(AX < b);
@@ -84,7 +84,7 @@
 # 32-bit ALU on ACC (loc32)
 # =============================================================================
 # ADDL ACC, loc32   0000 0111 LLLL LLLL
-:ADDL ACCreg, loc32 is op_hi8=0x07 & ACCreg & loc32  {
+:ADDL ACCreg, loc32 is rpt_phase=1 & op_hi8=0x07 & ACCreg & loc32  {
     local b:4 = loc32;
     $(C) = carry(ACC, b);
     $(V) = scarry(ACC, b);
@@ -92,7 +92,7 @@
     setNZ32(ACC);
 }
 # SUBL ACC, loc32   0000 0011 LLLL LLLL
-:SUBL ACCreg, loc32 is op_hi8=0x03 & ACCreg & loc32  {
+:SUBL ACCreg, loc32 is rpt_phase=1 & op_hi8=0x03 & ACCreg & loc32  {
     local b:4 = loc32;
     $(C) = !(ACC < b);
     $(V) = sborrow(ACC, b);
@@ -100,7 +100,7 @@
     setNZ32(ACC);
 }
 # CMPL ACC, loc32   0000 1111 LLLL LLLL
-:CMPL ACCreg, loc32 is op_hi8=0x0F & ACCreg & loc32  {
+:CMPL ACCreg, loc32 is rpt_phase=1 & op_hi8=0x0F & ACCreg & loc32  {
     local b:4 = loc32;
     local r:4 = ACC - b;
     $(C) = !(ACC < b);
@@ -112,7 +112,7 @@
 # INC / DEC of a 16-bit memory/register location
 # =============================================================================
 # INC loc16         0000 1010 LLLL LLLL
-:INC loc16   is op_hi8=0x0A & loc16  {
+:INC loc16   is rpt_phase=1 & op_hi8=0x0A & loc16  {
     local v:2 = loc16;
     $(V) = scarry(v, 1:2);
     v = v + 1;
@@ -120,7 +120,7 @@
     setNZ16(v);
 }
 # DEC loc16         0000 1011 LLLL LLLL
-:DEC loc16   is op_hi8=0x0B & loc16  {
+:DEC loc16   is rpt_phase=1 & op_hi8=0x0B & loc16  {
     local v:2 = loc16;
     $(V) = sborrow(v, 1:2);
     v = v - 1;
@@ -132,13 +132,13 @@
 # NEG / NOT of ACC (single-word, FF-prefixed)
 # =============================================================================
 # NEG ACC           1111 1111 0101 0100
-:NEG ACCreg   is op16=0xFF54 & ACCreg  {
+:NEG ACCreg   is rpt_phase=1 & op16=0xFF54 & ACCreg  {
     $(V) = (ACC == 0x80000000);
     ACC = -ACC;
     setNZ32(ACC);
 }
 # NOT ACC           1111 1111 0101 0101
-:NOT ACCreg   is op16=0xFF55 & ACCreg  {
+:NOT ACCreg   is rpt_phase=1 & op16=0xFF55 & ACCreg  {
     ACC = ~ACC;
     setNZ32(ACC);
 }
@@ -146,7 +146,7 @@
 # =============================================================================
 # TBIT loc16, #bit  0100 BBBB LLLL LLLL  -- test bit, result -> TC
 # =============================================================================
-:TBIT loc16, "#"tbit_b  is op_hi_4=0b0100 & tbit_b & loc16  {
+:TBIT loc16, "#"tbit_b  is rpt_phase=1 & op_hi_4=0b0100 & tbit_b & loc16  {
     local v:2 = loc16;
     $(TC) = ((v >> tbit_b) & 1) != 0;
 }

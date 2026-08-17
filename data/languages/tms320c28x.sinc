@@ -157,33 +157,33 @@ macro setNZ32(r) {
 # Fixed-opcode, no-operand instructions (verified single-word encodings).
 # =============================================================================
 
-:ABORTI         is op16=0x0001  { }                 # Abort interrupt (skeleton: no semantics yet)
+:ABORTI         is rpt_phase=1 & op16=0x0001  { }                 # Abort interrupt (skeleton: no semantics yet)
 
-:EALLOW         is op16=0x7622  { $(EALLOWF) = 1; } # Enable write access to protected space
-:EDIS           is op16=0x761A  { $(EALLOWF) = 0; } # Disable write access to protected space
-:IDLE           is op16=0x7621  { }                 # Put processor in idle mode
-:ESTOP0         is op16=0x7625  { }                 # Emulation stop 0
+:EALLOW         is rpt_phase=1 & op16=0x7622  { $(EALLOWF) = 1; } # Enable write access to protected space
+:EDIS           is rpt_phase=1 & op16=0x761A  { $(EALLOWF) = 0; } # Disable write access to protected space
+:IDLE           is rpt_phase=1 & op16=0x7621  { }                 # Put processor in idle mode
+:ESTOP0         is rpt_phase=1 & op16=0x7625  { }                 # Emulation stop 0
 # Stack-pointer align/unalign (common in prologues/epilogues). ASP: if SP odd, SP++ and
 # set SPA; NASP: if SPA, SP-- and clear SPA. SPA = ST1[4]. (0x761b / 0x7617.)
-:ASP            is op16=0x761B  { if ((SP & 1) == 0) goto <even>; SP = SP + 1; $(SPA) = 1; goto inst_next; <even> $(SPA) = 0; }
-:NASP           is op16=0x7617  { if ($(SPA) == 0) goto inst_next; SP = SP - 1; $(SPA) = 0; }
-:ESTOP1         is op16=0x7624  { }                 # Emulation stop 1 (halts only when emulator connected)
+:ASP            is rpt_phase=1 & op16=0x761B  { if ((SP & 1) == 0) goto <even>; SP = SP + 1; $(SPA) = 1; goto inst_next; <even> $(SPA) = 0; }
+:NASP           is rpt_phase=1 & op16=0x7617  { if ($(SPA) == 0) goto inst_next; SP = SP - 1; $(SPA) = 0; }
+:ESTOP1         is rpt_phase=1 & op16=0x7624  { }                 # Emulation stop 1 (halts only when emulator connected)
 
 # IER/IFR immediate forms (2-word: opcode word + imm16).  SPRU430F encodings:
 # OR  IER,#16bit  0111 0110 0010 0011 = 0x7623
 # OR  IFR,#16bit  0111 0110 0010 0111 = 0x7627
 # AND IER,#16bit  0111 0110 0010 0110 = 0x7626
 # AND IFR,#16bit  0111 0110 0010 1111 = 0x762F
-:OR  "IER", "#"imm16  is op16=0x7623 ; imm16  { IER = IER | imm16:2; }
-:OR  "IFR", "#"imm16  is op16=0x7627 ; imm16  { IFR = IFR | imm16:2; }
-:AND "IER", "#"imm16  is op16=0x7626 ; imm16  { IER = IER & imm16:2; }
-:AND "IFR", "#"imm16  is op16=0x762F ; imm16  { IFR = IFR & imm16:2; }
+:OR  "IER", "#"imm16  is rpt_phase=1 & op16=0x7623 ; imm16  { IER = IER | imm16:2; }
+:OR  "IFR", "#"imm16  is rpt_phase=1 & op16=0x7627 ; imm16  { IFR = IFR | imm16:2; }
+:AND "IER", "#"imm16  is rpt_phase=1 & op16=0x7626 ; imm16  { IER = IER & imm16:2; }
+:AND "IFR", "#"imm16  is rpt_phase=1 & op16=0x762F ; imm16  { IFR = IFR & imm16:2; }
 
 # NOP {*ind}: 0111 0111 LLLL LLLL. The loc field optionally performs an indirect
 # address modify (e.g. NOP *XAR0++). Plain NOP is the loc=0 case. One constructor
 # covers both: loc=0 renders "@0" (still mnemonic NOP); modify forms show the loc.
-:NOP            is op_hi8=0x77 & op_lo8=0x00  { }              # plain No-operation
-:NOP loc16      is op_hi8=0x77 & op_lo8!=0x00 & loc16  { }     # NOP with indirect modify
+:NOP            is rpt_phase=1 & op_hi8=0x77 & op_lo8=0x00  { }              # plain No-operation
+:NOP loc16      is rpt_phase=1 & op_hi8=0x77 & op_lo8!=0x00 & loc16  { }     # NOP with indirect modify
 
 # =============================================================================
 # Register-display operands.  A bare register name cannot sit in an instruction's
@@ -226,3 +226,8 @@ shcount: cnt  is shft4  [ cnt = shft4 + 1; ]  { export *[const]:1 cnt; }
 @include "tms320c28x_vcu.sinc"
 @include "tms320c28x_more.sinc"
 @include "tms320c28x_ext56.sinc"
+# The RPT/RPTB `:^instruction` prefix wrappers must be included AFTER every other
+# instruction family — SLEIGH resolves the `instruction` root table only once the
+# full grammar is in scope, and the wrappers reference it. Practically the include
+# order doesn't matter for resolution, but keeping it last documents intent.
+@include "tms320c28x_rpt.sinc"

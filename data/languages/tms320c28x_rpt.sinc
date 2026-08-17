@@ -1,0 +1,83 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Nishanth Samala
+# Copyright the mwdmwd/ghidra-c28x contributors (https://github.com/mwdmwd/ghidra-c28x)
+#
+# Ported from mwdmwd/ghidra-c28x (Apache-2.0): the `:^instruction` prefix-wrapper
+# pattern for the C28x hardware repeats and the `rpt_active` / `rptb_flag` /
+# `rpt_phase` context-bit scheme. See THIRD-PARTY.md.
+#
+# SLEIGH loop models for RPT and RPTB. The loops live in p-code, so the
+# DECOMPILER sees them -- which the Java EmulateInstructionStateModifier never
+# provided. RPTB is fully retired from that callback and emulates from here.
+#
+# RPT is not, and cannot be: the wrappers are armed by `globalset`, and Ghidra's
+# emulator applies a globalset commit one instruction too late (the value
+# written for the target address only becomes visible after that instruction has
+# already been decoded and executed). RPTB targets the block-end address, far
+# enough ahead that the commit has landed. RPT targets inst_next -- the very
+# next instruction -- so the base constructor always wins the match under
+# emulation and the wrapper below never runs (RPTC is never decremented). The
+# RPT arm/re-issue therefore stays in postExecuteCallback for EMULATION only;
+# this file remains the model the decompiler sees. Disassembly is unaffected in
+# both cases. See docs/EMULATION.md "Why RPT still needs the modifier".
+#
+# HOW IT WORKS
+# ------------
+# The C28x's zero-overhead repeats have an implicit loop-back that a single
+# instruction's p-code cannot express. The `:^instruction` prefix wrapper
+# handles this by re-executing the wrapped instruction under decoded p-code
+# control: the RPT body arms `rpt_active=1` on the address of the instruction
+# to be repeated, the wrapper fires on that address, builds the inner
+# instruction, and either falls through (counter exhausted) or decrements and
+# jumps back to inst_start.
+#
+# PHASE-BIT PARTITION -- non-obvious, load-bearing
+# ------------------------------------------------
+# `:^instruction is X & instruction { ... build instruction; ... }` compiles to
+# a variant of every base constructor whose pattern is (X AND base_pattern). If
+# a base constructor imposes NO context constraint that contradicts X, the
+# variant and the base overlap -- both match at addresses where X holds.
+# `sleigh -l` reports this as "Constructor patterns cannot be distinguished",
+# and at runtime the plain base wins, silently making the wrapper a no-op.
+#
+# Every shipped Ghidra processor that uses `:^instruction` (avr8, 8051, ARM,
+# Hexagon) fixes this by giving base constructors a positive-phase constraint
+# that the wrapper's pattern negates. We do the same: every top-level `:MNEMONIC`
+# constructor requires `& rpt_phase=1`, the pspec seeds `rpt_phase=1` as the
+# ram-space default, and RPT / RPTB globalset `rpt_phase=0` on the wrapped
+# address alongside `rpt_active` / `rptb_flag`. The wrapper's pattern then
+# includes `rpt_phase=0`, so it matches uniquely there; its local
+# `[ rpt_phase=1; ]` action flips the phase back for the inner `build
+# instruction`, allowing the base to match on re-parse.
+#
+# Neither RPT nor RPTB nests on the C28x (single RPTC / single RB), so the
+# 1-bit context flags + register-backed counters are hardware-accurate.
+
+# RPT wrapper: the repeated instruction runs once via `build instruction`, then
+# loops back RPTC additional times. Total executions = RPTC + 1, matching the
+# C28x definition (RPT #N repeats N+1 times). `rptb_flag=0` in the pattern is
+# for mutual exclusion with the RPTB wrapper below (both wrappers gate on
+# rpt_phase=0; without the exclusion sleigh -l reports "cannot be distinguished"
+# because the ambiguity checker considers the theoretical case where both bits
+# hold, even though RPT and RPTB cannot arm the same address in practice).
+:^instruction  is rpt_phase=0 & rpt_active=1 & rptb_flag=0 & instruction  [ rpt_phase=1; ] {
+    build instruction;
+    if (RPTC == 0) goto inst_next;
+    RPTC = RPTC - 1;
+    goto inst_start;
+}
+
+# RPTB wrapper: fires at the block-end address (globalset from the RPTB body's
+# rptb_end sub-table). Falls through when RB_RC is exhausted; otherwise
+# decrements RB_RC and jumps back to RB_RSTART (the first instruction of the
+# block, i.e. inst_next of the RPTB itself). RB_RA cleared on the falling-
+# through pass, matching hardware. `rpt_active=0` for mutual exclusion vs the
+# RPT wrapper above.
+:^instruction  is rpt_phase=0 & rptb_flag=1 & rpt_active=0 & instruction  [ rpt_phase=1; ] {
+    build instruction;
+    if (RB_RC == 0) goto <done>;
+    RB_RC = RB_RC - 1;
+    goto [RB_RSTART];
+  <done>
+    RB_RA = 0;
+}
