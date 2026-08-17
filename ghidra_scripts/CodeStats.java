@@ -26,7 +26,7 @@ public class CodeStats extends GhidraScript {
         FunctionIterator fi = l.getFunctions(true);
         while (fi.hasNext()) { fi.next(); funcs++; }
 
-        long total = currentProgram.getMemory().getNumInitializedAddresses();
+        long total = currentProgram.getMemory().getAllInitializedAddressSet().getNumAddresses();
         println("=== POST-ANALYSIS CODE STATS ===");
         println("functions found:      " + funcs);
         println("instructions:         " + insnCount + "  (" + insnBytes + " addr units)");
