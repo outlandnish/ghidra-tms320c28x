@@ -46,11 +46,7 @@ trap 'rm -rf "$tmp"' EXIT
 (cd "$lang" && "$GHIDRA_INSTALL_DIR/support/sleigh" tms320c28x.slaspec >/dev/null)
 [ -f "$lang/tms320c28x.sla" ] || { echo "SLEIGH compile failed"; exit 1; }
 
-modroot="$GHIDRA_INSTALL_DIR/Ghidra/Processors/TMS320C28x"
-inst="$modroot/data/languages"
-mkdir -p "$inst" "$modroot/lib"
-cp "$lang"/* "$inst/"
-cp "$module/Module.manifest" "$modroot/Module.manifest"
+modlib=$(_c28x_install_module "$GHIDRA_INSTALL_DIR" "$module")
 
 # 2. Compile all src/main/java classes and package into the extension JAR.
 if [ -n "${JAVA_HOME:-}" ]; then
@@ -71,7 +67,7 @@ classes="$tmp/classes"
 mkdir -p "$classes"
 mapfile -d '' srcs < <(find "$module/src/main/java" -name '*.java' -print0)
 "$javac" --release 21 -cp "$cp" -d "$classes" "${srcs[@]}"
-"$jartool" --create --file "$modroot/lib/TMS320C28x.jar" -C "$classes" ghidra
+"$jartool" --create --file "$modlib/TMS320C28x.jar" -C "$classes" ghidra
 
 # 3. Run the allocator probe.
 mkdir -p "$tmp/proj" "$tmp/scripts"
