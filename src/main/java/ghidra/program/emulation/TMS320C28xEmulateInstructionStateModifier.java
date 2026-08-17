@@ -22,56 +22,77 @@ import ghidra.program.model.pcode.PcodeOp;
 import ghidra.program.model.pcode.Varnode;
 
 /**
- * Emulation support for TMS320C28x features that plain SLEIGH p-code cannot express.
+ * Emulation support for TMS320C28x behaviour that plain SLEIGH cannot express: the
+ * single-instruction RPT repeat under emulation, the VCU-II CRC accumulate, and the FPU
+ * non-IEEE conditioning / flag semantics.
  *
- * <p>Two categories are handled here:
+ * <p><b>What moved to SLEIGH, and what had to stay.</b> RPT and RPTB are now modeled in
+ * SLEIGH via a {@code :^instruction} prefix wrapper gated on the {@code rpt_active} /
+ * {@code rptb_flag} / {@code rpt_phase} context bits (see
+ * {@code data/languages/tms320c28x_rpt.sinc} for the wrappers and
+ * {@code tms320c28x_more.sinc} / {@code tms320c28x_fpu.sinc} for the bodies). The wrapper
+ * approach is adopted from mwdmwd/ghidra-c28x (Apache-2.0) and buys something the old
+ * state-modifier loop never could: the DECOMPILER sees the repeat. The {@code countSignBits}
+ * CALLOTHER was likewise retired in favour of a pure-SLEIGH CSB ACC built on the
+ * {@code lzcount} primitive (see {@code tms320c28x_ext56.sinc}).
  *
- * <p><b>1. Hardware repeat loops (RPTB / RPT).</b> These are zero-overhead repeats with an
- * <i>implicit</i> loop-back: the CPU compares PC to a block-end / re-issues a single instruction
- * with no branch opcode to hang p-code on. A constructor's p-code can only affect its own
- * instruction, so SLEIGH cannot model the loop. Ghidra's built-in processors solve exactly this
- * class of problem with a state modifier (e.g. Hexagon's hardware loops), which is what
- * {@link #postExecuteCallback} does: after each instruction it checks whether we reached the end
- * of an active repeat and, if so, redirects the PC — precisely what the hardware does.
+ * <p><b>RPTB emulates from SLEIGH alone; RPT does not.</b> The wrappers are armed by
+ * {@code globalset}, and Ghidra's emulator applies a {@code globalset} context commit one
+ * instruction too late: the value intended for the target address only becomes visible
+ * after that instruction has already been decoded and executed. RPTB targets the block-end
+ * address, several instructions ahead, so the commit has landed by the time it matters and
+ * the wrapper fires correctly. RPT targets {@code inst_next} — the very next instruction —
+ * so the commit is always late, the plain base constructor wins the pattern match, and the
+ * wrapper's p-code never runs ({@code RPTC} is never decremented). Measured directly by
+ * dumping {@code contextreg} per emulated step:
+ *
+ * <pre>
+ *   PC=0xc011  RPTC=15  ctx=0x04000000   rpt_phase=1, rpt_active=0  -&gt; base matches
+ *   PC=0xc012  RPTC=15  ctx=0x10000000   rpt_active=1, rpt_phase=0  -&gt; wrapper, one word late
+ * </pre>
+ *
+ * This holds whether the bytes are written straight into emulator memory or properly
+ * disassembled into the program first, so {@link #postExecuteCallback} below retains the
+ * RPT arm / re-issue logic — and ONLY that. It is what keeps the {@code RPT #15 || SUBCU}
+ * unsigned divide and {@code RPT || VCRCxx} block CRC emulating. The RPTB half of the old
+ * callback is gone for good; SLEIGH handles it.
+ *
+ * <p>The two mechanisms do not fight: because the wrapper never fires at {@code inst_next}
+ * under emulation, the callback is the only thing driving the RPT loop there, while under
+ * disassembly the callback does not run at all and the wrapper is the only thing modelling
+ * it. Verified by the RPT and RPTB cases of {@code ghidra_scripts/EmuRptTest.java}.
+ *
+ * <p>What remains in this class:
  * <ul>
- *   <li><b>RPTB</b> — repeat a block {@code [inst_next, inst_next+RSIZE)} for {@code RC+1} passes.
- *   <li><b>RPT</b> — repeat the single following instruction {@code N+1} times. The C28x uses
- *       {@code RPT #15 || SUBCU} for unsigned division and {@code RPT || VCRCxx} for block CRC,
- *       so modeling RPT (together with the SUBCU / VCRC p-code below) makes those idioms emulate.
- * </ul>
- * Neither RPTB nor RPT can nest on this core (single RB / RPTC), so one level of state each is
- * hardware-accurate. Word addresses are used throughout: this is a wordsize=2 space, so
- * {@code Address.getOffset()} is a byte offset (word&nbsp;&times;&nbsp;2).
- *
- * <p><b>2. Custom compute pcodeops (CALLOTHER).</b> A few instructions compute values with no
- * SLEIGH primitive. Their constructors emit a named pcodeop and this class supplies the behavior:
- * <ul>
+ *   <li><b>RPT loop re-issue</b> — see {@link #postExecuteCallback}.</li>
  *   <li><b>VCRC8L / VCRC16P1L / VCRC32L</b> — the VCU-II CRC accumulate (polynomials 0x07 /
- *       0x8005 / 0x04C11DB7 per SPRUHS1, MSB-first, low byte, CRCMSGFLIP=0). Lets the emulator
- *       reproduce a CAN-message CRC. The MSB-first bit loop is validated against the standard
- *       catalog check values (CRC-8/SMBUS, CRC-16/BUYPASS, CRC-32/MPEG-2). Silicon message-bit
- *       reflection (the CRCMSGFLIP=1 path) is NOT modeled — confirm against a captured frame
- *       before trusting the numeric result for an equivalence check.
- *   <li><b>countSignBits</b> — CSB ACC (leading redundant sign bits minus one, into T).
+ *       0x8005 / 0x04C11DB7 per SPRUHS1, MSB-first, low byte, CRCMSGFLIP=0). Kept as a
+ *       pcodeop rather than open-coded in SLEIGH because the intrinsic name renders as
+ *       {@code VCRC = VCRC8L(VCRC, src)} in the decompiler, which is the direct signal
+ *       used to identify CAN CRC compute/check code. Open-coding the 8-iteration MSB-first
+ *       bit loop would replace that with an unreadable shift-and-XOR salad. The bit loop is
+ *       validated against the standard catalog check values (CRC-8/SMBUS, CRC-16/BUYPASS,
+ *       CRC-32/MPEG-2). Silicon message-bit reflection (CRCMSGFLIP=1) is NOT modeled --
+ *       confirm against a captured frame before trusting the numeric result for an
+ *       equivalence check. Tracked for eventual pure-SLEIGH migration; see the follow-up
+ *       issue linked from THIRD-PARTY.md.
+ *   <li><b>TMU_COND_OPERAND / FPU_MINMAX_FLUSH / FPU_UNDERFLOW / FPU_OVERFLOW</b> — the
+ *       non-IEEE FPU input/result conditioning and the LU/LV latched exception flags
+ *       (SPRUHS1C §7.3, §7.5.2). Open-coding these inline would land three internal
+ *       branches per invocation in the decompiled listing; kept as intrinsics for the
+ *       same readability reason as VCRC.
  * </ul>
  */
 public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructionStateModifier {
 
-	// RPTB opcode: LSW high byte == 0xB5 (bit7 selects loc16(0)/#imm(1) count, bits0-6 = RSIZE).
-	private static final int RPTB_OPHI8 = 0xB5;
 	// RPT opcodes: high byte 0xF6 (RPT #imm8) / 0xF7 (RPT loc16), single word.
 	private static final int RPT_IMM_OPHI8 = 0xF6;
 	private static final int RPT_LOC_OPHI8 = 0xF7;
 	// loc16 register-direct mode selector (@ARn): loc byte bits[7:3] == 0b10100.
 	private static final int LOC_MODE5_REGDIRECT = 0x14;
 
-	// RPTB (block-repeat) state.
-	private boolean active = false;
-	private long startWord;   // first instruction of the block (word address)
-	private long endWord;     // one-past the last instruction of the block (word address)
-	private long remaining;   // repeats still to perform after the current pass
-
-	// RPT (single-instruction-repeat) state.
+	// RPT (single-instruction-repeat) state. Not nestable on this core (a single RPTC), so
+	// one level is hardware-accurate.
 	private boolean rptActive = false;
 	private long rptWord;      // word address of the instruction being repeated
 	private long rptRemaining; // re-executions still owed after the natural first pass
@@ -80,11 +101,10 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 		super(emulate);
 		// Register the custom compute pcodeops. Guard each so a name that a future .sla no longer
 		// defines degrades just that op to Ghidra's default (opaque) instead of throwing out of the
-		// constructor and disabling the RPTB/RPT loop support with it.
+		// constructor and disabling every other behavior with it.
 		tryRegister("VCRC8L", new VcrcBehavior(0x07L, 8));
 		tryRegister("VCRC16P1L", new VcrcBehavior(0x8005L, 16));
 		tryRegister("VCRC32L", new VcrcBehavior(0x04C11DB7L, 32));
-		tryRegister("countSignBits", new CountSignBitsBehavior());
 		tryRegister("TMU_COND_OPERAND", new FpuConditionBehavior(true, false));
 		tryRegister("FPU_MINMAX_FLUSH", new FpuConditionBehavior(false, true));
 		tryRegister("FPU_UNDERFLOW", new FpuArithFlagBehavior(false));
@@ -100,6 +120,17 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 		}
 	}
 
+	/**
+	 * Drive the RPT single-instruction repeat under emulation, which the SLEIGH wrapper
+	 * cannot do (see the class comment: {@code globalset(inst_next, ...)} lands one
+	 * instruction late in the emulator). After each instruction, arm on an RPT opcode and
+	 * then re-issue the following instruction until the count is exhausted -- precisely what
+	 * the hardware does. RPTB is deliberately NOT handled here; its wrapper works, because
+	 * its {@code globalset} target is far enough ahead.
+	 *
+	 * <p>Word addresses throughout: this is a wordsize=2 space, so {@code Address.getOffset()}
+	 * is a byte offset (word&nbsp;&times;&nbsp;2).
+	 */
 	@Override
 	public void postExecuteCallback(Emulate emu, Address lastExecuteAddress,
 			PcodeOp[] lastExecutePcode, int lastPcodeIndex, Address currentAddress)
@@ -127,8 +158,8 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 					return;
 				}
 			}
-			// The next instruction (currentAddress) executes count+1 times: once naturally, then
-			// `count` redirects back to it.
+			// The next instruction (currentAddress) executes count+1 times: once naturally,
+			// then `count` redirects back to it.
 			rptWord = currentAddress.getOffset() >> 1;
 			rptRemaining = count;
 			rptActive = count > 0;
@@ -140,45 +171,9 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 			if (rptRemaining > 0) {
 				rptRemaining--;
 				emu.setExecuteAddress(space.getAddress(rptWord << 1));
-				return;
-			}
-			rptActive = false;   // done; fall through so RPTB handling still runs this pass
-		}
-
-		// --- arm the loop if an RPTB just executed --------------------------------
-		if (ophi8 == RPTB_OPHI8) {
-			int rsize = w0 & 0x7F;
-			int sel = (w0 >>> 7) & 1;
-			int w1 = (int) (mem.getValue(space, lastByteOff + 2, 2) & 0xFFFF);
-			long count;
-			if (sel == 1) {                                  // RPTB #RSIZE, #imm
-				count = w1 & 0xFFFF;
-			}
-			else {                                           // RPTB #RSIZE, loc16
-				int loc = w1 & 0xFF;
-				if ((loc >>> 3) == LOC_MODE5_REGDIRECT) {    // @ARn
-					count = mem.getValue("AR" + (loc & 7)) & 0xFFFF;
-				}
-				else {
-					active = false;                          // unsupported count source: don't loop
-					return;
-				}
-			}
-			startWord = (lastByteOff >> 1) + 2;              // instruction after the 2-word RPTB
-			endWord = startWord + rsize;                     // block end (exclusive)
-			remaining = count;                               // block executes count+1 times total
-			active = rsize > 0;
-			return;
-		}
-
-		// --- at block end, loop back until the count is exhausted ------------------
-		if (active && (currentAddress.getOffset() >> 1) == endWord) {
-			if (remaining > 0) {
-				remaining--;
-				emu.setExecuteAddress(space.getAddress(startWord << 1));
 			}
 			else {
-				active = false;
+				rptActive = false;
 			}
 		}
 	}
@@ -374,29 +369,4 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 		}
 	}
 
-	/**
-	 * CSB ACC: number of leading bits equal to the sign bit, minus one, into T (0..31).
-	 * inputs[0] = ACC. Zero and all-ones both yield 32 sign bits -> T = 31.
-	 */
-	private static final class CountSignBitsBehavior implements OpBehaviorOther {
-		@Override
-		public void evaluate(Emulate emu, Varnode out, Varnode[] inputs) {
-			if (out == null || inputs.length < 1) {
-				return;
-			}
-			MemoryState mem = emu.getMemoryState();
-			long acc = mem.getValue(inputs[0]) & 0xFFFFFFFFL;
-			long sign = (acc >>> 31) & 1;
-			int count = 0;
-			for (int i = 31; i >= 0; i--) {
-				if (((acc >>> i) & 1) == sign) {
-					count++;
-				}
-				else {
-					break;
-				}
-			}
-			mem.setValue(out, (count - 1) & 0xFFFF);
-		}
-	}
 }

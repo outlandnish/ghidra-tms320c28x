@@ -96,6 +96,23 @@ define register offset=0x58 size=2 [ IFR IER DBGIER ];
 define register offset=0x60 size=4 [ R0H R1H R2H R3H R4H R5H R6H R7H ];
 define register offset=0x90 size=4 [ STF RB ];
 
+# --- RPT / RPTB loop-control registers ---------------------------------------
+# Model the C28x hardware repeat state as named registers so the RPT/RPTB
+# `^instruction` prefix wrappers (tms320c28x_flow.sinc) can express the loop
+# entirely in SLEIGH p-code -- no state modifier needed for the loop itself.
+#   RPTC          single-instruction repeat counter (RPT loads, wrapper decrements)
+#   RB_RSTART     byte address of the first instruction of an RPTB block
+#   RB_RC         RPTB loop counter (decremented once per pass by the wrapper)
+#   RB_RSIZE      RPTB block size in words (as loaded from imm7)
+#   RB_RA         RPTB "active" flag stored in the body constructor
+#   RB_RE         low 7 bits of the block-end address (hardware fidelity only)
+# Offsets adopted from mwdmwd/ghidra-c28x (Apache-2.0). PUSH/POP RB still uses
+# the packed RB @0x90 above -- these split slots exist purely for the wrappers.
+define register offset=0x122 size=2 [ RPTC ];
+define register offset=0x324 size=4 [ RB_RSTART ];
+define register offset=0x328 size=2 [ RB_RC ];
+define register offset=0x32a size=1 [ RB_RE RB_RSIZE RB_RA ];
+
 # --- STF status flags (unpacked model) ---------------------------------------
 # STF's flag bits split into individual 1-byte registers so the decompiler can
 # track each flag independently -- the CMPF32 -> conditional-branch idiom then
@@ -176,6 +193,30 @@ define context contextreg
   # display scratch and no instruction is both an #16FHi form and a SETFLG form, so
   # they can never be live at the same time.
   ctx_setflg_flag = (8,18) noflow
+  # --- RPT / RPTB dispatch bits (mwdmwd/ghidra-c28x pattern; see THIRD-PARTY.md).
+  # rpt_active is set by the RPT body via globalset(inst_next, ...) so the very
+  # next instruction picks up the `:^instruction is rpt_active=1 & instruction`
+  # prefix wrapper (tms320c28x_flow.sinc). noflow so the flag drops after that
+  # one instruction. rptb_flag is set at the block-end address so the same
+  # wrapper trick makes the block-end instruction loop back to RB_RSTART.
+  # rpt_phase gates the wrapper itself against recursive matching (the wrapper's
+  # `build instruction` re-enters decode; setting rpt_phase=1 locally on the
+  # wrapper's own decode blocks the outer pattern from firing again).
+  #
+  # ALL THREE must be noflow, and rpt_phase most of all. The wrapper's local
+  # `[ rpt_phase=1; ]` action does NOT limit the globalset's scope: it applies to
+  # the wrapper's own parse and never commits to the following address. Without
+  # noflow, `globalset(inst_next, rpt_phase)` leaves rpt_phase=0 flowing past the
+  # repeated instruction, so at RPT+2 no constructor can match at all -- the base
+  # forms require rpt_phase=1, the RPT wrapper requires rpt_active=1 (already
+  # dropped, being noflow) and the RPTB wrapper requires rptb_flag=1. The address
+  # decodes as UNDEF. Measured on a byte-swapped F28377D production image over
+  # 0x82000+0x8000: 57 extra UNDEFs and 3 extra length-skews vs main, 42 of them
+  # sitting exactly two words after an RPT opcode. noflow makes the globalset apply to the wrapped address only,
+  # after which rpt_phase reverts to the ram-space default of 1 from the pspec.
+  rpt_active = (3,3) noflow
+  rptb_flag  = (4,4) noflow
+  rpt_phase  = (5,5) noflow
 ;
 
 # Tokens and instruction constructors live in the .sinc include.

@@ -81,13 +81,13 @@ ffcdest: reloc  is op_hi8=0x00 & op_lo_76=0b11 & loc_off6 ; imm16  [ reloc = (lo
 # Conditional branches
 # =============================================================================
 # B 16bitOffset,COND   1111 1111 1110 COND : CCCC CCCC CCCC CCCC
-:B rel16dest,CC  is op_hi8=0xFF & op_lo_hi4=0b1110 & cond4 & CC; simm16 & rel16dest {
+:B rel16dest,CC  is rpt_phase=1 & op_hi8=0xFF & op_lo_hi4=0b1110 & cond4 & CC; simm16 & rel16dest {
     if (CC) goto rel16dest;
 }
 
 # SB 8bitOffset,COND   0110 COND CCCC CCCC   (single word, 8-bit signed offset).
 # COND is in bits 8..11 here, so use the parallel CC8 subtable keyed on cond4hi.
-:SB rel8dest,CC8  is sb_grp=0b0110 & cond4hi & CC8 & rel8dest & simm8 {
+:SB rel8dest,CC8  is rpt_phase=1 & sb_grp=0b0110 & cond4hi & CC8 & rel8dest & simm8 {
     if (CC8) goto rel8dest;
 }
 
@@ -96,20 +96,20 @@ ffcdest: reloc  is op_hi8=0x00 & op_lo_76=0b11 & loc_off6 ; imm16  [ reloc = (lo
 # KEEPS a (dead) fall-through edge — the decompiler then prunes the fall-through-only blocks as
 # unreachable. A dedicated cond4=0xf / cond4hi=0xf constructor (more specific, so SLEIGH picks
 # it over the generic CC/CC8 form) emits a real BRANCH with no fall-through.
-:B  rel16dest,"UNC" is op_hi8=0xFF & op_lo_hi4=0b1110 & cond4=0xf ; simm16 & rel16dest { goto rel16dest; }
-:SB rel8dest,"UNC"  is sb_grp=0b0110 & cond4hi=0xf & rel8dest & simm8 { goto rel8dest; }
+:B  rel16dest,"UNC" is rpt_phase=1 & op_hi8=0xFF & op_lo_hi4=0b1110 & cond4=0xf ; simm16 & rel16dest { goto rel16dest; }
+:SB rel8dest,"UNC"  is rpt_phase=1 & sb_grp=0b0110 & cond4hi=0xf & rel8dest & simm8 { goto rel8dest; }
 
 # SBF 8bitOffset,EQ/NEQ/TC/NTC   1110 11SS CCCC CCCC  (Short Branch Fast, single word;
 # 8-bit signed word offset in the low byte). Four fixed condition encodings — EQ=0xEC
 # NEQ=0xED TC=0xEE NTC=0xEF. dis2000-confirmed (op_hi8=0xEE present in the DIR image).
-:SBF rel8dest,"EQ"   is op_hi8=0xEC & rel8dest & simm8  { if ($(Z) != 0)  goto rel8dest; }
-:SBF rel8dest,"NEQ"  is op_hi8=0xED & rel8dest & simm8  { if ($(Z) == 0)  goto rel8dest; }
-:SBF rel8dest,"TC"   is op_hi8=0xEE & rel8dest & simm8  { if ($(TC) != 0) goto rel8dest; }
-:SBF rel8dest,"NTC"  is op_hi8=0xEF & rel8dest & simm8  { if ($(TC) == 0) goto rel8dest; }
+:SBF rel8dest,"EQ"   is rpt_phase=1 & op_hi8=0xEC & rel8dest & simm8  { if ($(Z) != 0)  goto rel8dest; }
+:SBF rel8dest,"NEQ"  is rpt_phase=1 & op_hi8=0xED & rel8dest & simm8  { if ($(Z) == 0)  goto rel8dest; }
+:SBF rel8dest,"TC"   is rpt_phase=1 & op_hi8=0xEE & rel8dest & simm8  { if ($(TC) != 0) goto rel8dest; }
+:SBF rel8dest,"NTC"  is rpt_phase=1 & op_hi8=0xEF & rel8dest & simm8  { if ($(TC) == 0) goto rel8dest; }
 
 # BANZ 16bitOffset,ARn--   0000 0000 0000 1nnn : CCCC CCCC CCCC CCCC
 # Branch if AR(n) != 0, then post-decrement AR(n).  Bits 7..3 of low byte = 00001.
-:BANZ rel16dest,banz_n^"--"  is op_hi8=0x00 & op_lo_hi5=0b00001 & banz_n; simm16 & rel16dest {
+:BANZ rel16dest,banz_n^"--"  is rpt_phase=1 & op_hi8=0x00 & op_lo_hi5=0b00001 & banz_n; simm16 & rel16dest {
     local taken:1 = (banz_n != 0);
     banz_n = banz_n - 1;
     if (taken) goto rel16dest;
@@ -118,7 +118,7 @@ ffcdest: reloc  is op_hi8=0x00 & op_lo_76=0b11 & loc_off6 ; imm16  [ reloc = (lo
 # BF 16bitOffset,COND   0101 0110 1100 COND : CCCC CCCC CCCC CCCC  (branch fast,
 # PC-relative like B). word1 = 0x56C0 | COND; word2 = signed offset. The COND lives
 # in the low nibble of word1 (cond4); the rel target uses word2 (simm16).
-:BF rel16dest,CC  is op_hi8=0x56 & loc_hi4=0b1100 & cond4 & CC; simm16 & rel16dest {
+:BF rel16dest,CC  is rpt_phase=1 & op_hi8=0x56 & loc_hi4=0b1100 & cond4 & CC; simm16 & rel16dest {
     if (CC) goto rel16dest;
 }
 
@@ -130,7 +130,7 @@ ffcdest: reloc  is op_hi8=0x00 & op_lo_76=0b11 & loc_off6 ; imm16  [ reloc = (lo
 # word2 = addr[15:0]. (NOT pc-relative — the earlier rel16dest version computed
 # inst_start+simm16, so every LCR pointed back at itself; in unlinked .objs the
 # field is a 0 reloc placeholder, which made it look like a self-call.)
-:LCR lcrdest  is lcrdest {
+:LCR lcrdest  is rpt_phase=1 & lcrdest {
     # hardware pushes the OLD RPC (nested-call save) then loads RPC with the return
     # addr; LRETR pops it back. Needed for EMULATION of nested calls; net-neutral for
     # decompilation (push+pop cancel across the call). inst_next>>1 = word return addr.
@@ -140,7 +140,7 @@ ffcdest: reloc  is op_hi8=0x00 & op_lo_76=0b11 & loc_off6 ; imm16  [ reloc = (lo
 }
 
 # LCR *XARn           0011 1110 0110 0RRR  (indirect call using RPC)
-:LCR "*"loc_areg  is op_hi8=0x3E & op_lo_35=0b01100 & loc_areg {
+:LCR "*"loc_areg  is rpt_phase=1 & op_hi8=0x3E & op_lo_35=0b01100 & loc_areg {
     local sp2:4 = SP; *[ram]:4 sp2 = RPC; SP = SP + 2;
     RPC = inst_next >> 1;
     call [loc_areg];
@@ -148,13 +148,13 @@ ffcdest: reloc  is op_hi8=0x00 & op_lo_76=0b11 & loc_off6 ; imm16  [ reloc = (lo
 
 # FFC XAR7,#22bit     0000 0000 11CC CCCC : CCCC CCCC CCCC CCCC  (fast call; return
 # PC saved in XAR7, ABSOLUTE 22-bit target). word1 low 6 bits = addr[21:16].
-:FFC "XAR7,"ffcdest  is ffcdest {
+:FFC "XAR7,"ffcdest  is rpt_phase=1 & ffcdest {
     XAR7 = inst_next >> 1;
     call ffcdest;
 }
 
 # LRETR               0000 0000 0000 0110   (long return using RPC)
-:LRETR  is op16=0x0006 {
+:LRETR  is rpt_phase=1 & op16=0x0006 {
     # return to RPC, then pop the saved caller RPC back off the stack (mirror of LCR).
     local ret:4 = RPC;
     SP = SP - 2; local sp2:4 = SP; RPC = *[ram]:4 sp2;
@@ -162,7 +162,7 @@ ffcdest: reloc  is op_hi8=0x00 & op_lo_76=0b11 & loc_off6 ; imm16  [ reloc = (lo
 }
 
 # LRET                0111 0110 0001 0100
-:LRET   is op16=0x7614 {
+:LRET   is rpt_phase=1 & op16=0x7614 {
     # 22-bit return address was pushed as two words; pop the 32-bit value off SP.
     SP = SP - 2;
     local addr:4 = SP;
@@ -171,7 +171,7 @@ ffcdest: reloc  is op_hi8=0x00 & op_lo_76=0b11 & loc_off6 ; imm16  [ reloc = (lo
 }
 
 # IRET                0111 0110 0000 0010   (interrupt return)
-:IRET   is op16=0x7602 {
+:IRET   is rpt_phase=1 & op16=0x7602 {
     SP = SP - 2;
     local addr:4 = SP;
     local t:4 = *[ram]:4 addr;

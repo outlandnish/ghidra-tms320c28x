@@ -40,6 +40,7 @@ trap 'rm -rf "$tmp"' EXIT
 mkdir -p "$tmp/proj" "$tmp/scripts"
 cp "$module/ghidra_scripts/EmuFlagTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuFpuCondTest.java" "$tmp/scripts/"
+cp "$module/ghidra_scripts/EmuRptTest.java" "$tmp/scripts/"
 cp "$module/tests/fpu_flags.bin" "$module/tests/fpu_cond.bin" "$tmp/"
 
 fail=0
@@ -62,6 +63,7 @@ run_suite() {  # <script-basename> <fixture-basename>
 
 run_suite EmuFlagTest fpu_flags.bin
 run_suite EmuFpuCondTest fpu_cond.bin
+run_suite EmuRptTest fpu_flags.bin  # host-driven test, any C28x program will do as import target
 
 if [ "$fail" -eq 0 ]; then
   echo "emulation semantics: OK"

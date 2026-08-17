@@ -34,10 +34,15 @@
   </properties>
 
   <!-- AMODE context bit: 0 = C28x addressing modes (compiler default). Decode in
-       this mode by default; flow analysis can override when SETC/CLRC AMODE seen. -->
+       this mode by default; flow analysis can override when SETC/CLRC AMODE seen.
+       rpt_phase is seeded to 1 so every base :MNEMONIC constructor (which pattern-
+       matches on `& rpt_phase=1`) fires at ordinary addresses. RPT / RPTB globalset
+       rpt_phase=0 on the wrapped address, where the :^instruction wrapper matches
+       instead. See tms320c28x_rpt.sinc for the design rationale. -->
   <context_data>
     <context_set space="ram">
-      <set name="ctx_AMODE" val="0"/>
+      <set name="ctx_AMODE"  val="0"/>
+      <set name="rpt_phase"  val="1"/>
     </context_set>
   </context_data>
 

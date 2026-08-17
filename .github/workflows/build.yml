@@ -51,6 +51,14 @@ jobs:
           distribution: temurin
           java-version: "21"
 
+      # Static text check over data/languages -- no Ghidra, no SLEIGH compile -- so it runs
+      # before the download and fails in seconds. Guards the RPT/RPTB phase-bit partition:
+      # a `:MNEMONIC` added without `& rpt_phase=1` decodes correctly and passes every other
+      # test here, and the ONLY symptom is that `RPT || <it>` executes once instead of N+1
+      # times. Nothing downstream can see that, which is why it gets its own gate.
+      - name: Invariant — every constructor carries the RPT phase bit
+        run: bash tests/run_phase_check.sh
+
       - name: Resolve Ghidra release asset
         id: ghidra
         env:

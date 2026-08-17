@@ -19,23 +19,23 @@
 # Common ALU forms (real semantics).  word1 = 0x56<sub>, word2 = loc.
 # =============================================================================
 # ADDL loc32,ACC    0x5601 : 0000 0000 LLLL LLLL
-:ADDL loc32, ACCreg  is op16=0x5601 ; loc32 & ACCreg  { loc32 = loc32 + ACC; }
+:ADDL loc32, ACCreg  is rpt_phase=1 & op16=0x5601 ; loc32 & ACCreg  { loc32 = loc32 + ACC; }
 # SUBL loc32,ACC    0x5641
-:SUBL loc32, ACCreg  is op16=0x5641 ; loc32 & ACCreg  { loc32 = loc32 - ACC; }
+:SUBL loc32, ACCreg  is rpt_phase=1 & op16=0x5641 ; loc32 & ACCreg  { loc32 = loc32 - ACC; }
 # SUBRL loc32,ACC    0x5649  (reverse subtract: loc = ACC - loc)
-:SUBRL loc32, ACCreg is op16=0x5649 ; loc32 & ACCreg  { loc32 = ACC - loc32; }
+:SUBRL loc32, ACCreg is rpt_phase=1 & op16=0x5649 ; loc32 & ACCreg  { loc32 = ACC - loc32; }
 # ADD ACC,loc16<<T   0x5623  (shift by T(3:0))
-:ADD ACCreg, loc16^"<<T"  is op16=0x5623 ; loc16 & ACCreg  {
+:ADD ACCreg, loc16^"<<T"  is rpt_phase=1 & op16=0x5623 ; loc16 & ACCreg  {
     local sh:4 = zext(T:2) & 0xf;
     ACC = ACC + (sext(loc16) << sh);
 }
 # SUB ACC,loc16<<T   0x5627
-:SUB ACCreg, loc16^"<<T"  is op16=0x5627 ; loc16 & ACCreg  {
+:SUB ACCreg, loc16^"<<T"  is rpt_phase=1 & op16=0x5627 ; loc16 & ACCreg  {
     local sh:4 = zext(T:2) & 0xf;
     ACC = ACC - (sext(loc16) << sh);
 }
 # MOV ACC,loc16<<T   0x5606
-:MOV ACCreg, loc16^"<<T"  is op16=0x5606 ; loc16 & ACCreg  {
+:MOV ACCreg, loc16^"<<T"  is rpt_phase=1 & op16=0x5606 ; loc16 & ACCreg  {
     local sh:4 = zext(T:2) & 0xf;
     ACC = sext(loc16) << sh;
 }
@@ -51,12 +51,12 @@
 # subsequent CMP/BF and the LB *XAR7. With the default SXM=1 sign-extend the ACC value
 # carries an unrestricted upper half and the range check disappears. Adapted from
 # mwdmwd/ghidra-c28x (Apache-2.0); see THIRD-PARTY.md.
-:MOV ACCreg, loc16^"<<#"^shft_hi4  is switch_canonical=1 & op16=0x5603 ; shft_hi4 & loc16 & ACCreg {
+:MOV ACCreg, loc16^"<<#"^shft_hi4  is rpt_phase=1 & switch_canonical=1 & op16=0x5603 ; shft_hi4 & loc16 & ACCreg {
     local sh:4 = zext(shft_hi4:1);
     ACC = zext(loc16) << sh;
     setNZ32(ACC);
 }
-:MOV ACCreg, loc16^"<<#"^shft_hi4  is op16=0x5603 ; shft_hi4 & loc16 & ACCreg {
+:MOV ACCreg, loc16^"<<#"^shft_hi4  is rpt_phase=1 & op16=0x5603 ; shft_hi4 & loc16 & ACCreg {
     local sh:4 = zext(shft_hi4:1);
     ACC = sext(loc16) << sh;
 }
@@ -66,46 +66,46 @@
 # Canonical variant (switch_canonical=1): zero-extend loc16 and clear C, matching the
 # unsigned-selector semantics needed for switch table-base + scaled-index arithmetic.
 # See the MOV canonical form above for the full rationale. Adapted from mwdmwd/ghidra-c28x.
-:ADD ACCreg, loc16^"<<#"^shft_hi4  is switch_canonical=1 & op16=0x5604 ; shft_hi4 & loc16 & ACCreg {
+:ADD ACCreg, loc16^"<<#"^shft_hi4  is rpt_phase=1 & switch_canonical=1 & op16=0x5604 ; shft_hi4 & loc16 & ACCreg {
     local sh:4 = zext(shft_hi4:1);
     local v:4 = zext(loc16) << sh;
     ACC = ACC + v;
     $(C) = 0;
     setNZ32(ACC);
 }
-:ADD ACCreg, loc16^"<<#"^shft_hi4  is op16=0x5604 ; shft_hi4 & loc16 & ACCreg {
+:ADD ACCreg, loc16^"<<#"^shft_hi4  is rpt_phase=1 & op16=0x5604 ; shft_hi4 & loc16 & ACCreg {
     local sh:4 = zext(shft_hi4:1);
     ACC = ACC + (sext(loc16) << sh);
 }
 # ADDUL ACC,loc32    0x5653  (add unsigned 32)
-:ADDUL ACCreg, loc32 is op16=0x5653 ; loc32 & ACCreg  { ACC = ACC + loc32; }
+:ADDUL ACCreg, loc32 is rpt_phase=1 & op16=0x5653 ; loc32 & ACCreg  { ACC = ACC + loc32; }
 # SUBUL ACC,loc32    0x5655
-:SUBUL ACCreg, loc32 is op16=0x5655 ; loc32 & ACCreg  { ACC = ACC - loc32; }
+:SUBUL ACCreg, loc32 is rpt_phase=1 & op16=0x5655 ; loc32 & ACCreg  { ACC = ACC - loc32; }
 # SUBBL ACC,loc32    0x5654  (subtract 32-bit plus inverse borrow: ACC = ACC - loc32 - ~C).
 # dis2000-confirmed (word 0x5654); the borrow-chain counterpart of SUBUL. Reached via a
 # branch shadow in FUN_0008e3d7 — the fall-through sweep missed it.
-:SUBBL ACCreg, loc32 is op16=0x5654 ; loc32 & ACCreg  {
+:SUBBL ACCreg, loc32 is rpt_phase=1 & op16=0x5654 ; loc32 & ACCreg  {
     local nborrow:4 = zext($(C) == 0);   # ~C as 0/1
     ACC = ACC - loc32 - nborrow;
 }
 # ADDCL ACC,loc32   0x5640  (add 32-bit value plus carry to ACC). dis2000-confirmed (DIR).
-:ADDCL ACCreg, loc32 is op16=0x5640 ; loc32 & ACCreg  {
+:ADDCL ACCreg, loc32 is rpt_phase=1 & op16=0x5640 ; loc32 & ACCreg  {
     local cin:4 = zext($(C));
     $(C) = carry(ACC, loc32);
     ACC = ACC + loc32 + cin;
 }
 # MOVU loc16,OVC    0x5628  (store the unsigned overflow counter OVC -> [loc16]). OVC
 # (ST0[10,6]) isn't tracked; store 0 so the op writes loc16 + flow continues. 2-word.
-:MOVU loc16, "OVC" is op16=0x5628 ; loc16  { loc16 = 0; }
+:MOVU loc16, "OVC" is rpt_phase=1 & op16=0x5628 ; loc16  { loc16 = 0; }
 # MOV TL,#0   0x5656  (clear the lower half of XT; XT high half = T preserved). 1-word.
-:MOV "TL", "#0"  is op16=0x5656  { XT = XT & 0xffff0000; }
+:MOV "TL", "#0"  is rpt_phase=1 & op16=0x5656  { XT = XT & 0xffff0000; }
 # ADDUL P,loc32      0x5657
-:ADDUL Preg, loc32   is op16=0x5657 ; loc32 & Preg  { P = P + loc32; }
+:ADDUL Preg, loc32   is rpt_phase=1 & op16=0x5657 ; loc32 & Preg  { P = P + loc32; }
 # SUBUL P,loc32      0x565d
-:SUBUL Preg, loc32   is op16=0x565d ; loc32 & Preg  { P = P - loc32; }
+:SUBUL Preg, loc32   is rpt_phase=1 & op16=0x565d ; loc32 & Preg  { P = P - loc32; }
 # MAXL ACC,loc32     0x5661  (ACC = max(ACC, loc32), signed). Sets N/Z from the signed
 # compare (N = ACC<loc32, Z = ACC==loc32) so a following MAXCUL P,loc32 can consume them.
-:MAXL ACCreg, loc32  is op16=0x5661 ; loc32 & ACCreg  {
+:MAXL ACCreg, loc32  is rpt_phase=1 & op16=0x5661 ; loc32 & ACCreg  {
     local v:4 = loc32;
     $(Z) = (ACC == v);
     $(N) = (ACC s< v);
@@ -114,7 +114,7 @@
 }
 # MINL ACC,loc32     0x5650. Sets N/Z from the signed compare so a following MINCUL P,loc32
 # can consume them (the 64-bit min idiom).
-:MINL ACCreg, loc32  is op16=0x5650 ; loc32 & ACCreg  {
+:MINL ACCreg, loc32  is rpt_phase=1 & op16=0x5650 ; loc32 & ACCreg  {
     local v:4 = loc32;
     $(Z) = (ACC == v);
     $(N) = (ACC s< v);
@@ -125,7 +125,7 @@
 # preceding MAXL). Manual pseudocode: if(N=1&Z=0) P=loc32; if(N=0&Z=1&P<loc32) P=loc32; else
 # unchanged. Pairs with MAXL to form a 64-bit maximum/saturate. WAS MISSING -> decoding 0x5651
 # desynced the linear sweep (phantom "FFC" ops); e.g. the MATH sine ramfunc tail @0x881c8.
-:MAXCUL Preg, loc32  is op16=0x5651 ; loc32 & Preg  {
+:MAXCUL Preg, loc32  is rpt_phase=1 & op16=0x5651 ; loc32 & Preg  {
     local v:4 = loc32;
     local doset:1 = ($(N) != 0) | (($(Z) != 0) & (P < v));
     if (doset == 0) goto inst_next;
@@ -135,7 +135,7 @@
 # preceding MINL). Manual pseudocode: if(N=0&Z=0) P=loc32; if(N=0&Z=1&P>loc32) P=loc32; else
 # unchanged. Pairs with MINL to form a 64-bit minimum/saturate. WAS MISSING -> decoding 0x5659
 # desynced the linear sweep (phantom "FFC" ops); e.g. the MATH sine ramfunc tail @0x881c4.
-:MINCUL Preg, loc32  is op16=0x5659 ; loc32 & Preg  {
+:MINCUL Preg, loc32  is rpt_phase=1 & op16=0x5659 ; loc32 & Preg  {
     local v:4 = loc32;
     local doset:1 = ($(N) == 0) & (($(Z) == 0) | (P > v));
     if (doset == 0) goto inst_next;
@@ -152,57 +152,57 @@
 # =============================================================================
 # SAT64 ACC:P  0x563e  (signed-saturate the 64-bit ACC:P value into ACC's 32-bit
 # range). Modelled as an ACC touch, matching the file's SAT ACC (0xFF57) convention.
-:SAT64 "ACC:P"  is op16=0x563e { ACC = ACC; }
+:SAT64 "ACC:P"  is rpt_phase=1 & op16=0x563e { ACC = ACC; }
 # NORM ACC,<ind>  1-word; the low byte is the loc16 addressing selector for the
 # indirect forms (*, *++, *--, *0++, *0--). NORM normalizes ACC + adjusts T + modifies
 # the AR; decode-only here (the AR post-modify/exponent update is not modelled).
-:NORM "ACC,*"     is op16=0x5624 { }
-:NORM "ACC,*++"   is op16=0x565a { }
-:NORM "ACC,*--"   is op16=0x5620 { }
-:NORM "ACC,*0++"  is op16=0x5677 { }
-:NORM "ACC,*0--"  is op16=0x5630 { }
+:NORM "ACC,*"     is rpt_phase=1 & op16=0x5624 { }
+:NORM "ACC,*++"   is rpt_phase=1 & op16=0x565a { }
+:NORM "ACC,*--"   is rpt_phase=1 & op16=0x5620 { }
+:NORM "ACC,*0++"  is rpt_phase=1 & op16=0x5677 { }
+:NORM "ACC,*0--"  is rpt_phase=1 & op16=0x5630 { }
 
 # =============================================================================
 # 32x32 multiplies (IMPYL/QMPYL family) -- real semantics into ACC or P.
 # word1=0x56<sub>, word2=loc32 (the 32-bit source); XT is the other operand.
 # =============================================================================
-:IMPYL ACCreg, XTreg, loc32  is op16=0x5644 ; loc32 & ACCreg & XTreg {
+:IMPYL ACCreg, XTreg, loc32  is rpt_phase=1 & op16=0x5644 ; loc32 & ACCreg & XTreg {
     local a:8 = sext(XT); local b:8 = sext(loc32); local r:8 = a * b; ACC = r:4;  # low 32
 }
-:IMPYL Preg, XTreg, loc32    is op16=0x5605 ; loc32 & Preg & XTreg {
+:IMPYL Preg, XTreg, loc32    is rpt_phase=1 & op16=0x5605 ; loc32 & Preg & XTreg {
     local a:8 = sext(XT); local b:8 = sext(loc32); local r:8 = a * b; P = r:4;
 }
-:QMPYL ACCreg, XTreg, loc32  is op16=0x5663 ; loc32 & ACCreg & XTreg {
+:QMPYL ACCreg, XTreg, loc32  is rpt_phase=1 & op16=0x5663 ; loc32 & ACCreg & XTreg {
     local a:8 = sext(XT); local b:8 = sext(loc32); local r:8 = (a * b) >> 32; ACC = r:4;  # high 32
 }
-:QMPYL Preg, XTreg, loc32    is op16=0x5667 ; loc32 & Preg & XTreg {
+:QMPYL Preg, XTreg, loc32    is rpt_phase=1 & op16=0x5667 ; loc32 & Preg & XTreg {
     local a:8 = sext(XT); local b:8 = sext(loc32); local r:8 = (a * b) >> 32; P = r:4;  # high 32 -> P
 }
 # QMPYUL P,XT,loc32  0x5647  (UNSIGNED 32x32, upper 32 -> P). dis2000-confirmed (DIR image).
-:QMPYUL Preg, XTreg, loc32   is op16=0x5647 ; loc32 & Preg & XTreg {
+:QMPYUL Preg, XTreg, loc32   is rpt_phase=1 & op16=0x5647 ; loc32 & Preg & XTreg {
     local a:8 = zext(XT); local b:8 = zext(loc32); local r:8 = (a * b) >> 32; P = r:4;  # high 32 -> P
 }
 # QMPYXUL P,XT,loc32  0x5642  (SIGNED XT x UNSIGNED loc32, upper 32 -> P). dis2000-confirmed
 # (pmrbl image, word 0x858c4). Mixed-sign: sext(XT) * zext(loc32).
-:QMPYXUL Preg, XTreg, loc32  is op16=0x5642 ; loc32 & Preg & XTreg {
+:QMPYXUL Preg, XTreg, loc32  is rpt_phase=1 & op16=0x5642 ; loc32 & Preg & XTreg {
     local a:8 = sext(XT); local b:8 = zext(loc32); local r:8 = (a * b) >> 32; P = r:4;  # high 32 -> P
 }
 # IMPYXUL P,XT,loc32  0x5665  (SIGNED XT x UNSIGNED loc32, LOWER 32 -> P). dis2000-confirmed
 # (PCS411 image, word 0x95a43 — in a QMPYXUL/IMPYL extended-precision multiply). Mixed-sign,
 # low half: sext(XT) * zext(loc32).
-:IMPYXUL Preg, XTreg, loc32  is op16=0x5665 ; loc32 & Preg & XTreg {
+:IMPYXUL Preg, XTreg, loc32  is rpt_phase=1 & op16=0x5665 ; loc32 & Preg & XTreg {
     local a:8 = sext(XT); local b:8 = zext(loc32); local r:8 = a * b; P = r:4;  # low 32 -> P
 }
 # Square-and-accumulate (MAC-style; 2-word, loc16 in word2). dis2000-confirmed.
 # SQRA: ACC += P (PM=0); T=[loc16]; P = T*T.  SQRS: ACC -= P; T=[loc16]; P = T*T.
-:SQRA loc16  is op16=0x5615 ; loc16 {
+:SQRA loc16  is rpt_phase=1 & op16=0x5615 ; loc16 {
     ACC = ACC + P; T = loc16; local t:4 = sext(T); P = t * t;
 }
-:SQRS loc16  is op16=0x5611 ; loc16 {
+:SQRS loc16  is rpt_phase=1 & op16=0x5611 ; loc16 {
     ACC = ACC - P; T = loc16; local t:4 = sext(T); P = t * t;
 }
 # ZALR ACC,loc16  0x5613 : loc16  -- AL = 0x8000 (round const), AH = [loc16]. dis2000-confirmed.
-:ZALR ACCreg, loc16  is op16=0x5613 ; loc16 & ACCreg {
+:ZALR ACCreg, loc16  is rpt_phase=1 & op16=0x5613 ; loc16 & ACCreg {
     AL = 0x8000; AH = loc16;
 }
 
@@ -210,16 +210,16 @@
 # Bit-test / square-accumulate (real-ish).
 # =============================================================================
 # TBIT loc16,T      0x5625
-:TBIT loc16, "T"  is op16=0x5625 ; loc16  {
+:TBIT loc16, "T"  is rpt_phase=1 & op16=0x5625 ; loc16  {
     local t16:2 = T;
     local sh:2 = t16 & 0xf;
     local v:2 = loc16;
     $(TC) = ((v >> sh) & 1) != 0;
 }
 # TSET loc16,#16bit 0x560d : loc word ; imm word -- 3-word; decode-only-ish
-:TSET loc16, "#16bit"  is op16=0x560d ; loc16  { }   # decode-only
+:TSET loc16, "#16bit"  is rpt_phase=1 & op16=0x560d ; loc16  { }   # decode-only
 # TCLR loc16,#bit   0x5609
-:TCLR loc16, "#bit"  is op16=0x5609 ; loc16  { }     # decode-only
+:TCLR loc16, "#bit"  is rpt_phase=1 & op16=0x5609 ; loc16  { }     # decode-only
 
 # =============================================================================
 # Flag / mode set/clear (single-purpose; one constructor per distinct opcode).
@@ -231,29 +231,29 @@
 # flip the runtime ST1 bit. Without this the disassembler always decoded as AMODE=0 and
 # any AMODE=1 (C2xLP-compatible) run after a SETC AMODE was mis-decoded. The AMODE=1 loc
 # rows are added separately (see addr.sinc); this is the flow that activates them.
-:CLRC "AMODE"   is op16=0x5616 [ ctx_AMODE = 0; globalset(inst_next, ctx_AMODE); ]
+:CLRC "AMODE"   is rpt_phase=1 & op16=0x5616 [ ctx_AMODE = 0; globalset(inst_next, ctx_AMODE); ]
                 { $(AMODE) = 0; }   # = C28ADDR
-:SETC "AMODE"   is op16=0x561e [ ctx_AMODE = 1; globalset(inst_next, ctx_AMODE); ]
+:SETC "AMODE"   is rpt_phase=1 & op16=0x561e [ ctx_AMODE = 1; globalset(inst_next, ctx_AMODE); ]
                 { $(AMODE) = 1; }   # = LPADDR
-:SETC "Objmode" is op16=0x561f { OBJMODE = 1; }    # = C28OBJ
-:CLRC "Objmode" is op16=0x5636 { OBJMODE = 0; }    # = C27OBJ
-:SETC "XF"      is op16=0x5626 { XF = 1; }
-:CLRC "XF"      is op16=0x561b { XF = 0; }
-:CLRC "OVC"     is op16=0x565c { OVC = 0; }        # = ZAP OVC
-:ZAPA           is op16=0x5633 { ACC = 0; P = 0; }
+:SETC "Objmode" is rpt_phase=1 & op16=0x561f { OBJMODE = 1; }    # = C28OBJ
+:CLRC "Objmode" is rpt_phase=1 & op16=0x5636 { OBJMODE = 0; }    # = C27OBJ
+:SETC "XF"      is rpt_phase=1 & op16=0x5626 { XF = 1; }
+:CLRC "XF"      is rpt_phase=1 & op16=0x561b { XF = 0; }
+:CLRC "OVC"     is rpt_phase=1 & op16=0x565c { OVC = 0; }        # = ZAP OVC
+:ZAPA           is rpt_phase=1 & op16=0x5633 { ACC = 0; P = 0; }
 # More 0x56 mode/config bits (dis2000-confirmed; in the PCS reset/init routine at 0x947fc).
-:SETC "CNF"     is op16=0x5612 { }                 # map block B0 to program space (decode-only)
-:SETC "M0M1MAP" is op16=0x561a { M0M1MAP = 1; }    # = C28MAP (boot mode bit)
+:SETC "CNF"     is rpt_phase=1 & op16=0x5612 { }                 # map block B0 to program space (decode-only)
+:SETC "M0M1MAP" is rpt_phase=1 & op16=0x561a { M0M1MAP = 1; }    # = C28MAP (boot mode bit)
 # CMPR n  0101 0110 0001 NN0N  (compare AR(ARP) with AR(n); set TC). dis2000: 1d=0 19=1 18=2 1c=3.
-:CMPR "0"       is op16=0x561d { }                 # decode-only (TC result not modeled)
-:CMPR "1"       is op16=0x5619 { }
-:CMPR "2"       is op16=0x5618 { }
-:CMPR "3"       is op16=0x561c { }
+:CMPR "0"       is rpt_phase=1 & op16=0x561d { }                 # decode-only (TC result not modeled)
+:CMPR "1"       is rpt_phase=1 & op16=0x5619 { }
+:CMPR "2"       is rpt_phase=1 & op16=0x5618 { }
+:CMPR "3"       is rpt_phase=1 & op16=0x561c { }
 
 # =============================================================================
 # Conditional store (MOVL loc32,ACC,COND) -- 0x5648, COND in word2.
 # =============================================================================
-:MOVL loc32, ACCreg, CC  is op16=0x5648 ; cond4 & CC & loc32 & ACCreg {
+:MOVL loc32, ACCreg, CC  is rpt_phase=1 & op16=0x5648 ; cond4 & CC & loc32 & ACCreg {
     local take:1 = CC;
     if (take == 0) goto inst_next;
     loc32 = ACC;
@@ -263,7 +263,7 @@
 # COND is in word1's low nibble (cond4); word2 = 8-bit const (high byte, imm8_hi) +
 # loc16 (low byte). Conditional byte store: if (COND) [loc16] = 0:8bit. Previously the
 # immediate wasn't decoded (rendered literal "#8bit") and the store was never emitted.
-:MOVB loc16, "#"imm8_hi, CC  is op_hi8=0x56 & loc_hi4=0b1011 & cond4 & CC ; loc16 & imm8_hi {
+:MOVB loc16, "#"imm8_hi, CC  is rpt_phase=1 & op_hi8=0x56 & loc_hi4=0b1011 & cond4 & CC ; loc16 & imm8_hi {
     local take:1 = CC;
     if (take == 0) goto inst_next;
     loc16 = zext(imm8_hi:1);
@@ -272,11 +272,11 @@
 # =============================================================================
 # C2xLP program read/write + branches (decode-only -- rare, exotic).
 # =============================================================================
-:XPREAD loc16, "*AL"   is op16=0x563c ; loc16  { local pma:4 = zext(AL); loc16 = *[ram]:2 pma; }
-:XPWRITE "*A", loc16   is op16=0x563d ; loc16  { local pma:4 = zext(AL); *[ram]:2 pma = loc16; }
-:XB "*AL"              is op16=0x5614 { local tgt:4 = zext(AL); goto [tgt]; }
-:XCALL "*AL"           is op16=0x5634 { local tgt:4 = zext(AL); local sp2:4 = SP; *[ram]:4 sp2 = RPC; SP = SP + 2; RPC = inst_next >> 1; call [tgt]; }
-:XRET                  is op16=0x56ff { local ret:4 = RPC; SP = SP - 2; local sp2:4 = SP; RPC = *[ram]:4 sp2; return [ret]; }
+:XPREAD loc16, "*AL"   is rpt_phase=1 & op16=0x563c ; loc16  { local pma:4 = zext(AL); loc16 = *[ram]:2 pma; }
+:XPWRITE "*A", loc16   is rpt_phase=1 & op16=0x563d ; loc16  { local pma:4 = zext(AL); *[ram]:2 pma = loc16; }
+:XB "*AL"              is rpt_phase=1 & op16=0x5614 { local tgt:4 = zext(AL); goto [tgt]; }
+:XCALL "*AL"           is rpt_phase=1 & op16=0x5634 { local tgt:4 = zext(AL); local sp2:4 = SP; *[ram]:4 sp2 = RPC; SP = SP + 2; RPC = inst_next >> 1; call [tgt]; }
+:XRET                  is rpt_phase=1 & op16=0x56ff { local ret:4 = RPC; SP = SP - 2; local sp2:4 = SP; RPC = *[ram]:4 sp2; return [ret]; }
 
 # =============================================================================
 # 64-bit ACC:P shifts by #1..16 (single word; SHFT in low nibble). ACC = high 32,
@@ -284,23 +284,23 @@
 # LSL64=10 0x56Ax). 0x56a3 (LSL64 #3) was the top missing opcode in the F28377D
 # production firmware (~1434 sites) — the QMPYL→LSL64 32x32 Q-format multiply idiom.
 # shft_cnt = SHFT+1 (range 1..16), reuse the shcount subtable.
-:ASR64 "ACC:P,#"shcount  is op_hi8=0x56 & loc_hi4=0b1000 & shcount {
+:ASR64 "ACC:P,#"shcount  is rpt_phase=1 & op_hi8=0x56 & loc_hi4=0b1000 & shcount {
     local v:8 = (zext(ACC) << 32) | zext(P);
     v = v s>> shcount; ACC = v(4); P = v(0);
 }
-:LSR64 "ACC:P,#"shcount  is op_hi8=0x56 & loc_hi4=0b1001 & shcount {
+:LSR64 "ACC:P,#"shcount  is rpt_phase=1 & op_hi8=0x56 & loc_hi4=0b1001 & shcount {
     local v:8 = (zext(ACC) << 32) | zext(P);
     v = v >> shcount; ACC = v(4); P = v(0);
 }
-:LSL64 "ACC:P,#"shcount  is op_hi8=0x56 & loc_hi4=0b1010 & shcount {
+:LSL64 "ACC:P,#"shcount  is rpt_phase=1 & op_hi8=0x56 & loc_hi4=0b1010 & shcount {
     local v:8 = (zext(ACC) << 32) | zext(P);
     v = v << shcount; ACC = v(4); P = v(0);
 }
 
 # --- 0x56-prefix 64/long shifts (single-word, fixed sub-opcode) --------------
-:LSLL "ACC,T"   is op16=0x563b { local s:4 = zext(T) & 0x1f; ACC = ACC << s; }
-:LSRL "ACC,T"   is op16=0x5622 { local s:4 = zext(T) & 0x1f; ACC = ACC >> s; }
-:ASRL "ACC,T"   is op16=0x5610 { local s:4 = zext(T) & 0x1f; ACC = ACC s>> s; }
+:LSLL "ACC,T"   is rpt_phase=1 & op16=0x563b { local s:4 = zext(T) & 0x1f; ACC = ACC << s; }
+:LSRL "ACC,T"   is rpt_phase=1 & op16=0x5622 { local s:4 = zext(T) & 0x1f; ACC = ACC >> s; }
+:ASRL "ACC,T"   is rpt_phase=1 & op16=0x5610 { local s:4 = zext(T) & 0x1f; ACC = ACC s>> s; }
 
 # =============================================================================
 # Batch 15 (2026-06-23): 0x56-family gaps from the prologue-seeded truncation
@@ -312,22 +312,19 @@
 # NOTE: MAX is 0111 001A (op_lo71=0b0111001), NOT 000A — the manual's opcode wraps two
 # lines (0101 0110 0111 / 001A 0000...) and reads as one 16-bit LSW. dis2000-confirmed
 # (0x5673 = MAX AH); the earlier 0b0111000 was wrong and left 0x5672/0x5673 undecoded.
-:MIN AXb0, loc16  is op_hi8=0x56 & op_lo71=0b0111010 & AXb0 ; loc16  {
+:MIN AXb0, loc16  is rpt_phase=1 & op_hi8=0x56 & op_lo71=0b0111010 & AXb0 ; loc16  {
     if (AXb0 s<= loc16) goto inst_next;
     AXb0 = loc16;
 }
-:MAX AXb0, loc16  is op_hi8=0x56 & op_lo71=0b0111001 & AXb0 ; loc16  {
+:MAX AXb0, loc16  is rpt_phase=1 & op_hi8=0x56 & op_lo71=0b0111001 & AXb0 ; loc16  {
     if (AXb0 s>= loc16) goto inst_next;
     AXb0 = loc16;
 }
-# CSB uses a Java CALLOTHER behavior (count leading sign bits); FLIP is done branch-free below.
-define pcodeop countSignBits;
-
 # FLIP AX  0101 0110 0111 000A  (bit-reverse AL/AH). dis2000-confirmed (0x5670/0x5671 —
 # previously MIS-DECODED as the 2-word MAX, which consumed an extra word and skewed flow).
 # 16-bit bit-reversal as a branch-free swap network — pure SLEIGH, so it works in both the
 # decompiler and the emulator (no callother needed). 1-word.
-:FLIP AXb0  is op_hi8=0x56 & op_lo71=0b0111000 & AXb0  {
+:FLIP AXb0  is rpt_phase=1 & op_hi8=0x56 & op_lo71=0b0111000 & AXb0  {
     local x:2 = AXb0;
     x = ((x & 0x5555) << 1) | ((x >> 1) & 0x5555);
     x = ((x & 0x3333) << 2) | ((x >> 2) & 0x3333);
@@ -335,17 +332,29 @@ define pcodeop countSignBits;
     x = (x << 8) | (x >> 8);
     AXb0 = x;
 }
-# CSB ACC  0101 0110 0011 0101  (count sign bits: T = leading-sign-bit count - 1). Computed by
-# the countSignBits CALLOTHER (TMS320C28xEmulateInstructionStateModifier); flags per SPRU430F:
-# N/Z from ACC (unchanged), TC = sign bit after the op (= ACC negative). 1-word.
-:CSB "ACC"  is op16=0x5635  {
-    T = countSignBits(ACC);
-    $(N) = (ACC s< 0);
-    $(Z) = (ACC == 0);
-    $(TC) = (ACC s< 0);
+# CSB ACC  0101 0110 0011 0101  (count sign bits: T = leading-sign-bit count - 1). 1-word.
+# Pure SLEIGH via `lzcount`: for ACC >= 0 the leading zeros ARE the redundant sign bits;
+# for ACC < 0 the leading ones are, so `lzcount(~ACC)` gives that count. Subtract one to
+# match the hardware definition (SPRU430F 6.5.14): CSB reports "sign-bit count minus one",
+# so 0x00000000 and 0xFFFFFFFF both yield T = 31. Retires countSignBits CALLOTHER.
+# Ported from mwdmwd/ghidra-c28x (Apache-2.0, tms320c28.sinc); see THIRD-PARTY.md.
+# Flags per SPRU430F: N/Z from ACC (unchanged); TC = sign bit after the op (= ACC < 0).
+:CSB "ACC"  is rpt_phase=1 & op16=0x5635  {
+    local acc:4 = ACC;
+    local count:2;
+    if (acc s< 0) goto <neg>;
+    count = lzcount(acc);
+    goto <done>;
+  <neg>
+    count = lzcount(~acc);
+  <done>
+    T = count - 1;
+    $(N) = (acc s< 0);
+    $(Z) = (acc == 0);
+    $(TC) = $(N);
 }
 # ABSTC ACC  0101 0110 0101 1111  (ACC = |ACC|; TC ^= sign bit). dis2000-confirmed (DIR).
-:ABSTC "ACC"  is op16=0x565f  {
+:ABSTC "ACC"  is rpt_phase=1 & op16=0x565f  {
     local neg:1 = (ACC s< 0);
     $(TC) = $(TC) ^ neg;
     if (ACC s>= 0) goto inst_next;
@@ -353,37 +362,37 @@ define pcodeop countSignBits;
 }
 # NEGTC ACC  0101 0110 0011 0010  (if TC==1, negate ACC). Pairs with ABSTC in the
 # sign-magnitude idiom. dis2000-confirmed (DIR image).
-:NEGTC "ACC"  is op16=0x5632  {
+:NEGTC "ACC"  is rpt_phase=1 & op16=0x5632  {
     if ($(TC) == 0) goto inst_next;
     ACC = -ACC;
     setNZ32(ACC);
 }
 # ASR64 ACC:P,T  0101 0110 0010 1100  (64-bit ARITHMETIC shift right by T(5:0)).
-:ASR64 "ACC:P,T"  is op16=0x562c  {
+:ASR64 "ACC:P,T"  is rpt_phase=1 & op16=0x562c  {
     local s:8 = zext(T) & 0x3f;
     local v:8 = (zext(ACC) << 32) | zext(P);
     v = v s>> s; ACC = v(4); P = v(0);
 }
 # CMP64 ACC:P  0101 0110 0101 1110  (compare 64-bit ACC:P vs 0; set N/Z, Z from both).
-:CMP64 "ACC:P"  is op16=0x565e  {
+:CMP64 "ACC:P"  is rpt_phase=1 & op16=0x565e  {
     local v:8 = (zext(ACC) << 32) | zext(P);
     $(N) = (v s< 0); $(Z) = (v == 0);
 }
 # NEG64 ACC:P  0101 0110 0101 1000  (negate the 64-bit ACC:P pair). dis2000-confirmed;
 # reached only via a branch shadow (after SB ...,GEQ), so the fall-through sweep missed it.
-:NEG64 "ACC:P"  is op16=0x5658  {
+:NEG64 "ACC:P"  is rpt_phase=1 & op16=0x5658  {
     local v:8 = (zext(ACC) << 32) | zext(P);
     v = -v; ACC = v(4); P = v(0);
     $(N) = (v s< 0); $(Z) = (v == 0);
 }
 # LSR64 ACC:P,T  0101 0110 0101 1011  (64-bit logical shift right by T(5:0)).
-:LSR64 "ACC:P,T"  is op16=0x565b  {
+:LSR64 "ACC:P,T"  is rpt_phase=1 & op16=0x565b  {
     local s:8 = zext(T) & 0x3f;
     local v:8 = (zext(ACC) << 32) | zext(P);
     v = v >> s; ACC = v(4); P = v(0);
 }
 # LSL64 ACC:P,T  0101 0110 0101 0010  (64-bit logical shift left by T(5:0)).
-:LSL64 "ACC:P,T"  is op16=0x5652  {
+:LSL64 "ACC:P,T"  is rpt_phase=1 & op16=0x5652  {
     local s:8 = zext(T) & 0x3f;
     local v:8 = (zext(ACC) << 32) | zext(P);
     v = v << s; ACC = v(4); P = v(0);
@@ -391,20 +400,20 @@ define pcodeop countSignBits;
 # SUBCUL ACC,loc32  0101 0110 0001 0111 : loc32  (conditional 32-bit subtract step;
 # divide primitive). Modeled as the plain subtract (the conditional-restore detail
 # isn't tracked); keeps dataflow + flow continuing.
-:SUBCUL ACCreg, loc32  is op16=0x5617 ; loc32 & ACCreg  { ACC = ACC - loc32; }
+:SUBCUL ACCreg, loc32  is rpt_phase=1 & op16=0x5617 ; loc32 & ACCreg  { ACC = ACC - loc32; }
 # MOVX TL,loc16  0101 0110 0010 0001 : 0000 0000 LLLL LLLL  (sign-extend [loc16] into
 # the low half of XT; high half = sign). XT low 16 = loc16, T (high) = sign-extend.
-:MOVX "TL", loc16  is op16=0x5621 ; loc16  { XT = sext(loc16); }
+:MOVX "TL", loc16  is rpt_phase=1 & op16=0x5621 ; loc16  { XT = sext(loc16); }
 # MOV loc16,AX,COND  0101 0110 0010 101A : 0000 COND LLLL LLLL  (store AX if COND).
 # COND in word2 bits 8-11; modeled flow-preserving (store AX unconditionally so the
 # def survives — the exact predicate isn't decoded here).
-:MOV loc16, AXb0, "COND"  is op_hi8=0x56 & op_lo71=0b0010101 & AXb0 ; loc16  { loc16 = AXb0; }
+:MOV loc16, AXb0, "COND"  is rpt_phase=1 & op_hi8=0x56 & op_lo71=0b0010101 & AXb0 ; loc16  { loc16 = AXb0; }
 # MOV loc16,ACC<<#2..8  0101 0110 0010 1101 : 0000 0SHF LLLL LLLL  (save low word of
 # ACC<<SHF). SHF in word2 bits 8-10; store the low word of the shifted ACC.
-:MOV loc16, "ACC<<#2..8"  is op16=0x562d ; loc16 & shft_hi4  {
+:MOV loc16, "ACC<<#2..8"  is rpt_phase=1 & op16=0x562d ; loc16 & shft_hi4  {
     local v:4 = ACC << zext(shft_hi4:1); loc16 = v:2;
 }
 # MOVH loc16,ACC<<#2..8  0101 0110 0010 1111 : 0000 0SHF LLLL LLLL  (save high word).
-:MOVH loc16, "ACC<<#2..8"  is op16=0x562f ; loc16 & shft_hi4  {
+:MOVH loc16, "ACC<<#2..8"  is rpt_phase=1 & op16=0x562f ; loc16 & shft_hi4  {
     local v:4 = ACC << zext(shft_hi4:1); loc16 = v(2);
 }

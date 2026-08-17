@@ -106,3 +106,40 @@ negative cases there are the whole point of the design: `0.0 / 5.0` produces a z
 is *not* an underflow and `Inf / 2.0` an infinity that is *not* an overflow, so neither
 verdict is reachable from the rounded result -- they only pass if the intrinsic is reading
 the operands.
+
+## Structural invariant: `tests/run_phase_check.{sh,ps1}`
+
+```sh
+bash tests/run_phase_check.sh          # no Ghidra, no SLEIGH compile, ~instant
+```
+```powershell
+pwsh -File tests\run_phase_check.ps1
+```
+
+Pure text over `data/languages`, so it runs first in CI and fails in seconds. It asserts
+the RPT / RPTB phase-bit partition:
+
+- every top-level `:MNEMONIC` constructor constrains `rpt_phase=1`
+- the two `:^instruction` wrappers constrain `rpt_phase=0`
+
+**Why it needs to exist.** A `:^instruction` wrapper compiles to a variant of *every* base
+constructor, patterned `(wrapper AND base)`. Where a base imposes no contradicting context
+constraint the two overlap, and the resolver picks the base -- the wrapper becomes a silent
+no-op. The phase bit is what keeps them disjoint (the same trick ARM, avr8, 8051 and
+Hexagon use).
+
+A new constructor added without `& rpt_phase=1` **decodes perfectly and passes every other
+test in this file.** `run_disasm_test` compares the listing, and the listing is correct.
+The only symptom is that `RPT || <that instruction>` executes once instead of N+1 times --
+wrong emulation, and a repeat the decompiler cannot see. Nothing downstream reports it,
+which is exactly why it gets a dedicated gate.
+
+The sibling failure is `rpt_phase` losing its `noflow` in the slaspec, which lets phase 0
+flow *past* the repeated instruction so that nothing matches at RPT+2. That one does show
+up -- as `<UNDEF>`s in `run_fw_parity` (57 of them, plus 3 length skews, when it regressed)
+-- so it is left to parity rather than duplicated here.
+
+Both scripts have been negative-tested: stripping the constraint from a single constructor,
+from a wrapper, and from a multi-line constructor head each produce a non-zero exit. The
+PowerShell version additionally refuses to report a pass when it matched zero files, since
+a vacuous green is the one way a checker like this fails open.
