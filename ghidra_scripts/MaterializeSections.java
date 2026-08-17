@@ -386,7 +386,12 @@ public class MaterializeSections extends GhidraScript {
 
     // --- materialization helpers -------------------------------------------------------------
     // Greedy DISJOINT subset of a callee's triples, run-sorted. A real set of section copies is
-    // already disjoint (all kept); a scratch-buffer helper's many same-run copies collapse to one.
+    // disjoint in BOTH run and load space (all kept); a scratch-buffer/broadcast helper — or a
+    // const-prop artifact that reuses one stale load pointer across calls — has triples whose LOAD
+    // ranges overlap, so it collapses toward one and scores below minSites instead of masquerading
+    // as the section copier. (A sleigh-boundary shift can surface that pattern: on one production
+    // CPU1 image a bogus candidate at 0x9ae1a "loaded" 3 sections all from ~0xa24dc, and outscored
+    // the real copier until load-disjointness was required.)
     List<List<Long>> nonOverlapping(java.util.Collection<List<Long>> triples) {
         List<List<Long>> ts = new ArrayList<>(triples);
         ts.sort(Comparator.comparingLong(t -> t.get(1)));
@@ -394,7 +399,15 @@ public class MaterializeSections extends GhidraScript {
         long lastEnd = Long.MIN_VALUE;
         for (List<Long> t : ts) {
             long run = t.get(1), end = run + t.get(0);
-            if (run >= lastEnd) { keep.add(t); lastEnd = end; }
+            if (run < lastEnd) continue;                       // run overlaps a kept section
+            long load = t.get(2), loadEnd = load + t.get(0);   // LOAD images must be disjoint too
+            boolean loadClash = false;
+            for (List<Long> k : keep) {
+                long kl = k.get(2), kle = kl + k.get(0);
+                if (load < kle && kl < loadEnd) { loadClash = true; break; }
+            }
+            if (loadClash) continue;
+            keep.add(t); lastEnd = end;
         }
         return keep;
     }

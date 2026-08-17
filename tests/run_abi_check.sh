@@ -42,11 +42,7 @@ trap 'rm -rf "$tmp"' EXIT
 (cd "$lang" && "$GHIDRA_INSTALL_DIR/support/sleigh" tms320c28x.slaspec >/dev/null)
 [ -f "$lang/tms320c28x.sla" ] || { echo "SLEIGH compile failed (no .sla)"; exit 1; }
 
-modroot="$GHIDRA_INSTALL_DIR/Ghidra/Processors/TMS320C28x"
-inst="$modroot/data/languages"
-mkdir -p "$inst"
-cp "$lang"/* "$inst/"
-cp "$module/Module.manifest" "$modroot/Module.manifest"
+_c28x_install_module "$GHIDRA_INSTALL_DIR" "$module" >/dev/null
 
 mkdir -p "$tmp/proj" "$tmp/scripts"
 cp "$module/ghidra_scripts/DumpProtos.java" "$tmp/scripts/DumpProtos.java"

@@ -41,3 +41,60 @@ _c28x_load_env() {
   done < "$f"
   return 0   # never let read's EOF non-zero abort a `set -e` caller
 }
+
+# _c28x_install_module <ghidra-root> <module-root>
+#
+# Copy data/languages/* and Module.manifest into the ONE location Ghidra actually
+# loads the C28x module from, and echo that location's lib/ directory (created) so
+# the caller can drop a compiled jar in the right place. Progress goes to stderr so
+# stdout carries only the path.
+#
+# Precedence mirrors tests/_env.ps1's Install-C28xModule: an installed extension
+# wins when present, else the $GHIDRA_INSTALL_DIR/Ghidra/Processors/TMS320C28x
+# drop-in. Populating BOTH is a bug -- Ghidra 12.1.2 detects the duplicate <language>
+# and refuses to start with "Language ... previously defined". The extension used to
+# silently shadow the drop-in; it does not any more.
+#
+# Extensions live under Ghidra's per-user settings dir, which differs by platform and
+# has moved between releases, so probe the known roots rather than assume one:
+#   $XDG_CONFIG_HOME/ghidra (default ~/.config/ghidra)  -- Ghidra 11+ on Linux
+#   ~/.ghidra                                           -- older layout
+#   $APPDATA/ghidra                                     -- bash on Windows (Git Bash)
+# CI has no extension installed, so it takes the drop-in branch and is unaffected.
+_c28x_install_module() {
+  local ghidra="$1" module="$2"
+  local lang="$module/data/languages"
+  local manifest="$module/Module.manifest"
+  local ext="" root cand appdata target
+
+  appdata="${APPDATA:-}"
+  # Git Bash exports APPDATA as a Windows path; convert when we can, else skip it.
+  if [ -n "$appdata" ] && case "$appdata" in *\\*) true ;; *) false ;; esac; then
+    if command -v cygpath >/dev/null 2>&1; then
+      appdata=$(cygpath -u "$appdata")
+    else
+      appdata=""
+    fi
+  fi
+
+  for root in "${XDG_CONFIG_HOME:-$HOME/.config}/ghidra" "$HOME/.ghidra" ${appdata:+"$appdata/ghidra"}; do
+    [ -d "$root" ] || continue
+    for cand in "$root"/*/Extensions/ghidra-tms320c28x; do
+      if [ -d "$cand" ]; then ext="$cand"; break; fi
+    done
+    [ -n "$ext" ] && break
+  done
+
+  if [ -n "$ext" ]; then
+    target="$ext"
+    printf 'installed to extension: %s\n' "$target" >&2
+  else
+    target="$ghidra/Ghidra/Processors/TMS320C28x"
+    printf 'installed to drop-in: %s\n' "$target" >&2
+  fi
+
+  mkdir -p "$target/data/languages" "$target/lib"
+  cp "$lang"/* "$target/data/languages/"
+  cp "$manifest" "$target/Module.manifest"
+  printf '%s\n' "$target/lib"
+}

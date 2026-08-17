@@ -68,16 +68,16 @@ CASES="addr_modes fpu_display fpu_parallel fpu_flags"
 [ -f "$lang/tms320c28x.sla" ] || { echo "SLEIGH compile failed (no .sla)"; exit 1; }
 
 # 2. reinstall into Ghidra. On a fresh Ghidra the TMS320C28x module does not exist
-# yet, so also drop in the Module.manifest -- without it Ghidra won't treat the
-# directory as a module and won't discover the language (analyzeHeadless then fails
-# with "language not found"). data/languages is enough to load + disassemble here;
-# the compiled Java (emulate modifier / analyzer) is resolved lazily and is not
+# yet, so Install also drops in the Module.manifest -- without it Ghidra won't treat
+# the directory as a module and won't discover the language (analyzeHeadless then
+# fails with "language not found"). data/languages is enough to load + disassemble
+# here; the compiled Java (emulate modifier / analyzer) is resolved lazily and is not
 # needed for this -noanalysis decode check.
-modroot="$GHIDRA_INSTALL_DIR/Ghidra/Processors/TMS320C28x"
-inst="$modroot/data/languages"
-mkdir -p "$inst"
-cp "$lang"/* "$inst/"
-cp "$module/Module.manifest" "$modroot/Module.manifest"
+#
+# _c28x_install_module writes to exactly ONE location -- the installed extension when
+# there is one, else the Processors drop-in. Populating both makes Ghidra 12.1.2
+# refuse to start ("Language ... previously defined").
+_c28x_install_module "$GHIDRA_INSTALL_DIR" "$module" >/dev/null
 
 mkdir -p "$tmp/proj" "$tmp/scripts"
 cp "$module/ghidra_scripts/DumpDisasm.java" "$tmp/scripts/DumpDisasm.java"

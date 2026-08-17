@@ -48,9 +48,10 @@ trap 'rm -rf "$out"' EXIT
 cls="$out/ghidra/program/emulation/TMS320C28xEmulateInstructionStateModifier.class"
 [ -f "$cls" ] || { echo "compile failed (no .class)" >&2; exit 1; }
 
-mod="$GHIDRA_INSTALL_DIR/Ghidra/Processors/TMS320C28x"
-mkdir -p "$mod/lib" "$mod/data/languages"
-"$jartool" --create --file "$mod/lib/TMS320C28x.jar" -C "$out" ghidra
-cp "$module/data/languages/tms320c28x.pspec" "$mod/data/languages/tms320c28x.pspec"
+# Install into whichever single location Ghidra loads the module from (extension when
+# present, else the Processors drop-in) -- the jar must land beside the .sla that
+# expects it, and populating both locations makes Ghidra refuse to start.
+lib=$(_c28x_install_module "$GHIDRA_INSTALL_DIR" "$module")
+"$jartool" --create --file "$lib/TMS320C28x.jar" -C "$out" ghidra
 
-printf 'Installed %s/lib/TMS320C28x.jar + pspec. RESTART Ghidra to load the RPTB state modifier.\n' "$mod"
+printf 'Installed %s/TMS320C28x.jar + languages. RESTART Ghidra to load the state modifier.\n' "$lib"
