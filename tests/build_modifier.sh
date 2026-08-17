@@ -37,14 +37,19 @@ fi
 [ -x "$javac" ]   || { echo "javac not found (set JAVA_HOME or put JDK on PATH)" >&2; exit 1; }
 [ -x "$jartool" ] || { echo "jar not found (set JAVA_HOME or put JDK on PATH)" >&2; exit 1; }
 
-src="$module/src/main/java/ghidra/program/emulation/TMS320C28xEmulateInstructionStateModifier.java"
-# Ghidra 12.x classpath is any jar under Ghidra/Framework.
-cp=$(find "$GHIDRA_INSTALL_DIR/Ghidra/Framework" -name '*.jar' -print0 | tr '\0' ':')
+# Compile EVERY class under src/main/java, not just the state modifier. The jar this
+# produces REPLACES whatever jar the target module already has, so a partial build would
+# silently drop the analyzers (FFC return, switch, ABI) that ship in the same jar.
 out=$(mktemp -d -t c28x-mod-build-XXXXXX)
-trap 'rm -rf "$out"' EXIT
+srclist=$(mktemp -t c28x-mod-src-XXXXXX)
+trap 'rm -rf "$out" "$srclist"' EXIT
+find "$module/src/main/java" -name '*.java' > "$srclist"
+[ -s "$srclist" ] || { echo "no sources under $module/src/main/java" >&2; exit 1; }
+# Analyzers extend Features/Base classes, so the classpath needs all of Ghidra, not just Framework.
+cp=$(find "$GHIDRA_INSTALL_DIR/Ghidra" -name '*.jar' -print0 | tr '\0' ':')
 
 # Ghidra 12.x runs on JDK 21+; --release 21 keeps the class loadable on any supported JVM.
-"$javac" --release 21 -cp "$cp" -d "$out" "$src"
+"$javac" --release 21 -nowarn -cp "$cp" -d "$out" "@$srclist"
 cls="$out/ghidra/program/emulation/TMS320C28xEmulateInstructionStateModifier.class"
 [ -f "$cls" ] || { echo "compile failed (no .class)" >&2; exit 1; }
 
@@ -52,6 +57,18 @@ cls="$out/ghidra/program/emulation/TMS320C28xEmulateInstructionStateModifier.cla
 # present, else the Processors drop-in) -- the jar must land beside the .sla that
 # expects it, and populating both locations makes Ghidra refuse to start.
 lib=$(_c28x_install_module "$GHIDRA_INSTALL_DIR" "$module")
-"$jartool" --create --file "$lib/TMS320C28x.jar" -C "$out" ghidra
 
-printf 'Installed %s/TMS320C28x.jar + languages. RESTART Ghidra to load the state modifier.\n' "$lib"
+# REPLACE the module's existing jar rather than adding a second one. An extension already
+# ships lib/ghidra-tms320c28x.jar containing these same classes; writing a differently-named
+# jar beside it puts two copies of every class on the classpath and Ghidra picks by scan
+# order, which is exactly the stale-class ambiguity this script exists to resolve.
+existing=$(find "$lib" -maxdepth 1 -name '*.jar' -type f)
+if [ "$(printf '%s\n' "$existing" | grep -c .)" = "1" ]; then
+  jarpath="$existing"
+else
+  jarpath="$lib/TMS320C28x.jar"
+fi
+"$jartool" --create --file "$jarpath" -C "$out" ghidra
+
+printf 'Installed %s (%s sources) + languages. RESTART Ghidra to load it.\n' \
+  "$jarpath" "$(grep -c . "$srclist")"
