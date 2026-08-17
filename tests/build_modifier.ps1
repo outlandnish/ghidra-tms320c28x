@@ -33,18 +33,35 @@ if (-not $javac -or -not (Test-Path $javac)) { $javac = "C:\Program Files\Micros
 $jarTool = Join-Path (Split-Path $javac) "jar.exe"
 if (-not (Test-Path $javac)) { throw "javac not found; pass -Jdk <jdk-home>" }
 
-$src = "$Module\src\main\java\ghidra\program\emulation\TMS320C28xEmulateInstructionStateModifier.java"
-$cp  = ((Get-ChildItem "$Ghidra\Ghidra\Framework" -Filter "*.jar" -Recurse | ForEach-Object { $_.FullName }) -join ';')
+# Compile EVERY class under src/main/java, not just the state modifier. The jar this
+# produces REPLACES whatever jar the target module already has, so a partial build would
+# silently drop the analyzers (FFC return, switch, ABI) that ship in the same jar.
+$srcs = Get-ChildItem -Path "$Module\src\main\java" -Filter "*.java" -Recurse | ForEach-Object { $_.FullName }
+if (-not $srcs) { throw "no sources under $Module\src\main\java" }
+# Analyzers extend Features/Base classes, so the classpath needs all of Ghidra, not just Framework.
+$cp  = ((Get-ChildItem "$Ghidra\Ghidra" -Filter "*.jar" -Recurse | ForEach-Object { $_.FullName }) -join ';')
 # Per-worktree scratch dir (was a fixed "$env:TEMP\c28x-mod-build" that collided across worktrees).
 $out = (Join-Path (Get-C28xScratchRoot -Module $Module -Kind "modbuild") "out"); New-Item -ItemType Directory -Force $out | Out-Null
+Get-ChildItem $out -Recurse -File -ErrorAction SilentlyContinue | Remove-Item -Force
 
 # Ghidra 12.x runs on JDK 21+; --release 21 keeps the class loadable on any supported JVM.
-& $javac --release 21 -cp $cp -d $out $src
+$srcList = Join-Path (Split-Path $out -Parent) "sources.txt"
+$srcs | Set-Content $srcList -Encoding ascii
+& $javac --release 21 -nowarn -cp $cp -d $out "@$srcList"
 $cls = "$out\ghidra\program\emulation\TMS320C28xEmulateInstructionStateModifier.class"
 if (-not (Test-Path $cls)) { throw "compile failed (no .class)" }
 
-$mod = "$Ghidra\Ghidra\Processors\TMS320C28x"
-New-Item -ItemType Directory -Force "$mod\lib" | Out-Null
-& $jarTool --create --file "$mod\lib\TMS320C28x.jar" -C $out ghidra
-Copy-Item "$Module\data\languages\tms320c28x.pspec" "$mod\data\languages\tms320c28x.pspec" -Force
-Write-Host "Installed $mod\lib\TMS320C28x.jar + pspec. RESTART Ghidra to load the RPTB state modifier." -ForegroundColor Green
+# Install the language into the ONE location Ghidra loads the module from, and put the jar
+# in the lib/ that call returns -- the jar and the .sla are a matched pair (the current .sla
+# expects postExecuteCallback to drive RPT alone), so they must not land in different modules.
+$lib = Install-C28xModule -Ghidra $Ghidra -Module $Module
+
+# REPLACE the module's existing jar rather than adding a second one. An extension already
+# ships lib\ghidra-tms320c28x.jar containing these same classes; writing a differently-named
+# jar beside it puts two copies of every class on the classpath and Ghidra picks by scan
+# order, which is exactly the stale-class ambiguity this script exists to resolve.
+$existing = Get-ChildItem $lib -Filter "*.jar" -File -ErrorAction SilentlyContinue
+$jarPath = if ($existing.Count -eq 1) { $existing[0].FullName } else { Join-Path $lib "TMS320C28x.jar" }
+& $jarTool --create --file $jarPath -C $out ghidra
+
+Write-Host "Installed $jarPath ($(($srcs).Count) sources) + languages. RESTART Ghidra to load it." -ForegroundColor Green
