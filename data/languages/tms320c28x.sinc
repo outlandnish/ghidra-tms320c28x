@@ -119,6 +119,15 @@ define token instr16 (16)
     # 0xBD/0xBF register-form MOV32 MSW = 0x0F<reg> : the FP reg index sits in MSW bits[2:5]
     # (dis2000-confirmed: R0H..R7H => MSW byte 0x12,16,1A,1E,22,26,2A,2E = field value 4..11).
     f_movf_reg = (2,5)
+    # 0xBD/0xBF are DUAL-form (asm2000/dis2000 verified): the MSW disambiguates the FPU
+    # register move (MOV32 loc32,RaH) from the VCU-II absolute-memory move
+    # (VMOV32 loc32,*(0:16bitAddr)).  The register form is EXACTLY MSW high byte 0x0F with
+    # bits[7:6]=0 and the reg index 4..11 (0x0F12..0x0F2E); every other MSW is a 16-bit data
+    # address.  These sub-fields pin the register-form selector so the absolute-memory form
+    # can be the catch-all (a real address MSW like 0x7F08 used to fall on an undefined
+    # f_movf_reg slot and decode to <UNDEF>).
+    f_msw_b8_15 = (8,15)    # MSW high byte -- 0x0F => register form, else absolute-memory form
+    f_msw_b76   = (6,7)     # MSW bits 7:6  -- 0 in the register form (nonzero => memory form)
 ;
 
 # --- trailing 16-bit immediate / extension word -------------------------------
