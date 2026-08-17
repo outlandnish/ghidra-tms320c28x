@@ -37,6 +37,9 @@ public class MaterializeCopyTable extends GhidraScript {
     long fStart, fEnd;          // flash word range (initialized high memory)
     ArrayList<Integer> lzOut;   // last LZSS output
     long lzSrcEnd;              // word after the last consumed LZSS source word
+    // copy-table record layout. Default is the TI 6-word {size,load,run}. Some images (e.g.
+    // dir_can_dit1) use an 8-word {load,run,size,flags} pure-RAW variant; detectTable() flips these.
+    int recW = 6, offSz = 0, offLd = 2, offRn = 4;
 
     long rdw(long w)  { try { return mem.getShort(space.getAddress(w * 2)) & 0xffffL; } catch (Exception e) { return -1L; } }
     long rd32(long w) { return (rdw(w + 1) << 16) | rdw(w); }
@@ -90,6 +93,28 @@ public class MaterializeCopyTable extends GhidraScript {
             if (cnt >= 3 && terminated && sawHandler && cnt > bestCount) { bestCount = cnt; bestBase = w; }
             if (cnt >= 3) w += 6L * cnt; // skip past a found run
         }
+        if (bestBase >= 0) return bestBase;
+        return detectTable8();   // 8-word {load,run,size,flags} pure-RAW fallback (e.g. dir_can_dit1)
+    }
+
+    // 8-word {load,run,size,flags} pure-RAW copy table: >=3 records with valid load/run/size and NO
+    // size==0 handler records, terminated by an all-0xffffffff record. Flips the record layout so the
+    // materialize loop reads it. (dir_can_dit1's table @0x818b0 is this shape; the 6-word scan misses
+    // it because every record is RAW -- there is no handler-dispatched size==0 record to key on.)
+    long detectTable8() {
+        long bestBase = -1; int bestCount = 0;
+        for (long w = fStart; w <= fEnd - 8; w++) {
+            int cnt = 0;
+            for (int i = 0; i < 256; i++) {
+                long a = w + 8L * i, ld = rd32(a), rn = rd32(a + 2), sz = rd32(a + 4);
+                if (ld == 0xffffffffL || sz == 0 || !validRec(sz, ld, rn)) break;
+                cnt++;
+            }
+            boolean terminated = (rd32(w + 8L * cnt) == 0xffffffffL);
+            if (cnt >= 3 && terminated && cnt > bestCount) { bestCount = cnt; bestBase = w; }
+            if (cnt >= 3) w += 8L * cnt;
+        }
+        if (bestBase >= 0) { recW = 8; offLd = 0; offRn = 2; offSz = 4; }
         return bestBase;
     }
 
@@ -142,6 +167,7 @@ public class MaterializeCopyTable extends GhidraScript {
         String p = System.getProperty("c28x.ct.base");
         long tbase = (p != null) ? Long.decode(p.trim()) : detectTable();
         if (tbase < 0) { println("copy-table not found; pass -Dc28x.ct.base=0xWORD"); return; }
+        if (Integer.getInteger("c28x.ct.words", 6) == 8) { recW = 8; offLd = 0; offRn = 2; offSz = 4; }
         println(String.format("flash 0x%05x-0x%05x ; copy table @ 0x%05x", fStart, fEnd, tbase));
 
         boolean dry = Boolean.getBoolean("c28x.ct.dryRun");
@@ -149,7 +175,7 @@ public class MaterializeCopyTable extends GhidraScript {
         ArrayList<long[]> loadImgs = new ArrayList<>();  // {load, words}
         int nrec = 0; long totalWords = 0; long lastRec = tbase;
         for (int i = 0; i < 256; i++) {
-            long a = tbase + 6L * i, size = rd32(a), load = rd32(a + 2), run = rd32(a + 4);
+            long a = tbase + (long) recW * i, size = rd32(a + offSz), load = rd32(a + offLd), run = rd32(a + offRn);
             if (load == 0xffffffffL || !validRec(size, load, run)) break;
             ArrayList<Integer> out; long loadWords;
             if (size != 0) {
@@ -166,6 +192,7 @@ public class MaterializeCopyTable extends GhidraScript {
                     i, (size != 0 ? "RAW " : "LZSS"), size, load, run, out.size()));
             if (!dry) {
                 for (long w = run; w < run + out.size() + 1; w += 0x100) ensureInit(w);
+                ensureInit(run + out.size() - 1);   // last block: a 0x100 stride can skip a run's tail block (e.g. a run ending just past a D0/D1 seam)
                 // clear any prior code/data in the run region so the bytes can be (re)written
                 try { currentProgram.getListing().clearCodeUnits(wa(run), wa(run + out.size() - 1), false); } catch (Exception ex) {}
                 for (int k = 0; k < out.size(); k++) mem.setShort(wa(run + k), (short) (int) out.get(k));
@@ -173,7 +200,7 @@ public class MaterializeCopyTable extends GhidraScript {
             nrec++; totalWords += out.size();
             allRuns.add(new long[]{run, out.size()});
             loadImgs.add(new long[]{load, loadWords});
-            lastRec = a + 6;
+            lastRec = a + recW;
         }
         println("materialized " + nrec + " record(s), 0x" + Long.toHexString(totalWords) + " words");
         if (dry) return;
@@ -232,7 +259,7 @@ public class MaterializeCopyTable extends GhidraScript {
                 println("marked flash tail [0x" + Long.toHexString(tbase) + "-0x" + Long.toHexString(fEnd)
                         + "] + below-table load images as data (table near flash-end)");
             } else {
-                markData(tbase, 6L * nrec + 6);                       // copy table records + terminator
+                markData(tbase, (long) recW * nrec + recW);           // copy table records + terminator
                 for (long[] li : loadImgs) markData(li[0], li[1]);    // each record's load image, precisely
                 println("marked copy table @0x" + Long.toHexString(tbase) + " + " + loadImgs.size()
                         + " load image(s) as data (table early in flash; executable flash preserved)");
