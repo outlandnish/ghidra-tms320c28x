@@ -567,19 +567,40 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
 }
 
 # =============================================================================
-# MOV32 reg <-> P/ACC/mem (loc32).  LSW = opcode + loc32; MSW = imm16 (opaque).
-# The FP register on the MSW side isn't cleanly decodable, but the loc32 side IS, so
-# wire the real loc32<->memory/ACC/P move (the FP-reg half stays an opaque temp). This
-# connects the float values to the command/IPC structs for dataflow.
-#   MOV32 loc32, RaH  (FP->C28x)  LSW: 1011 1111 loc32  MSW: imm16
-#   MOV32 RaH,  loc32 (C28x->FP)  LSW: 1011 1101 loc32  MSW: imm16
-# Register-form MOV32: source/dest is the LSW loc32 (ACC/P/XARn/XT — fully decoded by the
-# loc32 subtable); the FP register is the MSW (0x0F<reg>, f_movf_reg). The memory forms of
-# MOV32 live under 0xE2 (load) / 0xE203 (store), so 0xBD/0xBF are exclusively register-form.
-# Writing the real FP reg (was `local s:4 = loc32` / `loc32 = loc32`) lets the decompiler
-# track which MOVIZ/MOVXI const flows through ACC into the MPYF32 — the item-#2 value-recovery.
-:MOV32 f_movf_reg, loc32  is op_hi8=0xBD & loc32 ; f_movf_reg { f_movf_reg = loc32; }   # load <src> -> FP reg
-:MOV32 loc32, f_movf_reg  is op_hi8=0xBF & loc32 ; f_movf_reg { loc32 = f_movf_reg; }   # store FP reg -> <dst>
+# 0xBD / 0xBF : DUAL-form 32-bit move.  LSW = 1011 110x + loc32 (ACC/P/XT/XARn, decoded by
+# the shared loc32 sub-table).  The SECOND word (MSW) selects between two entirely different
+# instructions -- verified by asm2000/dis2000 round-trip:
+#
+#   * MSW high byte 0x0F, bits[7:6]=0, index bits[5:2] in 4..11  ->  FPU register move
+#       0xBF: MOV32 loc32, RaH   (loc32 <- FP reg)   MSW = 0x0F02 | (freg<<2); freg 4..11 = R0H..R7H
+#       0xBD: MOV32 RaH, loc32   (FP reg <- loc32)
+#     (e.g. bfa9 0f12 => MOV32 ACC,R0H ; bda9 0f12 => MOV32 R0H,ACC)
+#
+#   * ANY other MSW  ->  VCU-II absolute-memory move; the MSW is a 16-bit *(0:16bitAddr)
+#     data address (page 0, high bits zero) -- NOT a register selector:
+#       0xBF: VMOV32 loc32, *(0:16bitAddr)   (loc32 <- [0:addr])   spruhs1c p.549
+#       0xBD: VMOV32 *(0:16bitAddr), loc32   (loc32 -> [0:addr])   spruhs1c p.548
+#     (e.g. bfa9 7f08 => VMOV32 ACC,*(0:0x7f08) ; bda9 7f08 => VMOV32 *(0:0x7f08),ACC)
+#
+# The old model matched the register form on ANY MSW (only the f_movf_reg index bits, no
+# high-byte constraint), so a real address MSW (index bits landing outside 4..11, e.g.
+# 0x7F08) fell on an undefined f_movf_reg attach slot and decoded to <UNDEF> (halt_baddata).
+# Constrain the register form to the exact 0x0F.. selector; add the absolute-memory form as
+# the strictly-less-specific catch-all.  dis2000 tie-breaks identically.  The register form
+# keeps its opaque FP-reg move (its constant recovery is handled by the value-flow work); the
+# memory form has real load/store p-code so the decompiler tracks the address.
+
+# --- register form (MSW = 0x0F.. FP-reg selector) --------------------------------
+:MOV32 f_movf_reg, loc32  is op_hi8=0xBD & loc32 ; f_msw_b8_15=0x0F & f_msw_b76=0 & f_movf_reg
+        { f_movf_reg = loc32; }          # 0xBD: FP reg <- loc32
+:MOV32 loc32, f_movf_reg  is op_hi8=0xBF & loc32 ; f_msw_b8_15=0x0F & f_msw_b76=0 & f_movf_reg
+        { loc32 = f_movf_reg; }          # 0xBF: loc32 <- FP reg
+
+# --- absolute-memory form (MSW = 16-bit data address, page 0) --------------------
+:VMOV32 "*(0:"imm16")", loc32  is op_hi8=0xBD & loc32 ; imm16
+        { local a:4 = zext(imm16:2); *[ram]:4 a = loc32; }    # 0xBD: [0:addr] <- loc32
+:VMOV32 loc32, "*(0:"imm16")"  is op_hi8=0xBF & loc32 ; imm16
+        { local a:4 = zext(imm16:2); loc32 = *[ram]:4 a; }    # 0xBF: loc32 <- [0:addr]
 
 # =============================================================================
 # 0xE2 family: LSW = 1110 0010 <hi4> <lo4> ; MSW = 0000 0aaa mem32
