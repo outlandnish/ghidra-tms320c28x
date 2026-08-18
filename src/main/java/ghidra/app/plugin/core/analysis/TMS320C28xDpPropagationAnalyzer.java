@@ -224,16 +224,24 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 			if (walk.instructionCount == 0) {
 				continue;
 			}
-			// Only re-seed if the SLA has already invalidated at inst_next — otherwise
-			// we'd be doing redundant work and needlessly re-disassembling. The
-			// invalidation is what the analyzer exists to reverse, so if it's not
-			// present, nothing to do.
-			BigInteger validAtNext = context.getValue(ctxDpValid, instNext, false);
-			if (validAtNext != null && BigInteger.ONE.equals(validAtNext)) {
-				BigInteger dpAtNext = context.getValue(ctxDp, instNext, false);
-				if (dpAtCall.equals(dpAtNext)) {
-					continue;
-				}
+			// Skip only if the ENTIRE walked range is already at the expected
+			// (ctx_DP_valid=1, ctx_DP=dpAtCall). Previously the check inspected
+			// only inst_next, which correctly stopped a same-round redo but also
+			// prevented later rounds from extending a join-truncated walk. The
+			// pathological case: round N stops at a join because the back-edge
+			// source hasn't been seeded yet; round M seeds that source via a
+			// different call site's fall-through; round M+1 could now walk past
+			// the join into new territory -- but inst_next was already seeded in
+			// round N, so the inst_next-only skip fired and the site was never
+			// revisited. Checking every address in the walk range means the
+			// extended tail beyond the (now-crossable) join will contain still-
+			// unseeded addresses on that later round, failing the skip check and
+			// letting the re-seed extend. Termination is preserved: once a walk's
+			// range stops growing round-over-round, every address in it will have
+			// been seeded in the round before, and the skip fires. See #47.
+			if (isRangeFullySeeded(program, walk.range, ctxDpValid, ctxDp, dpAtCall,
+					monitor)) {
+				continue;
 			}
 
 			try {
@@ -542,6 +550,39 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 	}
 
 	// --- helpers -----------------------------------------------------------------
+
+	/**
+	 * Returns true iff every instruction address in {@code range} already has
+	 * {@code ctx_DP_valid=1} and {@code ctx_DP} equal to {@code expectedDp}.
+	 * Iterates instructions (rather than every byte address) because that's the
+	 * granularity the SLA reads context at; a range-wide setValue writes
+	 * uniformly across all covered bytes anyway so instruction-start reads are
+	 * representative.
+	 *
+	 * <p>Used as the skip condition for the outer per-call re-seed loop: when
+	 * the freshly-computed walk range is already at the expected state, there
+	 * is nothing new to do this round. Termination relies on this returning
+	 * true once a walk stops growing round-over-round.
+	 */
+	private static boolean isRangeFullySeeded(Program program, AddressSetView range,
+			Register ctxDpValid, Register ctxDp, BigInteger expectedDp,
+			TaskMonitor monitor) throws CancelledException {
+		ProgramContext context = program.getProgramContext();
+		Iterator<Instruction> it = program.getListing().getInstructions(range, true);
+		while (it.hasNext()) {
+			monitor.checkCancelled();
+			Instruction insn = it.next();
+			BigInteger valid = context.getValue(ctxDpValid, insn.getMinAddress(), false);
+			if (valid == null || !BigInteger.ONE.equals(valid)) {
+				return false;
+			}
+			BigInteger dp = context.getValue(ctxDp, insn.getMinAddress(), false);
+			if (dp == null || !dp.equals(expectedDp)) {
+				return false;
+			}
+		}
+		return true;
+	}
 
 	private static boolean writesRegister(Instruction instruction, Register expected) {
 		for (Object object : instruction.getResultObjects()) {
