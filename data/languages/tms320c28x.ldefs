@@ -11,11 +11,11 @@
             endian="little"
             size="32"
             variant="default"
-            version="0.1"
+            version="0.2"
             slafile="tms320c28x.sla"
             processorspec="tms320c28x.pspec"
             id="TMS320C28x:LE:32:default">
-    <description>TI TMS320C28x 32-bit fixed-point DSP (word-addressable, 16-bit byte). Target: TMS320F28377D.</description>
+    <description>TI TMS320C28x 32-bit fixed-point DSP (word-addressable, 16-bit byte). Target: TMS320F28377D. v0.2: ACC and P joined as ACC_P size=8 register (P moved from register offset 0x08 to 0x04) so 64-bit ACC:P ops decompile without CONCAT44. Programs imported under v0.1 must be re-imported.</description>
     <compiler name="default" spec="tms320c28x.cspec" id="default"/>
     <external_name tool="IDA-PRO" name="tms320c28"/>
   </language>
@@ -29,11 +29,11 @@
             endian="little"
             size="32"
             variant="f2812"
-            version="0.1"
+            version="0.2"
             slafile="tms320c28x.sla"
             processorspec="tms320c28x_f2812.pspec"
             id="TMS320C28x:LE:32:f2812">
-    <description>TI TMS320F2812 (F281x) fixed-point C28x DSP — no FPU/VCU. Word-addressable, 16-bit byte. Also F2810/F2811.</description>
+    <description>TI TMS320F2812 (F281x) fixed-point C28x DSP — no FPU/VCU. Word-addressable, 16-bit byte. Also F2810/F2811. v0.2: ACC and P joined as ACC_P size=8 register (see default variant); programs imported under v0.1 must be re-imported.</description>
     <compiler name="default" spec="tms320c28x.cspec" id="default"/>
     <external_name tool="IDA-PRO" name="tms320c28"/>
   </language>

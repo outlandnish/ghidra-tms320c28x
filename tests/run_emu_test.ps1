@@ -11,6 +11,13 @@
 #                      opposite order from the #16FHi immediates, and swapping them moves
 #                      RND32 onto NI while the disassembly still looks entirely plausible.
 #
+#   EmuAccPTest     -- the joined ACC_P[64] overlay and the nine 64-bit ACC:P
+#                      constructors built on it (ZAPA, ASR64/LSR64/LSL64 in both the
+#                      #shcount and ,T forms, NEG64, CMP64) plus ZALR. A swapped
+#                      ACC/P offset pair still disassembles perfectly and still passes
+#                      fw parity -- only reading the halves back after a 64-bit shift
+#                      can see it.
+#
 #   EmuFpuCondTest  -- the TMU_COND_OPERAND / FPU_MINMAX_FLUSH conditioning intrinsics.
 #                      These are pcodeops, so their behaviour lives in the compiled
 #                      TMS320C28xEmulateInstructionStateModifier and nothing else can see
@@ -39,6 +46,7 @@ New-Item -ItemType Directory -Force -Path "$ws\proj","$ws\scripts" | Out-Null
 Copy-Item "$Module\ghidra_scripts\EmuFlagTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuFpuCondTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuRptTest.java" "$ws\scripts\" -Force
+Copy-Item "$Module\ghidra_scripts\EmuAccPTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\tests\fpu_flags.bin" "$ws\" -Force
 Copy-Item "$Module\tests\fpu_cond.bin" "$ws\" -Force
 
@@ -61,6 +69,7 @@ function Invoke-Suite([string]$Script, [string]$Fixture) {
 Invoke-Suite "EmuFlagTest" "fpu_flags.bin"
 Invoke-Suite "EmuFpuCondTest" "fpu_cond.bin"
 Invoke-Suite "EmuRptTest" "fpu_flags.bin"  # any import target works; test is host-driven
+Invoke-Suite "EmuAccPTest" "fpu_flags.bin"  # host-driven too
 
 if ($fail -eq 0) { Write-Host "emulation semantics: OK" -ForegroundColor Green }
 else { exit 1 }
