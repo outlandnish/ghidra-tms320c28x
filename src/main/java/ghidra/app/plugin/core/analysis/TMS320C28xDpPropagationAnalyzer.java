@@ -4,11 +4,13 @@ package ghidra.app.plugin.core.analysis;
 
 import java.math.BigInteger;
 import java.util.ArrayDeque;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
@@ -68,22 +70,32 @@ import ghidra.util.task.TaskMonitor;
  *       predicate is computed by seeding the "not preserving" set with every
  *       function containing a DP writer or a non-direct call, then
  *       propagating not-preserving through reverse callers until stable.</li>
- *   <li><b>Attach references in each qualifying post-call fall-through.</b>
- *       For every direct call whose target is DP-preserving and whose caller
- *       carries {@code ctx_DP_valid=1} at the call address, walk forward
- *       from {@code inst_next} via fall-through — stopping at the first
- *       (i) non-fall-through flow (jump / terminal), (ii) DP writer,
- *       (iii) nested call whose callee is not provably DP-preserving, or
- *       (iv) join point where the incoming flows do not all agree on the
- *       DP value — and attach a memory reference on every {@code @6bit}
- *       operand in that range using {@code target = (dpAtCall<<6) | off6}.
- *       The walk continues past nested calls whose callee is itself
- *       DP-preserving: {@code dpAtCall} is provably still live across such
- *       a callee, and continuing past captures the chained-call sites
- *       directly instead of leaving them for a second round that (in the
- *       reference-only design) would never come. The pass is idempotent:
- *       a matching reference already present is skipped, so re-running is
- *       a no-op.</li>
+ *   <li><b>Walk-and-attach from a deduplicated seed queue.</b> Seeded from
+ *       every direct call whose target is DP-preserving and whose caller
+ *       carries {@code ctx_DP_valid=1} at the call address ({@code start =
+ *       inst_next}, {@code dpAtCall} = caller's DP). Each walk goes forward
+ *       via fall-through — stopping at the first (i) non-fall-through flow
+ *       (jump / terminal), (ii) DP writer, (iii) nested call whose callee
+ *       is not provably DP-preserving, or (iv) join point where the
+ *       incoming flows do not all agree on the DP value — and attaches a
+ *       memory reference on every {@code @6bit} operand in that range
+ *       using {@code target = (dpAtCall<<6) | off6}.
+ *
+ *       <p>Two ways a walk contributes reachability past a DP-preserving
+ *       nested call: (a) it continues past — {@code dpAtCall} is provably
+ *       still live across such a callee, so extending the walk is sound;
+ *       and (b) it also queues a fresh seed at that call's fall-through
+ *       with the same {@code dpAtCall}. The fresh seed's walk starts with
+ *       an empty {@code visited} set and clean join state, so joins that
+ *       block the extended walk from the outer call may not block the
+ *       fresh walk. This recovers sites where the extended walk gets
+ *       blocked -- what the old multi-round context-store design was
+ *       computing across rounds via seeded context. Dedup on
+ *       {@code (start, dpAtCall)} keeps termination: the same seed yields
+ *       the same walk, so it is processed at most once.
+ *
+ *       <p>The pass is idempotent: a matching reference already present
+ *       is skipped, so re-running is a no-op.</li>
  * </ol>
  *
  * <p>Why direct reference attachment, not context re-seeding:
@@ -211,15 +223,27 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 		Memory memory = program.getMemory();
 		ReferenceManager refs = program.getReferenceManager();
 
-		int walkedSites = 0;
+		int outerSites = 0;
+		int freshSites = 0;
 		int addedReferences = 0;
 		int truncatedWalks = 0;
 
-		// Iterate every direct call in the program; for each whose callee is DP-
-		// preserving and whose caller's ctx_DP_valid at the call is 1, walk the
-		// fall-through range and attach a memory reference on every @6bit operand
-		// using dpAtCall directly. Working from calls (rather than from functions)
-		// keeps this O(calls) and side-steps having to enumerate returns from callees.
+		// A walk is seeded either from the fall-through of an outer direct call
+		// (initial population) or from the fall-through of a DP-preserving nested
+		// call the walk chose to cross (added dynamically -- see #51). The fresh
+		// seeds get a clean `visited` set and a clean join state, so joins that
+		// blocked the extended chained walk from the outer call may not block the
+		// fresh walk. Dedup by (start, dpAtCall): the same (address, DP) seed
+		// yields the same walk, so processing it twice is pure waste; different
+		// dpAtCall values at the same address are two legitimately different
+		// paths and both must be walked (each attaches its own resolved refs).
+		Deque<Seed> seedQueue = new ArrayDeque<>();
+		Set<Seed> enqueued = new HashSet<>();
+
+		// Initial population: every direct call whose callee is DP-preserving and
+		// whose caller's ctx_DP_valid at the call is 1. Working from calls (rather
+		// than from functions) keeps this O(calls) and side-steps having to
+		// enumerate returns from callees.
 		Listing listing = program.getListing();
 		Iterator<Instruction> instructions = listing.getInstructions(true);
 		while (instructions.hasNext()) {
@@ -251,24 +275,42 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 			if (instNext == null) {
 				continue;
 			}
+			enqueueSeed(seedQueue, enqueued, new Seed(instNext, dpAtCall, false));
+		}
 
-			WalkResult walk = walkFallThrough(program, instNext, dpRegister,
-				ctxDp, ctxDpValid, dpAtCall, functionManager, dpPreserving, monitor);
+		// Drain the queue. Each walk may spawn fresh seeds for the fall-throughs
+		// of DP-preserving nested calls it crossed; dedup keeps termination.
+		while (!seedQueue.isEmpty()) {
+			monitor.checkCancelled();
+			Seed seed = seedQueue.pop();
+			WalkResult walk = walkFallThrough(program, seed.start, dpRegister,
+				ctxDp, ctxDpValid, seed.dpAtCall, functionManager, dpPreserving,
+				monitor);
 			if (walk.instructionCount == 0) {
 				continue;
 			}
-			walkedSites++;
+			if (seed.fresh) {
+				freshSites++;
+			}
+			else {
+				outerSites++;
+			}
 			if (walk.truncatedAtCap) {
 				truncatedWalks++;
 			}
 			addedReferences += attachReferencesInRange(listing, refs, memory,
-				walk.range, dpAtCall, monitor);
+				walk.range, seed.dpAtCall, monitor);
+			for (Address fresh : walk.freshSeedFallthroughs) {
+				enqueueSeed(seedQueue, enqueued, new Seed(fresh, seed.dpAtCall, true));
+			}
 		}
 
-		if (walkedSites > 0 || addedReferences > 0) {
+		int totalSites = outerSites + freshSites;
+		if (totalSites > 0 || addedReferences > 0) {
 			Msg.info(this, "attached " + addedReferences +
-				" memory reference(s) across " + walkedSites +
-				" post-call fall-through(s)");
+				" memory reference(s) across " + totalSites +
+				" walked fall-through(s) (" + outerSites + " outer post-call, " +
+				freshSites + " fresh-seeded at crossed nested calls)");
 		}
 		if (truncatedWalks > 0) {
 			// Non-zero truncations mean some qualifying fall-throughs were longer than
@@ -281,6 +323,48 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 				"@6bit operands may be unresolved");
 		}
 		return true;
+	}
+
+	private static void enqueueSeed(Deque<Seed> queue, Set<Seed> enqueued, Seed seed) {
+		if (enqueued.add(seed)) {
+			queue.add(seed);
+		}
+	}
+
+	/**
+	 * A walk-fall-through starting point. {@code start} is the address to walk
+	 * forward from; {@code dpAtCall} is the DP value provably live at that
+	 * address (either the caller's DP at the outer call, or -- for fresh seeds
+	 * spawned by chaining -- the same DP carried across a DP-preserving nested
+	 * call). Dedup is by both fields: the same address reached with a different
+	 * DP is two legitimately different paths.
+	 */
+	private static final class Seed {
+		final Address start;
+		final BigInteger dpAtCall;
+		/** True iff this seed was spawned by chaining past a nested call
+		 *  (rather than being an outer per-direct-call seed). Bookkeeping only;
+		 *  not part of identity for dedup -- an outer seed and a fresh seed at
+		 *  the same (start, dpAtCall) do the same walk and only one should run. */
+		final boolean fresh;
+
+		Seed(Address start, BigInteger dpAtCall, boolean fresh) {
+			this.start = start;
+			this.dpAtCall = dpAtCall;
+			this.fresh = fresh;
+		}
+
+		@Override
+		public boolean equals(Object o) {
+			if (this == o) return true;
+			if (!(o instanceof Seed other)) return false;
+			return start.equals(other.start) && dpAtCall.equals(other.dpAtCall);
+		}
+
+		@Override
+		public int hashCode() {
+			return start.hashCode() * 31 + dpAtCall.hashCode();
+		}
 	}
 
 	// --- reference attachment (per-walked-range) ---------------------------------
@@ -523,11 +607,20 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 		final AddressSet range;
 		final int instructionCount;
 		final boolean truncatedAtCap;
+		/** Fall-through addresses of DP-preserving nested calls the walk chose
+		 *  to cross. The caller enqueues each as a fresh Seed with the same
+		 *  dpAtCall (issue #51): a long extended chained walk accumulates more
+		 *  join-blocking opportunities than several short walks would, so
+		 *  re-entering from each crossed call's fall-through with a clean
+		 *  visited/join state recovers sites the extended walk lost. */
+		final List<Address> freshSeedFallthroughs;
 
-		WalkResult(AddressSet range, int instructionCount, boolean truncatedAtCap) {
+		WalkResult(AddressSet range, int instructionCount, boolean truncatedAtCap,
+				List<Address> freshSeedFallthroughs) {
 			this.range = range;
 			this.instructionCount = instructionCount;
 			this.truncatedAtCap = truncatedAtCap;
+			this.freshSeedFallthroughs = freshSeedFallthroughs;
 		}
 	}
 
@@ -539,6 +632,7 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 		Listing listing = program.getListing();
 		AddressSet range = new AddressSet();
 		Set<Address> visited = new HashSet<>();
+		List<Address> freshSeedFallthroughs = new ArrayList<>();
 		Instruction current = listing.getInstructionAt(start);
 		int count = 0;
 		while (current != null && count < MAX_WALK_INSTRUCTIONS) {
@@ -588,6 +682,14 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 				if (!continuesPastCall(current, functionManager, dpPreserving)) {
 					break;
 				}
+				// Also queue a fresh-walk seed at this call's fall-through
+				// (issue #51). The extended walk keeps going here, but a fresh
+				// walk from the same address may cross joins the extended walk
+				// gets blocked by -- see WalkResult.freshSeedFallthroughs.
+				Address callFall = current.getFallThrough();
+				if (callFall != null) {
+					freshSeedFallthroughs.add(callFall);
+				}
 			}
 			else if (flow.isTerminal()) {
 				break;
@@ -608,7 +710,7 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 		// materially longer than the pre-chaining design, so surface this so a
 		// silent recall miss at the cap is measurable rather than invisible.
 		boolean truncated = count >= MAX_WALK_INSTRUCTIONS && current != null;
-		return new WalkResult(range, count, truncated);
+		return new WalkResult(range, count, truncated, freshSeedFallthroughs);
 	}
 
 	private static boolean continuesPastCall(Instruction call,
