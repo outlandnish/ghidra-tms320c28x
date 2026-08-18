@@ -100,22 +100,42 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 	// Per-program cache of the DP-preserving predicate. `added()` fires once per
 	// re-disassembly round, and our own re-seed loop can drive up to ~10 rounds on
 	// a typical F28377D image (chained calls to DP-preserving callees each need one
-	// round to bubble up). Without this cache, the O(functions + calls) callgraph
-	// fixed-point recomputes on every round -- ~3 s of ~3 s runtime measured on a
-	// 12k-instruction image. The result only changes when the function set does;
-	// stamp by FunctionManager.getFunctionCount() catches the common case (new
-	// functions discovered), and worst-case staleness is a slightly-conservative
-	// set on one round that gets refreshed on the next full analysis pass.
+	// round to bubble up). Measured effect on runtime is modest -- ~350 ms of a
+	// ~3 s total on a 12k-instruction image -- because the bottleneck is actually
+	// the phase-2 program-wide instruction sweep, not the callgraph fixed point;
+	// scoping that sweep to the AddressSetView `added()` receives is a separate
+	// follow-up.  Still worth keeping the cache: the fixed point is measurably
+	// slow enough to matter, and avoiding pointless recomputation is cheap.
+	//
+	// Stamp is a compound (functionCount, instructionCount). functionCount
+	// alone would miss a body change at constant count -- e.g. our own
+	// re-disassembly extending a function's fall-through into an instruction
+	// that turns out to be a DP writer, silently flipping the callee from
+	// "preserving" to "not". The theoretical failure mode is optimistic
+	// staleness (a callee marked preserving when it isn't), which would
+	// re-seed the caller's DP into a fall-through where the callee actually
+	// clobbered DP -- a wrong-XREF class bug.  The compound stamp closes the
+	// hole: any instruction added or removed anywhere in the program forces
+	// a recompute. In our loop, clear-then-re-disassemble preserves count
+	// (N cleared, N added back) so the cache still holds across rounds.
 	private static final Map<Program, CachedPreserving> CACHE =
 		Collections.synchronizedMap(new WeakHashMap<>());
 
 	private static final class CachedPreserving {
 		final Set<Function> preserving;
 		final int functionCountStamp;
+		final long instructionCountStamp;
 
-		CachedPreserving(Set<Function> preserving, int functionCountStamp) {
+		CachedPreserving(Set<Function> preserving, int functionCountStamp,
+				long instructionCountStamp) {
 			this.preserving = preserving;
 			this.functionCountStamp = functionCountStamp;
+			this.instructionCountStamp = instructionCountStamp;
+		}
+
+		boolean matches(int currentFunctionCount, long currentInstructionCount) {
+			return functionCountStamp == currentFunctionCount &&
+				instructionCountStamp == currentInstructionCount;
 		}
 	}
 
@@ -243,17 +263,21 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 
 	private static Set<Function> getOrComputeDpPreserving(Program program,
 			Register dpRegister, TaskMonitor monitor) throws CancelledException {
-		int currentStamp = program.getFunctionManager().getFunctionCount();
+		int functionCount = program.getFunctionManager().getFunctionCount();
+		long instructionCount = program.getListing().getNumInstructions();
 		CachedPreserving cached = CACHE.get(program);
-		if (cached != null && cached.functionCountStamp == currentStamp) {
+		if (cached != null && cached.matches(functionCount, instructionCount)) {
 			return cached.preserving;
 		}
 		Set<Function> preserving = computeDpPreservingFunctions(program, dpRegister, monitor);
-		CACHE.put(program, new CachedPreserving(preserving, currentStamp));
+		CACHE.put(program, new CachedPreserving(preserving, functionCount, instructionCount));
+		String prior = cached == null
+			? "absent"
+			: "functions=" + cached.functionCountStamp + " instructions=" +
+				cached.instructionCountStamp;
 		Msg.info(TMS320C28xDpPropagationAnalyzer.class,
-			"DP-preserving functions: " + preserving.size() + " / " + currentStamp +
-			" (recomputed; cache stamp was " +
-			(cached == null ? "absent" : cached.functionCountStamp) + ")");
+			"DP-preserving functions: " + preserving.size() + " / " + functionCount +
+			" (recomputed; cache stamp was " + prior + ")");
 		return preserving;
 	}
 
