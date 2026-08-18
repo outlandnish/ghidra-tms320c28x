@@ -29,30 +29,34 @@ import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.listing.ProgramContext;
+import ghidra.program.model.mem.Memory;
 import ghidra.program.model.scalar.Scalar;
 import ghidra.program.model.symbol.FlowType;
+import ghidra.program.model.symbol.RefType;
 import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.ReferenceIterator;
+import ghidra.program.model.symbol.ReferenceManager;
+import ghidra.program.model.symbol.SourceType;
 import ghidra.util.Msg;
 import ghidra.util.exception.CancelledException;
 import ghidra.util.task.TaskMonitor;
 
 /**
- * Re-propagates the caller's {@code ctx_DP} snapshot into the fall-through of
- * every direct call whose target is provably DP-preserving.
+ * Attaches memory references to {@code @6bit} operands in post-call
+ * fall-throughs whose callee is provably DP-preserving.
  *
- * <p>Background — the SLEIGH spec snapshots {@code MOVW DP,#imm} /
- * {@code MOVZ DP,#imm} into a {@code ctx_DP} context register and flows it
- * forward so downstream {@code @6bit} loc16/loc32 operands resolve to full
- * absolute addresses. But because TI's C ABI doesn't preserve DP across
- * calls, every call constructor also invalidates {@code ctx_DP_valid} at
- * {@code inst_next}. That's the correct default: without knowing the callee,
- * the caller's DP might be stale by the time we return. On a real F28377D
- * image the invalidation cost 14 of ~364 resolvable {@code @6bit} operands
- * (~3.8%), all sitting in a fall-through of a call whose callee happens
- * never to write DP.
+ * <p>Scope, plainly. Ghidra's stock constant-propagation resolves the
+ * dominant majority of {@code @6bit} operands directly from the live DP
+ * register (measured on a large F28377D image: 96% recall from stock CP
+ * alone). This analyzer's marginal value is exclusively the post-call
+ * fall-through range: TI's C ABI does not preserve DP across calls, so the
+ * SLA invalidates {@code ctx_DP_valid} at {@code inst_next} for every call.
+ * When we can prove the callee never touches DP, the caller's DP is still
+ * live in the fall-through — and we attach the references the SLA's
+ * conservative invalidation would otherwise cost. Measured recall from this
+ * analyzer alone: ~2.5% (~324 sites out of ~12k on a large image).
  *
- * <p>This analyzer recovers those. Two phases:
+ * <p>Two phases:
  * <ol>
  *   <li><b>Fixed-point over the callgraph.</b> A function is DP-preserving
  *       iff (a) no instruction in its body writes DP (any of {@code MOVW DP},
@@ -64,31 +68,61 @@ import ghidra.util.task.TaskMonitor;
  *       predicate is computed by seeding the "not preserving" set with every
  *       function containing a DP writer or a non-direct call, then
  *       propagating not-preserving through reverse callers until stable.</li>
- *   <li><b>Re-seed at qualifying return sites.</b> For every direct call
- *       whose target is DP-preserving and whose caller's {@code ctx_DP_valid}
- *       is 1 at the call address, walk forward from {@code inst_next} via
- *       fall-through — stopping at the first (i) call, (ii) non-fall-through
- *       flow (jump / terminal), (iii) DP writer, or (iv) join point (an
- *       instruction with an incoming flow reference from outside the walked
- *       range) — and re-seed {@code ctx_DP_valid=1} plus the caller's
- *       {@code ctx_DP} value across the range. The instructions in the range
- *       are cleared and re-disassembled so the SLA re-emits any {@code @6bit}
- *       operands as resolved absolute addresses.</li>
+ *   <li><b>Attach references in each qualifying post-call fall-through.</b>
+ *       For every direct call whose target is DP-preserving and whose caller
+ *       carries {@code ctx_DP_valid=1} at the call address, walk forward
+ *       from {@code inst_next} via fall-through — stopping at the first
+ *       (i) non-fall-through flow (jump / terminal), (ii) DP writer,
+ *       (iii) nested call whose callee is not provably DP-preserving, or
+ *       (iv) join point where the incoming flows do not all agree on the
+ *       DP value — and attach a memory reference on every {@code @6bit}
+ *       operand in that range using {@code target = (dpAtCall<<6) | off6}.
+ *       The walk continues past nested calls whose callee is itself
+ *       DP-preserving: {@code dpAtCall} is provably still live across such
+ *       a callee, and continuing past captures the chained-call sites
+ *       directly instead of leaving them for a second round that (in the
+ *       reference-only design) would never come. The pass is idempotent:
+ *       a matching reference already present is skipped, so re-running is
+ *       a no-op.</li>
  * </ol>
  *
+ * <p>Why direct reference attachment, not context re-seeding:
+ * {@code ProgramContext.setValue} throws {@link ContextChangeException} over
+ * a range that already holds defined instructions (measured on a real image:
+ * ~4k exceptions per invocation, no sites re-seeded). Ghidra's context-write
+ * guard is what {@code clearCodeUnits(..., false)} used to sidestep, but
+ * clearing + re-disassembling was only there to make the *old* two-constructor
+ * SLA re-pick the resolved variant. With the collapsed single-constructor SLA
+ * (see {@code tms320c28x_addr.sinc}, this branch), the p-code prototype is
+ * context-neutral and there's nothing for a re-disassembly to change — so we
+ * skip the context store entirely and add the reference in the walk loop
+ * using the {@code dpAtCall} we already have in hand.
+ *
+ * <p>Discriminator for {@code @6bit} operands: the collapsed loc16/loc32
+ * constructor's semantic body uses DP register plus the {@code loc_off6}
+ * field, but Ghidra's operand-object list carries only the printed operand
+ * ({@code @0xNN} — a single {@link Scalar} in {@code [0..63]}); DP lives in
+ * the constructor's semantics, not the operand display. So the operand-level
+ * discriminator is "single Scalar in [0,63] whose SLA-declared ref type is a
+ * memory read/write". Every other loc16/loc32 mode is a register-direct or
+ * indirect form and either has no scalar or a register in its operand
+ * objects, so this uniquely matches {@code @6bit} within the addressing
+ * sub-table. Immediates ({@code #22bit} in {@code MOVL XARn,#22bit},
+ * {@code LC #22bit}, etc.) also have a lone scalar but their ref type is
+ * not memory read/write, so the type filter excludes them.
+ *
  * <p>Runs after {@code TMS320C28xFfcReturnAnalyzer} and after auto-analysis
- * has established the call graph. The re-disassembly is scoped strictly to
- * the fall-through range — comments and labels attached to those addresses
- * are preserved by {@code clearCodeUnits(..., false)}; anything the user has
- * done to reference targets is untouched.
+ * has established the call graph. No listing mutation beyond adding
+ * references; comments, labels, and existing user overrides are untouched.
  */
 public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 
 	private static final String NAME = "TMS320C28x DP Context Propagation";
 	private static final String DESCRIPTION =
-		"Re-seeds the caller's ctx_DP snapshot at the return of every call whose " +
-		"callee provably doesn't write DP, recovering @6bit operand resolution " +
-		"that the SLA's conservative post-call invalidation loses.";
+		"Attaches memory references to @6bit operands in the post-call fall-through " +
+		"of every direct call whose callee provably doesn't write DP, recovering the " +
+		"~2.5% of operands the SLA's conservative post-call ctx_DP invalidation costs " +
+		"stock constant-propagation.";
 	private static final String PROCESSOR_NAME = "TMS320C28x";
 	private static final String CTX_DP_NAME = "ctx_DP";
 	private static final String CTX_DP_VALID_NAME = "ctx_DP_valid";
@@ -98,27 +132,23 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 	// short (dozens of insns); 256 is a safety net, not a design target.
 	private static final int MAX_WALK_INSTRUCTIONS = 256;
 
-	// Per-program cache of the DP-preserving predicate. `added()` fires once per
-	// re-disassembly round, and our own re-seed loop can drive up to ~10 rounds on
-	// a typical F28377D image (chained calls to DP-preserving callees each need one
-	// round to bubble up). Measured effect on runtime is modest -- ~350 ms of a
-	// ~3 s total on a 12k-instruction image -- because the bottleneck is actually
-	// the phase-2 program-wide instruction sweep, not the callgraph fixed point;
-	// scoping that sweep to the AddressSetView `added()` receives is a separate
-	// follow-up.  Still worth keeping the cache: the fixed point is measurably
-	// slow enough to matter, and avoiding pointless recomputation is cheap.
+	// Per-program cache of the DP-preserving predicate. `added()` fires each time
+	// some other analyzer adds instructions, and this analyzer no longer drives
+	// re-disassembly of its own (references-only design), so the round count is
+	// bounded by upstream churn -- typically 1-3 rounds after auto-analysis
+	// settles. Cache still worthwhile: the callgraph fixed point is O(functions
+	// + call-edges) and small in absolute terms but pointless to recompute if
+	// nothing changed.
 	//
-	// Stamp is a compound (functionCount, instructionCount). functionCount
-	// alone would miss a body change at constant count -- e.g. our own
-	// re-disassembly extending a function's fall-through into an instruction
-	// that turns out to be a DP writer, silently flipping the callee from
-	// "preserving" to "not". The theoretical failure mode is optimistic
-	// staleness (a callee marked preserving when it isn't), which would
-	// re-seed the caller's DP into a fall-through where the callee actually
-	// clobbered DP -- a wrong-XREF class bug.  The compound stamp closes the
-	// hole: any instruction added or removed anywhere in the program forces
-	// a recompute. In our loop, clear-then-re-disassemble preserves count
-	// (N cleared, N added back) so the cache still holds across rounds.
+	// Stamp is a compound (functionCount, instructionCount). functionCount alone
+	// would miss a body change at constant count -- e.g. a later analyzer
+	// extending a function's fall-through into an instruction that turns out to
+	// be a DP writer, silently flipping the callee from "preserving" to "not".
+	// The theoretical failure mode is optimistic staleness (a callee marked
+	// preserving when it isn't), which would attach a wrong-address reference
+	// in a fall-through the callee actually clobbered DP for -- a precision
+	// bug. The compound stamp closes the hole: any instruction added or removed
+	// anywhere in the program forces a recompute.
 	private static final Map<Program, CachedPreserving> CACHE =
 		Collections.synchronizedMap(new WeakHashMap<>());
 
@@ -178,15 +208,18 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 
 		FunctionManager functionManager = program.getFunctionManager();
 		Set<Function> dpPreserving = getOrComputeDpPreserving(program, dpRegister, monitor);
+		Memory memory = program.getMemory();
+		ReferenceManager refs = program.getReferenceManager();
 
-		AddressSet toRedisassemble = new AddressSet();
-		int propagatedSites = 0;
-		int propagatedInstructions = 0;
+		int walkedSites = 0;
+		int addedReferences = 0;
+		int truncatedWalks = 0;
 
 		// Iterate every direct call in the program; for each whose callee is DP-
-		// preserving and whose caller's ctx_DP_valid at the call is 1, re-seed the
-		// fall-through range. Working from calls (rather than from functions) keeps
-		// this O(calls) and side-steps having to enumerate returns from callees.
+		// preserving and whose caller's ctx_DP_valid at the call is 1, walk the
+		// fall-through range and attach a memory reference on every @6bit operand
+		// using dpAtCall directly. Working from calls (rather than from functions)
+		// keeps this O(calls) and side-steps having to enumerate returns from callees.
 		Listing listing = program.getListing();
 		Iterator<Instruction> instructions = listing.getInstructions(true);
 		while (instructions.hasNext()) {
@@ -220,53 +253,138 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 			}
 
 			WalkResult walk = walkFallThrough(program, instNext, dpRegister,
-				ctxDp, ctxDpValid, dpAtCall, monitor);
+				ctxDp, ctxDpValid, dpAtCall, functionManager, dpPreserving, monitor);
 			if (walk.instructionCount == 0) {
 				continue;
 			}
-			// Skip only if the ENTIRE walked range is already at the expected
-			// (ctx_DP_valid=1, ctx_DP=dpAtCall). Previously the check inspected
-			// only inst_next, which correctly stopped a same-round redo but also
-			// prevented later rounds from extending a join-truncated walk. The
-			// pathological case: round N stops at a join because the back-edge
-			// source hasn't been seeded yet; round M seeds that source via a
-			// different call site's fall-through; round M+1 could now walk past
-			// the join into new territory -- but inst_next was already seeded in
-			// round N, so the inst_next-only skip fired and the site was never
-			// revisited. Checking every address in the walk range means the
-			// extended tail beyond the (now-crossable) join will contain still-
-			// unseeded addresses on that later round, failing the skip check and
-			// letting the re-seed extend. Termination is preserved: once a walk's
-			// range stops growing round-over-round, every address in it will have
-			// been seeded in the round before, and the skip fires. See #47.
-			if (isRangeFullySeeded(program, walk.range, ctxDpValid, ctxDp, dpAtCall,
-					monitor)) {
-				continue;
+			walkedSites++;
+			if (walk.truncatedAtCap) {
+				truncatedWalks++;
 			}
-
-			try {
-				listing.clearCodeUnits(walk.range.getMinAddress(),
-					walk.range.getMaxAddress(), /*clearContext*/ false);
-				context.setValue(ctxDpValid, walk.range.getMinAddress(),
-					walk.range.getMaxAddress(), BigInteger.ONE);
-				context.setValue(ctxDp, walk.range.getMinAddress(),
-					walk.range.getMaxAddress(), dpAtCall);
-				toRedisassemble.add(walk.range);
-				propagatedSites++;
-				propagatedInstructions += walk.instructionCount;
-			}
-			catch (ContextChangeException e) {
-				log.appendException(e);
-			}
+			addedReferences += attachReferencesInRange(listing, refs, memory,
+				walk.range, dpAtCall, monitor);
 		}
 
-		if (!toRedisassemble.isEmpty()) {
-			AutoAnalysisManager.getAnalysisManager(program)
-				.disassemble(toRedisassemble, AnalysisPriority.DISASSEMBLY);
-			Msg.info(this, "re-seeded ctx_DP across " + propagatedSites +
-				" post-call site(s), " + propagatedInstructions + " instruction(s)");
+		if (walkedSites > 0 || addedReferences > 0) {
+			Msg.info(this, "attached " + addedReferences +
+				" memory reference(s) across " + walkedSites +
+				" post-call fall-through(s)");
+		}
+		if (truncatedWalks > 0) {
+			// Non-zero truncations mean some qualifying fall-throughs were longer than
+			// MAX_WALK_INSTRUCTIONS and the tail was skipped. Chaining past DP-preserving
+			// calls extends walks materially past the pre-chaining design, so this cap
+			// is more likely to bind here than it was in the context-store era. Raise the
+			// cap or scope the walk if this fires in real work.
+			Msg.warn(this, truncatedWalks + " walk(s) truncated at the " +
+				MAX_WALK_INSTRUCTIONS + "-instruction cap; some post-call " +
+				"@6bit operands may be unresolved");
 		}
 		return true;
+	}
+
+	// --- reference attachment (per-walked-range) ---------------------------------
+
+	private static int attachReferencesInRange(Listing listing, ReferenceManager refs,
+			Memory memory, AddressSetView range, BigInteger dpAtCall,
+			TaskMonitor monitor) throws CancelledException {
+		int added = 0;
+		Iterator<Instruction> insns = listing.getInstructions(range, true);
+		while (insns.hasNext()) {
+			monitor.checkCancelled();
+			Instruction insn = insns.next();
+			int operandCount = insn.getNumOperands();
+			for (int i = 0; i < operandCount; i++) {
+				Long off6 = extractDpOff6(insn, i);
+				if (off6 == null) {
+					continue;
+				}
+				// SLA-declared ref type filters out immediates (e.g. #22bit in
+				// MOVL XARn,#22bit) that happen to render as a lone Scalar but
+				// aren't memory accesses. Also picks the correct RefType
+				// (READ/WRITE/READ_WRITE) from the instruction's p-code.
+				RefType refType = insn.getOperandRefType(i);
+				if (refType == null || (!refType.isRead() && !refType.isWrite())) {
+					continue;
+				}
+				long word = (dpAtCall.longValue() << 6) | off6.longValue();
+				Address target;
+				try {
+					target = wordAddress(insn.getMinAddress(), word);
+				}
+				catch (ArithmeticException | IllegalArgumentException e) {
+					continue;
+				}
+				// Only attach if the resolved address falls in a real memory block.
+				// A stray reference to an unmapped page is worse noise than the
+				// unresolved raw offset it would replace.
+				if (!memory.contains(target)) {
+					continue;
+				}
+				if (hasEquivalentReference(refs, insn.getMinAddress(), i, target)) {
+					continue;
+				}
+				refs.addMemoryReference(insn.getMinAddress(), target, refType,
+					SourceType.ANALYSIS, i);
+				added++;
+			}
+		}
+		return added;
+	}
+
+	/**
+	 * Identifies a {@code @6bit} operand and returns its {@code loc_off6} value
+	 * (0..63), or {@code null} if the operand isn't a DP-direct access.
+	 *
+	 * <p>The collapsed loc16/loc32 {@code @6bit} constructor renders as
+	 * {@code @0xNN} — a single {@link Scalar}. DP lives in the constructor's
+	 * semantic body, not in the operand's object list. But so does SP in the
+	 * stack-relative form {@code *-SP[off6]}, which reuses the same
+	 * {@code loc_off6} field and also produces a lone-Scalar operand with a
+	 * memory read/write ref type. To distinguish them we require the operand
+	 * text to start with {@code @}: every other {@code @}-prefixed loc16/loc32
+	 * form is register-direct ({@code @AL}, {@code @AR0}, {@code @SP}, ...) and
+	 * those are already excluded by the lone-Scalar test, so leading-{@code @}
+	 * uniquely picks {@code @6bit}.
+	 *
+	 * <p>The caller pairs this with an {@link Instruction#getOperandRefType}
+	 * check to filter non-memory scalar operands (e.g. {@code #22bit}
+	 * immediates).
+	 */
+	private static Long extractDpOff6(Instruction insn, int operand) {
+		Object[] opObjects = insn.getOpObjects(operand);
+		if (opObjects.length != 1 || !(opObjects[0] instanceof Scalar scalar)) {
+			return null;
+		}
+		long value = scalar.getUnsignedValue();
+		if (value < 0 || value >= 64) {
+			return null;
+		}
+		// Distinguish @6bit from *-SP[6bit] -- both are lone Scalar[0..63] with a
+		// memory ref type. See javadoc.
+		String representation = insn.getDefaultOperandRepresentation(operand);
+		if (representation == null || !representation.startsWith("@")) {
+			return null;
+		}
+		return value;
+	}
+
+	private static boolean hasEquivalentReference(ReferenceManager refs, Address from,
+			int operand, Address target) {
+		for (Reference reference : refs.getReferencesFrom(from)) {
+			if (reference.getOperandIndex() == operand &&
+				reference.isMemoryReference() &&
+				target.equals(reference.getToAddress())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** Convert an architectural C28 word address to Ghidra's byte-offset Address. */
+	private static Address wordAddress(Address basis, long wordOffset) {
+		int wordSize = basis.getAddressSpace().getAddressableUnitSize();
+		return basis.getAddressSpace().getAddress(Math.multiplyExact(wordOffset, wordSize));
 	}
 
 	// --- phase 1: DP-preserving predicate over the callgraph ---------------------
@@ -404,16 +522,20 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 	private static final class WalkResult {
 		final AddressSet range;
 		final int instructionCount;
+		final boolean truncatedAtCap;
 
-		WalkResult(AddressSet range, int instructionCount) {
+		WalkResult(AddressSet range, int instructionCount, boolean truncatedAtCap) {
 			this.range = range;
 			this.instructionCount = instructionCount;
+			this.truncatedAtCap = truncatedAtCap;
 		}
 	}
 
 	private static WalkResult walkFallThrough(Program program, Address start,
 			Register dpRegister, Register ctxDp, Register ctxDpValid,
-			BigInteger dpAtCall, TaskMonitor monitor) throws CancelledException {
+			BigInteger dpAtCall, FunctionManager functionManager,
+			Set<Function> dpPreserving, TaskMonitor monitor)
+			throws CancelledException {
 		Listing listing = program.getListing();
 		AddressSet range = new AddressSet();
 		Set<Address> visited = new HashSet<>();
@@ -441,35 +563,66 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 			range.add(addr, current.getMaxAddress());
 			count++;
 
-			// Stop conditions past this instruction: we don't want to include an
-			// instruction that itself would break the propagation invariant.
+			// Stop conditions past this instruction: we don't want to attach a
+			// reference on a subsequent instruction whose DP is provably different.
 			if (writesRegister(current, dpRegister)) {
-				// This instruction writes DP, so ctx_DP downstream would change
-				// anyway (via the SLA's own snapshot). Include this insn in the
-				// range so it re-disassembles with our re-seeded context, but stop.
+				// This instruction writes DP; downstream operands are governed by
+				// its new value (or the SLA's own snapshot when it's MOVW/MOVZ DP).
+				// Include this insn in the range so a @6bit source operand of it
+				// -- if any -- is still resolvable against dpAtCall, but stop.
 				break;
 			}
 			FlowType flow = current.getFlowType();
-			// Continue past conditional jumps: the fall-through path preserves DP
-			// (the branch instruction itself doesn't touch DP; the taken-branch
-			// target lives at its own address and isn't in our re-seeded range,
-			// so we don't affect the other path). Unconditional jumps and pure
-			// terminals have no fall-through -- caught by `fall == null` below.
-			// Calls always break: even if the callee is DP-preserving, the SLA's
-			// own invalidation at inst_next kicks in and the outer analyzer loop
-			// will pick up the fall-through in a subsequent iteration.
-			if (flow.isCall() || flow.isTerminal()) {
+			// Continue past a call only when its callee is a resolved direct target
+			// AND provably DP-preserving. This is the chaining fix: without it, the
+			// walk stops at the first nested call and every @6bit operand beyond it
+			// stays unresolved until (never, in the reference-only design) the outer
+			// per-call loop reaches that nested call in a separate iteration -- but
+			// the outer loop needs the nested call's own validAtCall=1, which the
+			// SLA invalidates. Recovering those was what the old multi-round
+			// context-write design did the expensive way. Doing it here in one pass
+			// captures the same reachability directly. Indirect / external / unknown
+			// callees still stop the walk -- the callee body isn't provable so we
+			// can't carry dpAtCall past them.
+			if (flow.isCall()) {
+				if (!continuesPastCall(current, functionManager, dpPreserving)) {
+					break;
+				}
+			}
+			else if (flow.isTerminal()) {
 				break;
 			}
 			Address fall = current.getFallThrough();
 			if (fall == null) {
 				// Unconditional branch / return / computed jump -- no linear
-				// successor to seed into.
+				// successor to attach references to.
 				break;
 			}
 			current = listing.getInstructionAt(fall);
 		}
-		return new WalkResult(range, count);
+		// Truncation at the cap is when we exited the loop because count reached
+		// MAX_WALK_INSTRUCTIONS AND there was more to walk (current != null). Any
+		// natural stop (flow break, DP writer, join disagreement, exhausted
+		// fall-through) leaves either current==null or triggered a break before
+		// the count check. Chaining past DP-preserving calls makes the walk
+		// materially longer than the pre-chaining design, so surface this so a
+		// silent recall miss at the cap is measurable rather than invisible.
+		boolean truncated = count >= MAX_WALK_INSTRUCTIONS && current != null;
+		return new WalkResult(range, count, truncated);
+	}
+
+	private static boolean continuesPastCall(Instruction call,
+			FunctionManager functionManager, Set<Function> dpPreserving) {
+		FlowType flow = call.getFlowType();
+		if (flow.isComputed()) {
+			return false;
+		}
+		Address[] flows = call.getFlows();
+		if (flows.length != 1) {
+			return false;
+		}
+		Function callee = functionManager.getFunctionAt(flows[0]);
+		return callee != null && dpPreserving.contains(callee);
 	}
 
 	/**
@@ -550,39 +703,6 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 	}
 
 	// --- helpers -----------------------------------------------------------------
-
-	/**
-	 * Returns true iff every instruction address in {@code range} already has
-	 * {@code ctx_DP_valid=1} and {@code ctx_DP} equal to {@code expectedDp}.
-	 * Iterates instructions (rather than every byte address) because that's the
-	 * granularity the SLA reads context at; a range-wide setValue writes
-	 * uniformly across all covered bytes anyway so instruction-start reads are
-	 * representative.
-	 *
-	 * <p>Used as the skip condition for the outer per-call re-seed loop: when
-	 * the freshly-computed walk range is already at the expected state, there
-	 * is nothing new to do this round. Termination relies on this returning
-	 * true once a walk stops growing round-over-round.
-	 */
-	private static boolean isRangeFullySeeded(Program program, AddressSetView range,
-			Register ctxDpValid, Register ctxDp, BigInteger expectedDp,
-			TaskMonitor monitor) throws CancelledException {
-		ProgramContext context = program.getProgramContext();
-		Iterator<Instruction> it = program.getListing().getInstructions(range, true);
-		while (it.hasNext()) {
-			monitor.checkCancelled();
-			Instruction insn = it.next();
-			BigInteger valid = context.getValue(ctxDpValid, insn.getMinAddress(), false);
-			if (valid == null || !BigInteger.ONE.equals(valid)) {
-				return false;
-			}
-			BigInteger dp = context.getValue(ctxDp, insn.getMinAddress(), false);
-			if (dp == null || !dp.equals(expectedDp)) {
-				return false;
-			}
-		}
-		return true;
-	}
 
 	private static boolean writesRegister(Instruction instruction, Register expected) {
 		for (Object object : instruction.getResultObjects()) {

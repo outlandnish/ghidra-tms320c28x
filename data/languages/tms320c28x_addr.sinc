@@ -43,17 +43,15 @@ attach variables [ banz_n ] [ AR0 AR1 AR2 AR3 AR4 AR5 AR6 AR7 ];
 # =============================================================================
 
 # --- Direct:  @6bit  ->  addr = (DP << 6) | 6bit  (DP occupies addr bits 21:6)
-# Two variants: when the analyzer knows DP (ctx_DP_valid=1, seeded by MOVW/MOVZ DP),
-# we resolve to a constant absolute address so Ghidra draws a real XREF and the
-# operand renders as the resolved symbol. When DP is unknown, fall back to the
-# runtime expression against the live DP register. The `dpaddr` disassembly-time
-# local is a real 22-bit address (ctx_DP is 16 bits, off6 is 6 bits; the join is
-# `ctx_DP << 6 | off6` = a full 22-bit word address).
-loc16: "@"^dpaddr  is ctx_AMODE=0 & ctx_DP_valid=1 & loc_b76=0b00 & loc_off6
-        [ dpaddr = (ctx_DP << 6) | loc_off6; ] {
-    export *[ram]:2 dpaddr;
-}
-loc16: "@"loc_off6  is ctx_AMODE=0 & ctx_DP_valid=0 & loc_b76=0b00 & loc_off6 {
+# Single constructor, runtime-expression only. Same p-code prototype for every
+# byte sequence, so no cross-flow "inconsistent instruction prototype" bookmarks
+# can arise (was #48, the design consequence of the earlier two-constructor
+# gating on ctx_DP_valid). Resolved-address rendering (XREF, symbol substitution,
+# decompiler global-variable promotion) is recovered by TMS320C28xDpPropagationAnalyzer,
+# which attaches a memory reference on this operand whenever ctx_DP_valid=1 at
+# the instruction. The SLA still snapshots ctx_DP on MOVW/MOVZ DP so the analyzer
+# has a per-instruction context to read.
+loc16: "@"loc_off6  is ctx_AMODE=0 & loc_b76=0b00 & loc_off6 {
     local a:4 = (zext(DP) << 6) | zext(loc_off6:4);
     export *[ram]:2 a;
 }
@@ -132,12 +130,8 @@ loc16: "*,ARP"loc_arp  is ctx_AMODE=0 & loc_mode5=0b10110 & loc_areg & loc_arp {
 # Each constructor exports a size-4 operand; pointer deltas are 2 words.
 # =============================================================================
 
-# See loc16 @6bit above for the ctx_DP-resolution rationale.
-loc32: "@"^dpaddr  is ctx_AMODE=0 & ctx_DP_valid=1 & loc_b76=0b00 & loc_off6
-        [ dpaddr = (ctx_DP << 6) | loc_off6; ] {
-    export *[ram]:4 dpaddr;
-}
-loc32: "@"loc_off6  is ctx_AMODE=0 & ctx_DP_valid=0 & loc_b76=0b00 & loc_off6 {
+# See loc16 @6bit above for the single-constructor rationale.
+loc32: "@"loc_off6  is ctx_AMODE=0 & loc_b76=0b00 & loc_off6 {
     local a:4 = (zext(DP) << 6) | zext(loc_off6:4);
     export *[ram]:4 a;
 }
