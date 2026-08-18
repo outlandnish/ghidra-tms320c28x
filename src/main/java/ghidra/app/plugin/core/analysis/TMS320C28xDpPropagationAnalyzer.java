@@ -3,15 +3,15 @@
 package ghidra.app.plugin.core.analysis;
 
 import java.math.BigInteger;
-import java.util.ArrayList;
 import java.util.ArrayDeque;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.WeakHashMap;
 
 import ghidra.app.services.AbstractAnalyzer;
 import ghidra.app.services.AnalysisPriority;
@@ -97,6 +97,28 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 	// short (dozens of insns); 256 is a safety net, not a design target.
 	private static final int MAX_WALK_INSTRUCTIONS = 256;
 
+	// Per-program cache of the DP-preserving predicate. `added()` fires once per
+	// re-disassembly round, and our own re-seed loop can drive up to ~10 rounds on
+	// a typical F28377D image (chained calls to DP-preserving callees each need one
+	// round to bubble up). Without this cache, the O(functions + calls) callgraph
+	// fixed-point recomputes on every round -- ~3 s of ~3 s runtime measured on a
+	// 12k-instruction image. The result only changes when the function set does;
+	// stamp by FunctionManager.getFunctionCount() catches the common case (new
+	// functions discovered), and worst-case staleness is a slightly-conservative
+	// set on one round that gets refreshed on the next full analysis pass.
+	private static final Map<Program, CachedPreserving> CACHE =
+		Collections.synchronizedMap(new WeakHashMap<>());
+
+	private static final class CachedPreserving {
+		final Set<Function> preserving;
+		final int functionCountStamp;
+
+		CachedPreserving(Set<Function> preserving, int functionCountStamp) {
+			this.preserving = preserving;
+			this.functionCountStamp = functionCountStamp;
+		}
+	}
+
 	public TMS320C28xDpPropagationAnalyzer() {
 		super(NAME, DESCRIPTION, AnalyzerType.INSTRUCTION_ANALYZER);
 		// FUNCTION_ANALYSIS.after() puts us after functions have been created and
@@ -134,9 +156,7 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 		}
 
 		FunctionManager functionManager = program.getFunctionManager();
-		Set<Function> dpPreserving = computeDpPreservingFunctions(program, dpRegister, monitor);
-		Msg.info(this, "DP-preserving functions: " + dpPreserving.size() + " / " +
-			functionManager.getFunctionCount());
+		Set<Function> dpPreserving = getOrComputeDpPreserving(program, dpRegister, monitor);
 
 		AddressSet toRedisassemble = new AddressSet();
 		int propagatedSites = 0;
@@ -220,6 +240,22 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 	}
 
 	// --- phase 1: DP-preserving predicate over the callgraph ---------------------
+
+	private static Set<Function> getOrComputeDpPreserving(Program program,
+			Register dpRegister, TaskMonitor monitor) throws CancelledException {
+		int currentStamp = program.getFunctionManager().getFunctionCount();
+		CachedPreserving cached = CACHE.get(program);
+		if (cached != null && cached.functionCountStamp == currentStamp) {
+			return cached.preserving;
+		}
+		Set<Function> preserving = computeDpPreservingFunctions(program, dpRegister, monitor);
+		CACHE.put(program, new CachedPreserving(preserving, currentStamp));
+		Msg.info(TMS320C28xDpPropagationAnalyzer.class,
+			"DP-preserving functions: " + preserving.size() + " / " + currentStamp +
+			" (recomputed; cache stamp was " +
+			(cached == null ? "absent" : cached.functionCountStamp) + ")");
+		return preserving;
+	}
 
 	private static Set<Function> computeDpPreservingFunctions(Program program,
 			Register dpRegister, TaskMonitor monitor) throws CancelledException {
@@ -372,11 +408,21 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 				break;
 			}
 			FlowType flow = current.getFlowType();
-			if (flow.isCall() || flow.isJump() || flow.isTerminal() || !flow.isFallthrough()) {
+			// Continue past conditional jumps: the fall-through path preserves DP
+			// (the branch instruction itself doesn't touch DP; the taken-branch
+			// target lives at its own address and isn't in our re-seeded range,
+			// so we don't affect the other path). Unconditional jumps and pure
+			// terminals have no fall-through -- caught by `fall == null` below.
+			// Calls always break: even if the callee is DP-preserving, the SLA's
+			// own invalidation at inst_next kicks in and the outer analyzer loop
+			// will pick up the fall-through in a subsequent iteration.
+			if (flow.isCall() || flow.isTerminal()) {
 				break;
 			}
 			Address fall = current.getFallThrough();
 			if (fall == null) {
+				// Unconditional branch / return / computed jump -- no linear
+				// successor to seed into.
 				break;
 			}
 			current = listing.getInstructionAt(fall);
