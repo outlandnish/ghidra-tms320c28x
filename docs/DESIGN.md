@@ -74,10 +74,10 @@ See [SLEIGH-IDIOMS.md](SLEIGH-IDIOMS.md) §8.
 
 | Offset | Size | Registers |
 |---|---|---|
-| 0x00 | 4 | ACC |
-| 0x00 | 2 | AL, AH |
-| 0x00 | 1 | AL_LSB, AL_MSB, AH_LSB, AH_MSB |
-| 0x08 | 4 | P (PL, PH) |
+| 0x00 | 8 | ACC_P (ACC:P as one 64-bit value; see note below) |
+| 0x00 | 4 | P, ACC |
+| 0x00 | 2 | PL, PH, AL, AH |
+| 0x00 | 1 | PL_LSB, PL_MSB, PH_LSB, PH_MSB, AL_LSB, AL_MSB, AH_LSB, AH_MSB |
 | 0x10 | 4 | XT (TL, T) |
 | 0x20 | 4 | XAR0..XAR7 (ARn, ARnH) |
 | 0x40 | 2 | DP, SP |
@@ -89,6 +89,14 @@ See [SLEIGH-IDIOMS.md](SLEIGH-IDIOMS.md) §8.
 | 0xA0 | 4 | VR0..VR8 (VCU) |
 | 0xC8 | 4 | VT0, VT1, VSTATUS, VCRC (VCU) |
 | 0x80 | 4 | contextreg |
+
+> **ACC:P joined layout (v0.2).** ACC and P share a size=8 overlay `ACC_P`
+> so 64-bit ACC:P operations (ZAPA, ASR64/LSR64/LSL64, NEG64, CMP64) decompile
+> as one value instead of `CONCAT44(ACC, P)`. ISA convention is ACC = high 32,
+> P = low 32; in Ghidra's little-endian layout that means P (low) sits at the
+> lower offset (0x00) and ACC (high) at the higher (0x04). Reading ACC_P as a
+> 64-bit int gives `(ACC << 32) | P`. Range 0x08-0x0F, previously P's slot, is
+> now free. See [SLEIGH-IDIOMS.md](SLEIGH-IDIOMS.md) §"ACC:P 64-bit ops".
 
 > SPRU430F Table 2-1 lists XAR0 as "16 bits" — a documentation typo. Fig 2-2 and
 > all addressing-mode text treat all XAR0–7 as 32-bit; modeled as 32-bit.

@@ -113,3 +113,34 @@ reload the spec).
 AMODE selects the loc-field meaning. Gate every loc constructor with
 `ctx_AMODE=0` so AMODE=1 rows can be added later without pattern conflicts. The
 context var is defined in the .slaspec and defaulted in the .pspec.
+
+## 10. ACC:P 64-bit ops — use `ACC_P`, not paired ACC/P writes
+
+Any constructor that reads or writes ACC and P as one 64-bit value must operate
+on the joined register `ACC_P` (size=8, overlays both at register offset 0x00).
+Splitting into two 32-bit writes (`ACC = v(4); P = v(0);`) makes the decompiler
+emit `CONCAT44(ACC, P)` on every subsequent joined read.
+
+WRONG:
+```
+:LSL64 "ACC:P,#"shcount  is ... {
+    local v:8 = (zext(ACC) << 32) | zext(P);
+    v = v << shcount;
+    ACC = v(4); P = v(0);
+}
+```
+
+RIGHT:
+```
+:LSL64 "ACC:P,#"shcount  is ... { ACC_P = ACC_P << shcount; }
+```
+
+The layout is defined so `ACC_P == (ACC << 32) | P` naturally (ACC = high 32,
+P = low 32; P sits at the lower register offset per little-endian convention —
+see [DESIGN.md](DESIGN.md) §"Register-space layout"). Applies to ZAPA,
+ASR64/LSR64/LSL64 (#imm and T variants), NEG64, CMP64, and any future
+64-bit ACC:P op.
+
+Single-half stores (e.g. `MOV PH, loc16`) stay as-is — the ISA instruction
+loads only one half, and the decompiler's `CONCAT22` there correctly reflects
+that the compiler emitted two half-loads. Don't fabricate a full ACC_P write.

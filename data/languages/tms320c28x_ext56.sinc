@@ -202,8 +202,9 @@
     ACC = ACC - P; T = loc16; local t:4 = sext(T); P = t * t;
 }
 # ZALR ACC,loc16  0x5613 : loc16  -- AL = 0x8000 (round const), AH = [loc16]. dis2000-confirmed.
+# Written as one ACC store (not AL/AH halves) so decompilation doesn't render CONCAT22(AH, AL).
 :ZALR ACCreg, loc16  is rpt_phase=1 & op16=0x5613 ; loc16 & ACCreg {
-    AL = 0x8000; AH = loc16;
+    ACC = (zext(loc16) << 16) | 0x8000;
 }
 
 # =============================================================================
@@ -240,7 +241,7 @@
 :SETC "XF"      is rpt_phase=1 & op16=0x5626 { XF = 1; }
 :CLRC "XF"      is rpt_phase=1 & op16=0x561b { XF = 0; }
 :CLRC "OVC"     is rpt_phase=1 & op16=0x565c { OVC = 0; }        # = ZAP OVC
-:ZAPA           is rpt_phase=1 & op16=0x5633 { ACC = 0; P = 0; }
+:ZAPA           is rpt_phase=1 & op16=0x5633 { ACC_P = 0; }
 # More 0x56 mode/config bits (dis2000-confirmed; in the PCS reset/init routine at 0x947fc).
 :SETC "CNF"     is rpt_phase=1 & op16=0x5612 { }                 # map block B0 to program space (decode-only)
 :SETC "M0M1MAP" is rpt_phase=1 & op16=0x561a { M0M1MAP = 1; }    # = C28MAP (boot mode bit)
@@ -287,16 +288,13 @@
 # production firmware (~1434 sites) — the QMPYL→LSL64 32x32 Q-format multiply idiom.
 # shft_cnt = SHFT+1 (range 1..16), reuse the shcount subtable.
 :ASR64 "ACC:P,#"shcount  is rpt_phase=1 & op_hi8=0x56 & loc_hi4=0b1000 & shcount {
-    local v:8 = (zext(ACC) << 32) | zext(P);
-    v = v s>> shcount; ACC = v(4); P = v(0);
+    ACC_P = ACC_P s>> shcount;
 }
 :LSR64 "ACC:P,#"shcount  is rpt_phase=1 & op_hi8=0x56 & loc_hi4=0b1001 & shcount {
-    local v:8 = (zext(ACC) << 32) | zext(P);
-    v = v >> shcount; ACC = v(4); P = v(0);
+    ACC_P = ACC_P >> shcount;
 }
 :LSL64 "ACC:P,#"shcount  is rpt_phase=1 & op_hi8=0x56 & loc_hi4=0b1010 & shcount {
-    local v:8 = (zext(ACC) << 32) | zext(P);
-    v = v << shcount; ACC = v(4); P = v(0);
+    ACC_P = ACC_P << shcount;
 }
 
 # --- 0x56-prefix 64/long shifts (single-word, fixed sub-opcode) --------------
@@ -372,32 +370,27 @@
 # ASR64 ACC:P,T  0101 0110 0010 1100  (64-bit ARITHMETIC shift right by T(5:0)).
 :ASR64 "ACC:P,T"  is rpt_phase=1 & op16=0x562c  {
     local s:8 = zext(T) & 0x3f;
-    local v:8 = (zext(ACC) << 32) | zext(P);
-    v = v s>> s; ACC = v(4); P = v(0);
+    ACC_P = ACC_P s>> s;
 }
 # CMP64 ACC:P  0101 0110 0101 1110  (compare 64-bit ACC:P vs 0; set N/Z, Z from both).
 :CMP64 "ACC:P"  is rpt_phase=1 & op16=0x565e  {
-    local v:8 = (zext(ACC) << 32) | zext(P);
-    $(N) = (v s< 0); $(Z) = (v == 0);
+    $(N) = (ACC_P s< 0); $(Z) = (ACC_P == 0);
 }
 # NEG64 ACC:P  0101 0110 0101 1000  (negate the 64-bit ACC:P pair). dis2000-confirmed;
 # reached only via a branch shadow (after SB ...,GEQ), so the fall-through sweep missed it.
 :NEG64 "ACC:P"  is rpt_phase=1 & op16=0x5658  {
-    local v:8 = (zext(ACC) << 32) | zext(P);
-    v = -v; ACC = v(4); P = v(0);
-    $(N) = (v s< 0); $(Z) = (v == 0);
+    ACC_P = -ACC_P;
+    $(N) = (ACC_P s< 0); $(Z) = (ACC_P == 0);
 }
 # LSR64 ACC:P,T  0101 0110 0101 1011  (64-bit logical shift right by T(5:0)).
 :LSR64 "ACC:P,T"  is rpt_phase=1 & op16=0x565b  {
     local s:8 = zext(T) & 0x3f;
-    local v:8 = (zext(ACC) << 32) | zext(P);
-    v = v >> s; ACC = v(4); P = v(0);
+    ACC_P = ACC_P >> s;
 }
 # LSL64 ACC:P,T  0101 0110 0101 0010  (64-bit logical shift left by T(5:0)).
 :LSL64 "ACC:P,T"  is rpt_phase=1 & op16=0x5652  {
     local s:8 = zext(T) & 0x3f;
-    local v:8 = (zext(ACC) << 32) | zext(P);
-    v = v << s; ACC = v(4); P = v(0);
+    ACC_P = ACC_P << s;
 }
 # SUBCUL ACC,loc32  0101 0110 0001 0111 : loc32  (conditional 32-bit subtract step;
 # divide primitive). Modeled as the plain subtract (the conditional-restore detail

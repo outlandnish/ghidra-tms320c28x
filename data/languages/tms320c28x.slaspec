@@ -35,14 +35,19 @@ define space register type=register_space size=4;
 # so ACC[0:2]=AL, ACC[2:2]=AH, etc.  Bytes within AH/AL are also accessible.
 # =============================================================================
 
-# --- Accumulator: ACC[32] = AH[16]:AL[16], each half split into MSB/LSB bytes
-define register offset=0x00 size=4 [ ACC ];
-define register offset=0x00 size=2 [ AL AH ];
-define register offset=0x00 size=1 [ AL_LSB AL_MSB AH_LSB AH_MSB ];
-
-# --- Product register: P[32] = PH[16]:PL[16]
-define register offset=0x08 size=4 [ P ];
-define register offset=0x08 size=2 [ PL PH ];
+# --- Accumulator + Product joined as ACC_P[64] so 64-bit ACC:P ops decompile
+# as one value (was: ACC@0x00 size=4, P@0x08 size=4 non-adjacent -> every
+# 64-bit shift/neg/cmp/zap decompiled as CONCAT44(ACC, P)).
+# ACC:P convention is ACC = high 32, P = low 32 (SPRU430F). In LE, that means
+# P (low) must sit at the LOWER offset and ACC (high) at the HIGHER offset.
+# So the size=4 view lists [ P ACC ] — P@0x00, ACC@0x04 — and reading ACC_P
+# as a 64-bit int naturally gives (ACC << 32) | P. Halves inside each 32-bit
+# register keep the usual LE convention (H at higher offset within its register).
+define register offset=0x00 size=8 [ ACC_P ];
+define register offset=0x00 size=4 [ P ACC ];
+define register offset=0x00 size=2 [ PL PH AL AH ];
+define register offset=0x00 size=1 [ PL_LSB PL_MSB PH_LSB PH_MSB AL_LSB AL_MSB AH_LSB AH_MSB ];
+# 0x08-0x0F: previously held P; now free for future use.
 
 # --- Multiplicand register: XT[32] = T[16]:TL[16]  (T is the HIGH half)
 define register offset=0x10 size=4 [ XT ];
