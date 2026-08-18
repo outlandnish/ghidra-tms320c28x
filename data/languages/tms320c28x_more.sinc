@@ -737,6 +737,12 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 :ADD ACCreg, loc16^"<<#16"  is rpt_phase=1 & op_hi8=0x05 & ACCreg & loc16 {
     local v:4 = zext(loc16) << 16; ACC = ACC + v;
 }
+# SUB ACC, loc16 <<#16   0000 0100 LLLL LLLL  (single word; subtract loc<<16 from ACC).
+# Completes the ACC,loc16<<#16 family (MOV=0x25, ADD=0x05 above; SUB=0x04 was the
+# missing sibling). dis2000-confirmed: 0x044e = SUB ACC,*-SP[14]<<16.
+:SUB ACCreg, loc16^"<<#16"  is rpt_phase=1 & op_hi8=0x04 & ACCreg & loc16 {
+    local v:4 = zext(loc16) << 16; ACC = ACC - v;
+}
 # CMP loc16, #16bitSigned   0001 1011 LLLL LLLL : iiii  (2-word; flags only).
 :CMP loc16, "#"simm16  is rpt_phase=1 & op_hi8=0x1B & loc16 ; simm16 {
     local x:2 = loc16; local y:2 = simm16:2; local r:2 = x - y;
