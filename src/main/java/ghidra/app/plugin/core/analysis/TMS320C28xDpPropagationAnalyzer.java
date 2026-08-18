@@ -513,19 +513,15 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 			BigInteger outgoingValid;
 			BigInteger outgoingDp;
 			if (writesRegister(pred, dpRegister)) {
-				Scalar imm = pred.getScalar(1);
+				// MOVW DP,#imm16 and MOVZ DP,#10bit render "DP" as a print literal,
+				// so the immediate sits at operand 0 (not 1 -- there is no operand
+				// 1). POP DP has no operand at all; getScalar returns null and we
+				// reject. The audit measured 0 POP DP predecessors of join points
+				// across ~18k program-wide flow refs, so the POP DP rejection has
+				// no measurable recall cost; recovering the popped value would
+				// require stack-effect matching (see git history for design).
+				Scalar imm = pred.getScalar(0);
 				if (imm == null) {
-					// POP DP (the only non-immediate DP writer in the ISA): the popped
-					// value is knowable in principle -- the compiler's callee-save
-					// pattern PUSH DP / ... / POP DP restores ctx_DP as it was at the
-					// PUSH -- but recovering it requires stack-effect analysis to
-					// match POP -> PUSH across basic blocks (prologue/epilogue split,
-					// intervening PUSH/POP of other regs, ADDB SP,#n adjustments).
-					// The specific case where this would matter -- POP DP appearing
-					// as an external predecessor of a join point in a caller's
-					// fall-through walk -- is uncommon (the callee-save POP's
-					// outgoing edge is usually LRETR, a terminal, not a join). Left
-					// as reject; revisit if audit surfaces a real recall gap here.
 					return false;
 				}
 				outgoingValid = BigInteger.ONE;
