@@ -29,30 +29,40 @@ import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.listing.ProgramContext;
+import ghidra.program.model.mem.Memory;
 import ghidra.program.model.scalar.Scalar;
 import ghidra.program.model.symbol.FlowType;
+import ghidra.program.model.symbol.RefType;
 import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.ReferenceIterator;
+import ghidra.program.model.symbol.ReferenceManager;
+import ghidra.program.model.symbol.SourceType;
 import ghidra.util.Msg;
 import ghidra.util.exception.CancelledException;
 import ghidra.util.task.TaskMonitor;
 
 /**
  * Re-propagates the caller's {@code ctx_DP} snapshot into the fall-through of
- * every direct call whose target is provably DP-preserving.
+ * every direct call whose target is provably DP-preserving, then attaches a
+ * memory reference to every {@code @6bit} operand whose {@code ctx_DP} is known.
  *
  * <p>Background — the SLEIGH spec snapshots {@code MOVW DP,#imm} /
  * {@code MOVZ DP,#imm} into a {@code ctx_DP} context register and flows it
- * forward so downstream {@code @6bit} loc16/loc32 operands resolve to full
- * absolute addresses. But because TI's C ABI doesn't preserve DP across
- * calls, every call constructor also invalidates {@code ctx_DP_valid} at
- * {@code inst_next}. That's the correct default: without knowing the callee,
- * the caller's DP might be stale by the time we return. On a real F28377D
- * image the invalidation cost 14 of ~364 resolvable {@code @6bit} operands
- * (~3.8%), all sitting in a fall-through of a call whose callee happens
- * never to write DP.
+ * forward. Every {@code @6bit} loc16/loc32 access resolves at runtime to
+ * {@code (DP<<6)|off6}; when {@code ctx_DP_valid=1} the analyzer knows the
+ * DP value at that instruction and can attach a memory reference to the full
+ * absolute address so Ghidra draws the XREF, renders the resolved symbol in
+ * the operand, and the decompiler promotes the load to a global-variable
+ * access.
  *
- * <p>This analyzer recovers those. Two phases:
+ * <p>Because TI's C ABI doesn't preserve DP across calls, every call
+ * constructor invalidates {@code ctx_DP_valid} at {@code inst_next}. That's
+ * the correct default: without knowing the callee, the caller's DP might be
+ * stale by the time we return. On a real F28377D image the invalidation cost
+ * 14 of ~364 resolvable {@code @6bit} operands (~3.8%), all sitting in a
+ * fall-through of a call whose callee happens never to write DP.
+ *
+ * <p>Three phases:
  * <ol>
  *   <li><b>Fixed-point over the callgraph.</b> A function is DP-preserving
  *       iff (a) no instruction in its body writes DP (any of {@code MOVW DP},
@@ -70,17 +80,27 @@ import ghidra.util.task.TaskMonitor;
  *       fall-through — stopping at the first (i) call, (ii) non-fall-through
  *       flow (jump / terminal), (iii) DP writer, or (iv) join point (an
  *       instruction with an incoming flow reference from outside the walked
- *       range) — and re-seed {@code ctx_DP_valid=1} plus the caller's
- *       {@code ctx_DP} value across the range. The instructions in the range
- *       are cleared and re-disassembled so the SLA re-emits any {@code @6bit}
- *       operands as resolved absolute addresses.</li>
+ *       range) — and set {@code ctx_DP_valid=1} plus the caller's
+ *       {@code ctx_DP} value across the range in the persistent program
+ *       context. No re-disassembly is required: the {@code @6bit} constructor
+ *       emits the same runtime-expression p-code regardless of context; the
+ *       reference pass below reads context via
+ *       {@link ProgramContext#getValue}, which sees the updated values.</li>
+ *   <li><b>Attach memory references at {@code @6bit} sites.</b> Sweep every
+ *       instruction; for each {@code @6bit} operand ({@code opObjects = {DP,
+ *       Scalar[0..63]}}) where {@code ctx_DP_valid=1} at the instruction,
+ *       resolve to {@code word = (ctx_DP<<6) | off6}, convert to Ghidra's
+ *       byte-offset address, and attach a memory reference on that operand
+ *       (skipping if a matching reference already exists — the pass is
+ *       idempotent). Reference type is taken from the operand's SLA-declared
+ *       {@link Instruction#getOperandRefType} so read/write/read-write is
+ *       preserved.</li>
  * </ol>
  *
  * <p>Runs after {@code TMS320C28xFfcReturnAnalyzer} and after auto-analysis
- * has established the call graph. The re-disassembly is scoped strictly to
- * the fall-through range — comments and labels attached to those addresses
- * are preserved by {@code clearCodeUnits(..., false)}; anything the user has
- * done to reference targets is untouched.
+ * has established the call graph. Phase 2 preserves comments/labels
+ * (context-only mutation, no code-unit clear). Phase 3 is idempotent and
+ * safe to re-run after a manual disassembly change.
  */
 public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 
@@ -179,7 +199,6 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 		FunctionManager functionManager = program.getFunctionManager();
 		Set<Function> dpPreserving = getOrComputeDpPreserving(program, dpRegister, monitor);
 
-		AddressSet toRedisassemble = new AddressSet();
 		int propagatedSites = 0;
 		int propagatedInstructions = 0;
 
@@ -224,10 +243,11 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 			if (walk.instructionCount == 0) {
 				continue;
 			}
-			// Only re-seed if the SLA has already invalidated at inst_next — otherwise
-			// we'd be doing redundant work and needlessly re-disassembling. The
-			// invalidation is what the analyzer exists to reverse, so if it's not
-			// present, nothing to do.
+			// Skip if the fall-through already carries valid=1 and matching DP —
+			// no work to do. The @6bit constructor no longer depends on this
+			// context for its p-code prototype, so unlike the earlier design we
+			// never need to clear + re-disassemble; ProgramContext.setValue is
+			// enough for the phase-3 reference pass to see the updated values.
 			BigInteger validAtNext = context.getValue(ctxDpValid, instNext, false);
 			if (validAtNext != null && BigInteger.ONE.equals(validAtNext)) {
 				BigInteger dpAtNext = context.getValue(ctxDp, instNext, false);
@@ -237,13 +257,10 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 			}
 
 			try {
-				listing.clearCodeUnits(walk.range.getMinAddress(),
-					walk.range.getMaxAddress(), /*clearContext*/ false);
 				context.setValue(ctxDpValid, walk.range.getMinAddress(),
 					walk.range.getMaxAddress(), BigInteger.ONE);
 				context.setValue(ctxDp, walk.range.getMinAddress(),
 					walk.range.getMaxAddress(), dpAtCall);
-				toRedisassemble.add(walk.range);
 				propagatedSites++;
 				propagatedInstructions += walk.instructionCount;
 			}
@@ -252,13 +269,143 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 			}
 		}
 
-		if (!toRedisassemble.isEmpty()) {
-			AutoAnalysisManager.getAnalysisManager(program)
-				.disassemble(toRedisassemble, AnalysisPriority.DISASSEMBLY);
+		if (propagatedSites > 0) {
 			Msg.info(this, "re-seeded ctx_DP across " + propagatedSites +
 				" post-call site(s), " + propagatedInstructions + " instruction(s)");
 		}
+
+		// Phase 3: attach memory references at every @6bit operand whose ctx_DP
+		// is known. Program-wide sweep -- not scoped to `set` -- because a
+		// context re-seed in one region can newly resolve a @6bit operand in
+		// another, and the pass is idempotent (skips operands with matching
+		// references already present).
+		int addedRefs = attachDpReferences(program, dpRegister, ctxDp, ctxDpValid, monitor);
+		if (addedRefs > 0) {
+			Msg.info(this, "attached " + addedRefs +
+				" memory reference(s) at resolved @6bit operand(s)");
+		}
 		return true;
+	}
+
+	// --- phase 3: attach memory references at resolved @6bit operands ------------
+
+	private static int attachDpReferences(Program program, Register dpRegister,
+			Register ctxDp, Register ctxDpValid, TaskMonitor monitor)
+			throws CancelledException {
+		Listing listing = program.getListing();
+		ProgramContext context = program.getProgramContext();
+		ReferenceManager refs = program.getReferenceManager();
+		Memory memory = program.getMemory();
+		int added = 0;
+		Iterator<Instruction> insns = listing.getInstructions(true);
+		while (insns.hasNext()) {
+			monitor.checkCancelled();
+			Instruction insn = insns.next();
+			int operandCount = insn.getNumOperands();
+			for (int i = 0; i < operandCount; i++) {
+				Long off6 = extractDpOff6(insn, i, dpRegister);
+				if (off6 == null) {
+					continue;
+				}
+				// Sanity guard: the {DP, Scalar[0..63]} operand-object pair is
+				// unique to the @6bit constructor within loc16/loc32, but the
+				// SLA might grow another mode later that shares the shape. The
+				// operand's SLA-declared ref type ("this operand is a memory
+				// read/write") is the second, decorrelated signal that keeps a
+				// future addition from silently producing wrong references.
+				RefType refType = insn.getOperandRefType(i);
+				if (refType == null || (!refType.isRead() && !refType.isWrite())) {
+					continue;
+				}
+				BigInteger valid = context.getValue(ctxDpValid, insn.getMinAddress(), false);
+				if (valid == null || !BigInteger.ONE.equals(valid)) {
+					continue;
+				}
+				BigInteger dp = context.getValue(ctxDp, insn.getMinAddress(), false);
+				if (dp == null) {
+					continue;
+				}
+				long word = (dp.longValue() << 6) | off6.longValue();
+				Address target;
+				try {
+					target = wordAddress(insn.getMinAddress(), word);
+				}
+				catch (ArithmeticException | IllegalArgumentException e) {
+					continue;
+				}
+				// Only attach if the resolved address falls in a real memory block.
+				// A stray reference to an unmapped page is worse noise than the
+				// unresolved raw offset it would replace.
+				if (!memory.contains(target)) {
+					continue;
+				}
+				if (hasEquivalentReference(refs, insn.getMinAddress(), i, target)) {
+					continue;
+				}
+				refs.addMemoryReference(insn.getMinAddress(), target, refType,
+					SourceType.ANALYSIS, i);
+				added++;
+			}
+		}
+		return added;
+	}
+
+	/**
+	 * Identifies a {@code @6bit} operand and returns its {@code loc_off6} value
+	 * (0..63), or {@code null} if the operand isn't a DP-relative direct access.
+	 *
+	 * <p>Discriminator: the collapsed loc16/loc32 {@code @6bit} constructor
+	 * emits {@code (zext(DP) << 6) | zext(loc_off6:4)}, so its semantic
+	 * operand-object list is exactly {@code {DP, Scalar}} with the scalar in
+	 * the 6-bit range. No other loc16/loc32 mode in the SLA references DP
+	 * (indirect modes go through {@code XARn}; stack modes through {@code SP};
+	 * register-direct modes have no scalar), so this pair is a sufficient
+	 * discriminator.
+	 */
+	private static Long extractDpOff6(Instruction insn, int operand, Register dpRegister) {
+		Object[] opObjects = insn.getOpObjects(operand);
+		if (opObjects.length != 2) {
+			return null;
+		}
+		Register foundRegister = null;
+		Scalar foundScalar = null;
+		for (Object object : opObjects) {
+			if (object instanceof Register register) {
+				foundRegister = register;
+			}
+			else if (object instanceof Scalar scalar) {
+				foundScalar = scalar;
+			}
+		}
+		if (foundRegister == null || foundScalar == null) {
+			return null;
+		}
+		if (!dpRegister.equals(foundRegister)) {
+			return null;
+		}
+		long value = foundScalar.getUnsignedValue();
+		if (value < 0 || value >= 64) {
+			return null;
+		}
+		return value;
+	}
+
+	private static boolean hasEquivalentReference(ReferenceManager refs, Address from,
+			int operand, Address target) {
+		for (Reference reference : refs.getReferencesFrom(from)) {
+			if (reference.getOperandIndex() == operand &&
+				reference.isMemoryReference() &&
+				target.equals(reference.getToAddress())) {
+				return true;
+			}
+		}
+		return false;
+	}
+
+	/** Convert an architectural C28 word address to Ghidra's byte-offset Address. */
+	private static Address wordAddress(Address basis, long wordOffset) {
+		int wordSize = basis.getAddressSpace().getAddressableUnitSize();
+		return basis.getAddressSpace().getAddress(Math.multiplyExact(wordOffset, wordSize));
 	}
 
 	// --- phase 1: DP-preserving predicate over the callgraph ---------------------

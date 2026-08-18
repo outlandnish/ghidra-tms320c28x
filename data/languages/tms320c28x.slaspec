@@ -228,19 +228,21 @@ define context contextreg
   # DP is TI's data-page pointer: a `@6bit` operand resolves at runtime to
   # (DP<<6)|6bit, giving a 22-bit address. The compiler emits `MOVW DP,#imm` (and
   # occasionally `MOVZ DP,#10bit`) immediately before a run of `@6bit` accesses.
-  # If we snapshot the immediate into ctx_DP and mark ctx_DP_valid, the loc16/loc32
-  # `@6bit` constructors can compute the FULL absolute address as a disassembly-time
-  # constant and use it as the semantic destination -- which lets Ghidra draw a real
-  # XREF, substitute the global's symbol name in the operand, and let the decompiler
-  # see the underlying data type.
+  # We snapshot the immediate into ctx_DP and mark ctx_DP_valid; the SLA emits a
+  # single runtime-expression @6bit constructor (one prototype per byte sequence,
+  # so no cross-flow "inconsistent prototype" conflict -- was #48). Resolution to a
+  # concrete symbol is deferred to TMS320C28xDpPropagationAnalyzer, which reads
+  # (ctx_DP, ctx_DP_valid) at each instruction and attaches a memory reference
+  # -- Ghidra then substitutes the global's symbol name in the operand, draws the
+  # XREF, and the decompiler sees the underlying data type.
   #
   # NOT noflow: ctx_DP/ctx_DP_valid propagate through linear flow until the next
   # `MOVW DP` / `MOVZ DP` overwrites them. This is the whole point -- one MOVW DP
   # feeds many downstream @6bit loads. Overlap-safe because bits 32..63 aren't
   # touched by ctx_fimm16 (8..23) or ctx_setflg_flag (8..18) scratch writes.
-  # ABI note: TI's C runtime does NOT preserve DP across calls; callees re-set DP
-  # before their first @6bit access. So even if a caller's ctx_DP flows into a
-  # callee, that callee's own MOVW DP replaces it before any resolution can go wrong.
+  # ABI note: TI's C runtime does NOT preserve DP across calls; call constructors
+  # invalidate ctx_DP_valid at inst_next. The propagation analyzer re-seeds valid=1
+  # into fall-throughs where the callee is provably DP-preserving.
   ctx_DP        = (32,47)
   ctx_DP_valid  = (48,48)
 ;
