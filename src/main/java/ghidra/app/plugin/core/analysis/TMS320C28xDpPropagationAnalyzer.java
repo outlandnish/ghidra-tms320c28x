@@ -3,15 +3,15 @@
 package ghidra.app.plugin.core.analysis;
 
 import java.math.BigInteger;
-import java.util.ArrayList;
 import java.util.ArrayDeque;
+import java.util.Collections;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.WeakHashMap;
 
 import ghidra.app.services.AbstractAnalyzer;
 import ghidra.app.services.AnalysisPriority;
@@ -97,6 +97,48 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 	// short (dozens of insns); 256 is a safety net, not a design target.
 	private static final int MAX_WALK_INSTRUCTIONS = 256;
 
+	// Per-program cache of the DP-preserving predicate. `added()` fires once per
+	// re-disassembly round, and our own re-seed loop can drive up to ~10 rounds on
+	// a typical F28377D image (chained calls to DP-preserving callees each need one
+	// round to bubble up). Measured effect on runtime is modest -- ~350 ms of a
+	// ~3 s total on a 12k-instruction image -- because the bottleneck is actually
+	// the phase-2 program-wide instruction sweep, not the callgraph fixed point;
+	// scoping that sweep to the AddressSetView `added()` receives is a separate
+	// follow-up.  Still worth keeping the cache: the fixed point is measurably
+	// slow enough to matter, and avoiding pointless recomputation is cheap.
+	//
+	// Stamp is a compound (functionCount, instructionCount). functionCount
+	// alone would miss a body change at constant count -- e.g. our own
+	// re-disassembly extending a function's fall-through into an instruction
+	// that turns out to be a DP writer, silently flipping the callee from
+	// "preserving" to "not". The theoretical failure mode is optimistic
+	// staleness (a callee marked preserving when it isn't), which would
+	// re-seed the caller's DP into a fall-through where the callee actually
+	// clobbered DP -- a wrong-XREF class bug.  The compound stamp closes the
+	// hole: any instruction added or removed anywhere in the program forces
+	// a recompute. In our loop, clear-then-re-disassemble preserves count
+	// (N cleared, N added back) so the cache still holds across rounds.
+	private static final Map<Program, CachedPreserving> CACHE =
+		Collections.synchronizedMap(new WeakHashMap<>());
+
+	private static final class CachedPreserving {
+		final Set<Function> preserving;
+		final int functionCountStamp;
+		final long instructionCountStamp;
+
+		CachedPreserving(Set<Function> preserving, int functionCountStamp,
+				long instructionCountStamp) {
+			this.preserving = preserving;
+			this.functionCountStamp = functionCountStamp;
+			this.instructionCountStamp = instructionCountStamp;
+		}
+
+		boolean matches(int currentFunctionCount, long currentInstructionCount) {
+			return functionCountStamp == currentFunctionCount &&
+				instructionCountStamp == currentInstructionCount;
+		}
+	}
+
 	public TMS320C28xDpPropagationAnalyzer() {
 		super(NAME, DESCRIPTION, AnalyzerType.INSTRUCTION_ANALYZER);
 		// FUNCTION_ANALYSIS.after() puts us after functions have been created and
@@ -134,9 +176,7 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 		}
 
 		FunctionManager functionManager = program.getFunctionManager();
-		Set<Function> dpPreserving = computeDpPreservingFunctions(program, dpRegister, monitor);
-		Msg.info(this, "DP-preserving functions: " + dpPreserving.size() + " / " +
-			functionManager.getFunctionCount());
+		Set<Function> dpPreserving = getOrComputeDpPreserving(program, dpRegister, monitor);
 
 		AddressSet toRedisassemble = new AddressSet();
 		int propagatedSites = 0;
@@ -220,6 +260,26 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 	}
 
 	// --- phase 1: DP-preserving predicate over the callgraph ---------------------
+
+	private static Set<Function> getOrComputeDpPreserving(Program program,
+			Register dpRegister, TaskMonitor monitor) throws CancelledException {
+		int functionCount = program.getFunctionManager().getFunctionCount();
+		long instructionCount = program.getListing().getNumInstructions();
+		CachedPreserving cached = CACHE.get(program);
+		if (cached != null && cached.matches(functionCount, instructionCount)) {
+			return cached.preserving;
+		}
+		Set<Function> preserving = computeDpPreservingFunctions(program, dpRegister, monitor);
+		CACHE.put(program, new CachedPreserving(preserving, functionCount, instructionCount));
+		String prior = cached == null
+			? "absent"
+			: "functions=" + cached.functionCountStamp + " instructions=" +
+				cached.instructionCountStamp;
+		Msg.info(TMS320C28xDpPropagationAnalyzer.class,
+			"DP-preserving functions: " + preserving.size() + " / " + functionCount +
+			" (recomputed; cache stamp was " + prior + ")");
+		return preserving;
+	}
 
 	private static Set<Function> computeDpPreservingFunctions(Program program,
 			Register dpRegister, TaskMonitor monitor) throws CancelledException {
@@ -372,11 +432,21 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 				break;
 			}
 			FlowType flow = current.getFlowType();
-			if (flow.isCall() || flow.isJump() || flow.isTerminal() || !flow.isFallthrough()) {
+			// Continue past conditional jumps: the fall-through path preserves DP
+			// (the branch instruction itself doesn't touch DP; the taken-branch
+			// target lives at its own address and isn't in our re-seeded range,
+			// so we don't affect the other path). Unconditional jumps and pure
+			// terminals have no fall-through -- caught by `fall == null` below.
+			// Calls always break: even if the callee is DP-preserving, the SLA's
+			// own invalidation at inst_next kicks in and the outer analyzer loop
+			// will pick up the fall-through in a subsequent iteration.
+			if (flow.isCall() || flow.isTerminal()) {
 				break;
 			}
 			Address fall = current.getFallThrough();
 			if (fall == null) {
+				// Unconditional branch / return / computed jump -- no linear
+				// successor to seed into.
 				break;
 			}
 			current = listing.getInstructionAt(fall);
