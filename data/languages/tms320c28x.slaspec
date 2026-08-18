@@ -172,7 +172,14 @@ define register offset=0xC8 size=4 [ VT0 VT1 VSTATUS VCRC ];
 # Decode context. AMODE selects the loc16/loc32 field interpretation (Table 5-1).
 # OBJMODE/AMODE live in ST1 at runtime; for decode we track AMODE as context.
 # =============================================================================
-define register offset=0x80 size=4 contextreg;
+# contextreg was widened from 4 to 8 bytes to make room for a 16-bit ctx_DP (bits
+# 32..47) alongside a validity bit (48). The existing fields (bits 0..31) keep their
+# offsets. Overlapping ctx_DP with the noflow scratch fields (ctx_fimm16 at 8..23,
+# ctx_setflg_flag at 8..18) was unsafe: any noflow write of those bits at some
+# intermediate instruction (an FPU #16FHi form, a SETFLG) would reset bits 8..23 to
+# the pspec default at that address, wiping the flowed ctx_DP for the fall-through.
+# Bits 32..63 are untouched by any noflow scratch, so ctx_DP flows cleanly.
+define register offset=0x80 size=8 contextreg;
 define context contextreg
   ctx_AMODE = (0,0)        # 0 = C28x modes (compiler default), 1 = C2xLP-compatible
   # Analyzer-set context bits for `LB *XAR7` disambiguation. The same opcode
@@ -217,6 +224,25 @@ define context contextreg
   rpt_active = (3,3) noflow
   rptb_flag  = (4,4) noflow
   rpt_phase  = (5,5) noflow
+  # --- DP-relative addressing resolution (bits 32..63 of the widened contextreg).
+  # DP is TI's data-page pointer: a `@6bit` operand resolves at runtime to
+  # (DP<<6)|6bit, giving a 22-bit address. The compiler emits `MOVW DP,#imm` (and
+  # occasionally `MOVZ DP,#10bit`) immediately before a run of `@6bit` accesses.
+  # If we snapshot the immediate into ctx_DP and mark ctx_DP_valid, the loc16/loc32
+  # `@6bit` constructors can compute the FULL absolute address as a disassembly-time
+  # constant and use it as the semantic destination -- which lets Ghidra draw a real
+  # XREF, substitute the global's symbol name in the operand, and let the decompiler
+  # see the underlying data type.
+  #
+  # NOT noflow: ctx_DP/ctx_DP_valid propagate through linear flow until the next
+  # `MOVW DP` / `MOVZ DP` overwrites them. This is the whole point -- one MOVW DP
+  # feeds many downstream @6bit loads. Overlap-safe because bits 32..63 aren't
+  # touched by ctx_fimm16 (8..23) or ctx_setflg_flag (8..18) scratch writes.
+  # ABI note: TI's C runtime does NOT preserve DP across calls; callees re-set DP
+  # before their first @6bit access. So even if a caller's ctx_DP flows into a
+  # callee, that callee's own MOVW DP replaces it before any resolution can go wrong.
+  ctx_DP        = (32,47)
+  ctx_DP_valid  = (48,48)
 ;
 
 # Tokens and instruction constructors live in the .sinc include.

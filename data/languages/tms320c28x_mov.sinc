@@ -141,7 +141,14 @@
 # =============================================================================
 # MOVW DP, #16bit   0111 0110 0001 1111 : iiii iiii iiii iiii   (2-word)
 # Loads the full 16-bit data-page pointer. The most common instruction in DIR.
+#
+# Also snapshots the DP value into ctx_DP (and flips ctx_DP_valid=1) at inst_next,
+# so downstream `@6bit` loc16/loc32 constructors can resolve the operand to a
+# constant absolute address `(DP<<6)|6bit`. See tms320c28x.slaspec for the field
+# defs and tms320c28x_addr.sinc for the resolved constructors.
 # =============================================================================
-:MOVW "DP", "#"imm16  is rpt_phase=1 & op16=0x761F ; imm16  {
+:MOVW "DP", "#"imm16  is rpt_phase=1 & op16=0x761F ; imm16
+        [ ctx_DP = imm16; ctx_DP_valid = 1;
+          globalset(inst_next, ctx_DP); globalset(inst_next, ctx_DP_valid); ] {
     DP = imm16:2;
 }
