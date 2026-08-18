@@ -43,6 +43,12 @@
     <context_set space="ram">
       <set name="ctx_AMODE"  val="0"/>
       <set name="rpt_phase"  val="1"/>
+      <!-- DP-relative @6bit resolution: default is "DP unknown" (valid=0) so the
+           runtime-expression fallback fires. `MOVW DP,#imm16` / `MOVZ DP,#10bit`
+           flip ctx_DP_valid=1 and snapshot ctx_DP at inst_next (see mov.sinc /
+           more.sinc); the resolved-address constructors gate on valid=1. -->
+      <set name="ctx_DP"        val="0"/>
+      <set name="ctx_DP_valid"  val="0"/>
     </context_set>
   </context_data>
 

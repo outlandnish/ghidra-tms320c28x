@@ -125,12 +125,22 @@ ffcdest: reloc  is op_hi8=0x00 & op_lo_76=0b11 & loc_off6 ; imm16  [ reloc = (lo
 # =============================================================================
 # Long / indirect calls and returns
 # =============================================================================
+# CALL-SITE DP INVALIDATION: TI's C ABI does NOT preserve DP across calls -- callees
+# reload it (MOVW/MOVZ DP,#imm) before any @6bit access. So the ctx_DP snapshot the
+# caller flowed forward is stale at the fall-through / return address. Every call
+# constructor globalset(inst_next, ctx_DP_valid=0), which forces the ctx_DP_valid=0
+# branch of the loc16/loc32 @6bit sub-tables (i.e. runtime DP register expression)
+# until the next MOVW/MOVZ DP re-arms it. Without this we'd emit resolved absolute
+# addresses using the caller's DP for any @6bit access that follows a return but
+# precedes the next explicit DP load -- a wrong-XREF class bug that's hard to spot.
+#
 # LCR #22bit          0111 0110 01CC CCCC : CCCC CCCC CCCC CCCC  (call using RPC)
 # The target is an ABSOLUTE 22-bit address: word1 low 6 bits = addr[21:16],
 # word2 = addr[15:0]. (NOT pc-relative — the earlier rel16dest version computed
 # inst_start+simm16, so every LCR pointed back at itself; in unlinked .objs the
 # field is a 0 reloc placeholder, which made it look like a self-call.)
-:LCR lcrdest  is rpt_phase=1 & lcrdest {
+:LCR lcrdest  is rpt_phase=1 & lcrdest
+        [ ctx_DP_valid = 0; globalset(inst_next, ctx_DP_valid); ] {
     # hardware pushes the OLD RPC (nested-call save) then loads RPC with the return
     # addr; LRETR pops it back. Needed for EMULATION of nested calls; net-neutral for
     # decompilation (push+pop cancel across the call). inst_next>>1 = word return addr.
@@ -140,7 +150,8 @@ ffcdest: reloc  is op_hi8=0x00 & op_lo_76=0b11 & loc_off6 ; imm16  [ reloc = (lo
 }
 
 # LCR *XARn           0011 1110 0110 0RRR  (indirect call using RPC)
-:LCR "*"loc_areg  is rpt_phase=1 & op_hi8=0x3E & op_lo_35=0b01100 & loc_areg {
+:LCR "*"loc_areg  is rpt_phase=1 & op_hi8=0x3E & op_lo_35=0b01100 & loc_areg
+        [ ctx_DP_valid = 0; globalset(inst_next, ctx_DP_valid); ] {
     local sp2:4 = SP; *[ram]:4 sp2 = RPC; SP = SP + 2;
     RPC = inst_next >> 1;
     call [loc_areg];
@@ -148,7 +159,8 @@ ffcdest: reloc  is op_hi8=0x00 & op_lo_76=0b11 & loc_off6 ; imm16  [ reloc = (lo
 
 # FFC XAR7,#22bit     0000 0000 11CC CCCC : CCCC CCCC CCCC CCCC  (fast call; return
 # PC saved in XAR7, ABSOLUTE 22-bit target). word1 low 6 bits = addr[21:16].
-:FFC "XAR7,"ffcdest  is rpt_phase=1 & ffcdest {
+:FFC "XAR7,"ffcdest  is rpt_phase=1 & ffcdest
+        [ ctx_DP_valid = 0; globalset(inst_next, ctx_DP_valid); ] {
     XAR7 = inst_next >> 1;
     call ffcdest;
 }

@@ -33,6 +33,9 @@
   <context_data>
     <context_set space="ram">
       <set name="ctx_AMODE" val="0"/>
+      <!-- DP-relative @6bit resolution: "DP unknown" default; see tms320c28x.pspec. -->
+      <set name="ctx_DP"        val="0"/>
+      <set name="ctx_DP_valid"  val="0"/>
     </context_set>
   </context_data>
 

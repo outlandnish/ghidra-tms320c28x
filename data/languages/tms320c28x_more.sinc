@@ -24,7 +24,9 @@
 # Ghidra records a real CALL/JUMP reference. The parent constructor just references it.
 lcdest: reloc  is op_hi8=0x00 & op_lo_76=0b10 & loc_off6 ; imm16  [ reloc = (loc_off6 << 16) | imm16; ] { export *[ram]:4 reloc; }
 lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc_off6 << 16) | imm16; ] { export *[ram]:4 reloc; }
-:LC lcdest  is rpt_phase=1 & lcdest {
+# Both LC forms invalidate ctx_DP at inst_next -- see flow.sinc LCR for the ABI note.
+:LC lcdest  is rpt_phase=1 & lcdest
+        [ ctx_DP_valid = 0; globalset(inst_next, ctx_DP_valid); ] {
     local sp2:4 = SP; *[ram]:4 sp2 = RPC; SP = SP + 2;
     RPC = inst_next >> 1;
     call lcdest;
@@ -34,7 +36,9 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 }
 
 # LC *XAR7   0111 0110 0000 0100   (indirect call via XAR7)
-:LC "*XAR7"  is rpt_phase=1 & op16=0x7604 { local sp2:4 = SP; *[ram]:4 sp2 = RPC; SP = SP + 2; RPC = inst_next >> 1; call [XAR7]; }
+:LC "*XAR7"  is rpt_phase=1 & op16=0x7604
+        [ ctx_DP_valid = 0; globalset(inst_next, ctx_DP_valid); ]
+        { local sp2:4 = SP; *[ram]:4 sp2 = RPC; SP = SP + 2; RPC = inst_next >> 1; call [XAR7]; }
 
 # LB *XAR7   0111 0110 0010 0000   (indirect branch via XAR7)
 # The same opcode is used for BOTH the FFC-helper return sequence AND for switch-table
@@ -72,8 +76,13 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 :MOVZ "AR6", loc16   is rpt_phase=1 & op_hi8=0x88 & loc16  { XAR6 = zext(loc16); }
 :MOVZ "AR7", loc16   is rpt_phase=1 & op_hi8=0x80 & loc16  { XAR7 = zext(loc16); }
 
-# MOVZ DP, #10bit   1011 10CC CCCC CCCC   -- load low 10 bits of DP, clear rest
-:MOVZ "DP", "#"dp10  is rpt_phase=1 & op_hi_6=0b101110 & dp10  {
+# MOVZ DP, #10bit   1011 10CC CCCC CCCC   -- load low 10 bits of DP, clear rest.
+# Snapshot to ctx_DP so downstream `@6bit` accesses resolve to constant absolute
+# addresses. `MOVZ` writes only the low 10 bits and clears the top 6, so ctx_DP =
+# dp10 exactly (no OR with a prior value); see tms320c28x_mov.sinc `MOVW DP,#16bit`.
+:MOVZ "DP", "#"dp10  is rpt_phase=1 & op_hi_6=0b101110 & dp10
+        [ ctx_DP = dp10; ctx_DP_valid = 1;
+          globalset(inst_next, ctx_DP); globalset(inst_next, ctx_DP_valid); ] {
     DP = dp10;
 }
 
@@ -378,7 +387,12 @@ macro unpackst1(in) {
 :PUSH "P"        is rpt_phase=1 & op16=0x761D { local a:4 = SP; *[ram]:4 a = P; SP = SP + 2; }
 :POP "P"         is rpt_phase=1 & op16=0x7611 { SP = SP - 2; local a:4 = SP; P = *[ram]:4 a; }
 :PUSH "AR1H:AR0H" is rpt_phase=1 & op16=0x0005 { SP = SP + 2; }              # decode-only (pair push)
-:POP "DP"        is rpt_phase=1 & op16=0x7603 { pop16(DP); }
+# POP DP reloads DP from an unknown stack value; invalidate ctx_DP at inst_next so
+# resolved @6bit dispatch falls back to the runtime expression. (MOVW/MOVZ DP,#imm
+# are the only writers we can snapshot at disassembly time.)
+:POP "DP"        is rpt_phase=1 & op16=0x7603
+        [ ctx_DP_valid = 0; globalset(inst_next, ctx_DP_valid); ]
+        { pop16(DP); }
 :POP "ST0"       is rpt_phase=1 & op16=0x7613 { pop16(ST0); unpackst0(ST0); }
 :POP "ST1"       is rpt_phase=1 & op16=0x7600 { pop16(ST1); unpackst1(ST1); }
 :POP "DBGIER"    is rpt_phase=1 & op16=0x7612 { pop16(DBGIER); }

@@ -275,7 +275,9 @@
 :XPREAD loc16, "*AL"   is rpt_phase=1 & op16=0x563c ; loc16  { local pma:4 = zext(AL); loc16 = *[ram]:2 pma; }
 :XPWRITE "*A", loc16   is rpt_phase=1 & op16=0x563d ; loc16  { local pma:4 = zext(AL); *[ram]:2 pma = loc16; }
 :XB "*AL"              is rpt_phase=1 & op16=0x5614 { local tgt:4 = zext(AL); goto [tgt]; }
-:XCALL "*AL"           is rpt_phase=1 & op16=0x5634 { local tgt:4 = zext(AL); local sp2:4 = SP; *[ram]:4 sp2 = RPC; SP = SP + 2; RPC = inst_next >> 1; call [tgt]; }
+:XCALL "*AL"           is rpt_phase=1 & op16=0x5634
+        [ ctx_DP_valid = 0; globalset(inst_next, ctx_DP_valid); ]
+        { local tgt:4 = zext(AL); local sp2:4 = SP; *[ram]:4 sp2 = RPC; SP = SP + 2; RPC = inst_next >> 1; call [tgt]; }
 :XRET                  is rpt_phase=1 & op16=0x56ff { local ret:4 = RPC; SP = SP - 2; local sp2:4 = SP; RPC = *[ram]:4 sp2; return [ret]; }
 
 # =============================================================================
