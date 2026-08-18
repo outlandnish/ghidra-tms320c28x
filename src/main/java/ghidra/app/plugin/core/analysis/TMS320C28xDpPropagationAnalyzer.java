@@ -213,6 +213,7 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 
 		int walkedSites = 0;
 		int addedReferences = 0;
+		int truncatedWalks = 0;
 
 		// Iterate every direct call in the program; for each whose callee is DP-
 		// preserving and whose caller's ctx_DP_valid at the call is 1, walk the
@@ -257,6 +258,9 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 				continue;
 			}
 			walkedSites++;
+			if (walk.truncatedAtCap) {
+				truncatedWalks++;
+			}
 			addedReferences += attachReferencesInRange(listing, refs, memory,
 				walk.range, dpAtCall, monitor);
 		}
@@ -265,6 +269,16 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 			Msg.info(this, "attached " + addedReferences +
 				" memory reference(s) across " + walkedSites +
 				" post-call fall-through(s)");
+		}
+		if (truncatedWalks > 0) {
+			// Non-zero truncations mean some qualifying fall-throughs were longer than
+			// MAX_WALK_INSTRUCTIONS and the tail was skipped. Chaining past DP-preserving
+			// calls extends walks materially past the pre-chaining design, so this cap
+			// is more likely to bind here than it was in the context-store era. Raise the
+			// cap or scope the walk if this fires in real work.
+			Msg.warn(this, truncatedWalks + " walk(s) truncated at the " +
+				MAX_WALK_INSTRUCTIONS + "-instruction cap; some post-call " +
+				"@6bit operands may be unresolved");
 		}
 		return true;
 	}
@@ -508,10 +522,12 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 	private static final class WalkResult {
 		final AddressSet range;
 		final int instructionCount;
+		final boolean truncatedAtCap;
 
-		WalkResult(AddressSet range, int instructionCount) {
+		WalkResult(AddressSet range, int instructionCount, boolean truncatedAtCap) {
 			this.range = range;
 			this.instructionCount = instructionCount;
+			this.truncatedAtCap = truncatedAtCap;
 		}
 	}
 
@@ -584,7 +600,15 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 			}
 			current = listing.getInstructionAt(fall);
 		}
-		return new WalkResult(range, count);
+		// Truncation at the cap is when we exited the loop because count reached
+		// MAX_WALK_INSTRUCTIONS AND there was more to walk (current != null). Any
+		// natural stop (flow break, DP writer, join disagreement, exhausted
+		// fall-through) leaves either current==null or triggered a break before
+		// the count check. Chaining past DP-preserving calls makes the walk
+		// materially longer than the pre-chaining design, so surface this so a
+		// silent recall miss at the cap is measurable rather than invisible.
+		boolean truncated = count >= MAX_WALK_INSTRUCTIONS && current != null;
+		return new WalkResult(range, count, truncated);
 	}
 
 	private static boolean continuesPastCall(Instruction call,
