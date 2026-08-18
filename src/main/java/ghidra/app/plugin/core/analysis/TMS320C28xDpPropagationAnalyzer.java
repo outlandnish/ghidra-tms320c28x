@@ -29,6 +29,7 @@ import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.listing.ProgramContext;
+import ghidra.program.model.scalar.Scalar;
 import ghidra.program.model.symbol.FlowType;
 import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.ReferenceIterator;
@@ -218,7 +219,8 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 				continue;
 			}
 
-			WalkResult walk = walkFallThrough(program, instNext, dpRegister, monitor);
+			WalkResult walk = walkFallThrough(program, instNext, dpRegister,
+				ctxDp, ctxDpValid, dpAtCall, monitor);
 			if (walk.instructionCount == 0) {
 				continue;
 			}
@@ -402,7 +404,8 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 	}
 
 	private static WalkResult walkFallThrough(Program program, Address start,
-			Register dpRegister, TaskMonitor monitor) throws CancelledException {
+			Register dpRegister, Register ctxDp, Register ctxDpValid,
+			BigInteger dpAtCall, TaskMonitor monitor) throws CancelledException {
 		Listing listing = program.getListing();
 		AddressSet range = new AddressSet();
 		Set<Address> visited = new HashSet<>();
@@ -414,10 +417,17 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 			if (!visited.add(addr)) {
 				break;
 			}
-			if (count > 0 && hasIncomingFlowFromOutside(program, addr, visited)) {
-				// Join point: some other predecessor reaches here without going
-				// through our call site, so its DP snapshot may differ. Stopping
-				// keeps the propagation strictly correct.
+			// At a join point (address reached from outside our walk), require every
+			// external predecessor to flow the same (valid=1, ctx_DP=dpAtCall) into
+			// this address. If they all agree, crossing is sound (loop-head joins in
+			// tight compiler code often satisfy this: the body reloads DP to the same
+			// page the caller had, and the back-edge source carries the matching
+			// context). If any disagrees or is unresolvable, stop -- the SLA's
+			// last-write-wins storage at the join means we can't rely on the raw
+			// context value at joinAddr; each predecessor's outgoing edge context
+			// must be computed independently.
+			if (count > 0 && !allExternalPredecessorsAgree(program, addr, visited,
+					dpRegister, ctxDp, ctxDpValid, dpAtCall)) {
 				break;
 			}
 			range.add(addr, current.getMaxAddress());
@@ -454,20 +464,85 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 		return new WalkResult(range, count);
 	}
 
-	private static boolean hasIncomingFlowFromOutside(Program program, Address addr,
-			Set<Address> insideWalk) {
-		ReferenceIterator refs = program.getReferenceManager().getReferencesTo(addr);
+	/**
+	 * Returns true iff every incoming flow reference into {@code joinAddr} from
+	 * outside the current walk flows the same ({@code ctx_DP_valid=1},
+	 * {@code ctx_DP=dpAtCall}) into this address. Returns true trivially when no
+	 * external predecessor exists (not actually a join).
+	 *
+	 * <p>Per-predecessor edge context is computed from the source instruction,
+	 * because {@link ProgramContext#getValue} at the join address stores only the
+	 * last write during disassembly and hides disagreement. The rule:
+	 * <ul>
+	 *   <li>Source is a call: outgoing context on the return edge is the SLA's
+	 *       invalidation {@code (0, ?)}, so it never matches. Rejected.</li>
+	 *   <li>Source writes DP (any {@code getResultObjects()} contains DP): for
+	 *       {@code MOVW/MOVZ DP,#imm} the outgoing value is the immediate
+	 *       operand -- read via {@link Instruction#getScalar}. {@code POP DP}
+	 *       has no immediate; treat as {@code (0, ?)} and reject.</li>
+	 *   <li>Otherwise: outgoing context equals incoming context (no globalset on
+	 *       plain instructions or on branches), which is what's stored at the
+	 *       source's own address.</li>
+	 * </ul>
+	 * References from data addresses or non-instruction sources are rejected.
+	 */
+	private static boolean allExternalPredecessorsAgree(Program program, Address joinAddr,
+			Set<Address> insideWalk, Register dpRegister, Register ctxDp,
+			Register ctxDpValid, BigInteger dpAtCall) {
+		ProgramContext context = program.getProgramContext();
+		Listing listing = program.getListing();
+		ReferenceIterator refs = program.getReferenceManager().getReferencesTo(joinAddr);
 		while (refs.hasNext()) {
 			Reference ref = refs.next();
 			if (!ref.getReferenceType().isFlow()) {
 				continue;
 			}
-			if (insideWalk.contains(ref.getFromAddress())) {
+			Address src = ref.getFromAddress();
+			if (insideWalk.contains(src)) {
 				continue;
 			}
-			return true;
+			Instruction pred = listing.getInstructionAt(src);
+			if (pred == null) {
+				return false;
+			}
+			if (pred.getFlowType().isCall()) {
+				// Return edge from a call: SLA invalidates ctx_DP_valid at inst_next.
+				return false;
+			}
+
+			BigInteger outgoingValid;
+			BigInteger outgoingDp;
+			if (writesRegister(pred, dpRegister)) {
+				Scalar imm = pred.getScalar(1);
+				if (imm == null) {
+					// POP DP (the only non-immediate DP writer in the ISA): the popped
+					// value is knowable in principle -- the compiler's callee-save
+					// pattern PUSH DP / ... / POP DP restores ctx_DP as it was at the
+					// PUSH -- but recovering it requires stack-effect analysis to
+					// match POP -> PUSH across basic blocks (prologue/epilogue split,
+					// intervening PUSH/POP of other regs, ADDB SP,#n adjustments).
+					// The specific case where this would matter -- POP DP appearing
+					// as an external predecessor of a join point in a caller's
+					// fall-through walk -- is uncommon (the callee-save POP's
+					// outgoing edge is usually LRETR, a terminal, not a join). Left
+					// as reject; revisit if audit surfaces a real recall gap here.
+					return false;
+				}
+				outgoingValid = BigInteger.ONE;
+				outgoingDp = BigInteger.valueOf(imm.getUnsignedValue());
+			}
+			else {
+				outgoingValid = context.getValue(ctxDpValid, src, false);
+				outgoingDp = context.getValue(ctxDp, src, false);
+			}
+			if (outgoingValid == null || !BigInteger.ONE.equals(outgoingValid)) {
+				return false;
+			}
+			if (outgoingDp == null || !outgoingDp.equals(dpAtCall)) {
+				return false;
+			}
 		}
-		return false;
+		return true;
 	}
 
 	// --- helpers -----------------------------------------------------------------
