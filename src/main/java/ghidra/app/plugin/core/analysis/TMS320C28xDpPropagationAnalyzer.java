@@ -72,12 +72,18 @@ import ghidra.util.task.TaskMonitor;
  *       For every direct call whose target is DP-preserving and whose caller
  *       carries {@code ctx_DP_valid=1} at the call address, walk forward
  *       from {@code inst_next} via fall-through — stopping at the first
- *       (i) call, (ii) non-fall-through flow (jump / terminal), (iii) DP
- *       writer, or (iv) join point where the incoming flows do not all agree
- *       on the DP value — and attach a memory reference on every
- *       {@code @6bit} operand in that range using {@code target =
- *       (dpAtCall<<6) | off6}. The pass is idempotent: a matching reference
- *       already present is skipped, so re-running is a no-op.</li>
+ *       (i) non-fall-through flow (jump / terminal), (ii) DP writer,
+ *       (iii) nested call whose callee is not provably DP-preserving, or
+ *       (iv) join point where the incoming flows do not all agree on the
+ *       DP value — and attach a memory reference on every {@code @6bit}
+ *       operand in that range using {@code target = (dpAtCall<<6) | off6}.
+ *       The walk continues past nested calls whose callee is itself
+ *       DP-preserving: {@code dpAtCall} is provably still live across such
+ *       a callee, and continuing past captures the chained-call sites
+ *       directly instead of leaving them for a second round that (in the
+ *       reference-only design) would never come. The pass is idempotent:
+ *       a matching reference already present is skipped, so re-running is
+ *       a no-op.</li>
  * </ol>
  *
  * <p>Why direct reference attachment, not context re-seeding:
@@ -246,7 +252,7 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 			}
 
 			WalkResult walk = walkFallThrough(program, instNext, dpRegister,
-				ctxDp, ctxDpValid, dpAtCall, monitor);
+				ctxDp, ctxDpValid, dpAtCall, functionManager, dpPreserving, monitor);
 			if (walk.instructionCount == 0) {
 				continue;
 			}
@@ -314,16 +320,22 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 
 	/**
 	 * Identifies a {@code @6bit} operand and returns its {@code loc_off6} value
-	 * (0..63), or {@code null} if the operand isn't a lone Scalar in that range.
+	 * (0..63), or {@code null} if the operand isn't a DP-direct access.
 	 *
 	 * <p>The collapsed loc16/loc32 {@code @6bit} constructor renders as
 	 * {@code @0xNN} — a single {@link Scalar}. DP lives in the constructor's
-	 * semantic body, not in the operand's object list. Every other addressing
-	 * form in loc16/loc32 is a register-direct or indirect mode, so its operand
-	 * objects either contain a register or a register+scalar pair; only
-	 * {@code @6bit} within the addressing sub-table yields a lone scalar. The
-	 * caller pairs this with an {@link Instruction#getOperandRefType} check to
-	 * filter non-memory scalar operands (e.g. {@code #22bit} immediates).
+	 * semantic body, not in the operand's object list. But so does SP in the
+	 * stack-relative form {@code *-SP[off6]}, which reuses the same
+	 * {@code loc_off6} field and also produces a lone-Scalar operand with a
+	 * memory read/write ref type. To distinguish them we require the operand
+	 * text to start with {@code @}: every other {@code @}-prefixed loc16/loc32
+	 * form is register-direct ({@code @AL}, {@code @AR0}, {@code @SP}, ...) and
+	 * those are already excluded by the lone-Scalar test, so leading-{@code @}
+	 * uniquely picks {@code @6bit}.
+	 *
+	 * <p>The caller pairs this with an {@link Instruction#getOperandRefType}
+	 * check to filter non-memory scalar operands (e.g. {@code #22bit}
+	 * immediates).
 	 */
 	private static Long extractDpOff6(Instruction insn, int operand) {
 		Object[] opObjects = insn.getOpObjects(operand);
@@ -332,6 +344,12 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 		}
 		long value = scalar.getUnsignedValue();
 		if (value < 0 || value >= 64) {
+			return null;
+		}
+		// Distinguish @6bit from *-SP[6bit] -- both are lone Scalar[0..63] with a
+		// memory ref type. See javadoc.
+		String representation = insn.getDefaultOperandRepresentation(operand);
+		if (representation == null || !representation.startsWith("@")) {
 			return null;
 		}
 		return value;
@@ -499,7 +517,9 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 
 	private static WalkResult walkFallThrough(Program program, Address start,
 			Register dpRegister, Register ctxDp, Register ctxDpValid,
-			BigInteger dpAtCall, TaskMonitor monitor) throws CancelledException {
+			BigInteger dpAtCall, FunctionManager functionManager,
+			Set<Function> dpPreserving, TaskMonitor monitor)
+			throws CancelledException {
 		Listing listing = program.getListing();
 		AddressSet range = new AddressSet();
 		Set<Address> visited = new HashSet<>();
@@ -537,14 +557,23 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 				break;
 			}
 			FlowType flow = current.getFlowType();
-			// Continue past conditional jumps: the fall-through path preserves DP
-			// (the branch instruction itself doesn't touch DP; the taken-branch
-			// target lives at its own address and isn't in our walked range, so
-			// we don't affect the other path). Unconditional jumps and pure
-			// terminals have no fall-through -- caught by `fall == null` below.
-			// Calls always break: even if the callee is DP-preserving, the outer
-			// per-call loop picks up the fall-through in its own iteration.
-			if (flow.isCall() || flow.isTerminal()) {
+			// Continue past a call only when its callee is a resolved direct target
+			// AND provably DP-preserving. This is the chaining fix: without it, the
+			// walk stops at the first nested call and every @6bit operand beyond it
+			// stays unresolved until (never, in the reference-only design) the outer
+			// per-call loop reaches that nested call in a separate iteration -- but
+			// the outer loop needs the nested call's own validAtCall=1, which the
+			// SLA invalidates. Recovering those was what the old multi-round
+			// context-write design did the expensive way. Doing it here in one pass
+			// captures the same reachability directly. Indirect / external / unknown
+			// callees still stop the walk -- the callee body isn't provable so we
+			// can't carry dpAtCall past them.
+			if (flow.isCall()) {
+				if (!continuesPastCall(current, functionManager, dpPreserving)) {
+					break;
+				}
+			}
+			else if (flow.isTerminal()) {
 				break;
 			}
 			Address fall = current.getFallThrough();
@@ -556,6 +585,20 @@ public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
 			current = listing.getInstructionAt(fall);
 		}
 		return new WalkResult(range, count);
+	}
+
+	private static boolean continuesPastCall(Instruction call,
+			FunctionManager functionManager, Set<Function> dpPreserving) {
+		FlowType flow = call.getFlowType();
+		if (flow.isComputed()) {
+			return false;
+		}
+		Address[] flows = call.getFlows();
+		if (flows.length != 1) {
+			return false;
+		}
+		Function callee = functionManager.getFunctionAt(flows[0]);
+		return callee != null && dpPreserving.contains(callee);
 	}
 
 	/**
