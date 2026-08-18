@@ -1,0 +1,414 @@
+// SPDX-License-Identifier: Apache-2.0
+// Copyright 2026 Nishanth Samala
+package ghidra.app.plugin.core.analysis;
+
+import java.math.BigInteger;
+import java.util.ArrayList;
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+
+import ghidra.app.services.AbstractAnalyzer;
+import ghidra.app.services.AnalysisPriority;
+import ghidra.app.services.AnalyzerType;
+import ghidra.app.util.importer.MessageLog;
+import ghidra.program.model.address.Address;
+import ghidra.program.model.address.AddressSet;
+import ghidra.program.model.address.AddressSetView;
+import ghidra.program.model.lang.Processor;
+import ghidra.program.model.lang.Register;
+import ghidra.program.model.listing.ContextChangeException;
+import ghidra.program.model.listing.Function;
+import ghidra.program.model.listing.FunctionManager;
+import ghidra.program.model.listing.Instruction;
+import ghidra.program.model.listing.Listing;
+import ghidra.program.model.listing.Program;
+import ghidra.program.model.listing.ProgramContext;
+import ghidra.program.model.symbol.FlowType;
+import ghidra.program.model.symbol.Reference;
+import ghidra.program.model.symbol.ReferenceIterator;
+import ghidra.util.Msg;
+import ghidra.util.exception.CancelledException;
+import ghidra.util.task.TaskMonitor;
+
+/**
+ * Re-propagates the caller's {@code ctx_DP} snapshot into the fall-through of
+ * every direct call whose target is provably DP-preserving.
+ *
+ * <p>Background — the SLEIGH spec snapshots {@code MOVW DP,#imm} /
+ * {@code MOVZ DP,#imm} into a {@code ctx_DP} context register and flows it
+ * forward so downstream {@code @6bit} loc16/loc32 operands resolve to full
+ * absolute addresses. But because TI's C ABI doesn't preserve DP across
+ * calls, every call constructor also invalidates {@code ctx_DP_valid} at
+ * {@code inst_next}. That's the correct default: without knowing the callee,
+ * the caller's DP might be stale by the time we return. On a real F28377D
+ * image the invalidation cost 14 of ~364 resolvable {@code @6bit} operands
+ * (~3.8%), all sitting in a fall-through of a call whose callee happens
+ * never to write DP.
+ *
+ * <p>This analyzer recovers those. Two phases:
+ * <ol>
+ *   <li><b>Fixed-point over the callgraph.</b> A function is DP-preserving
+ *       iff (a) no instruction in its body writes DP (any of {@code MOVW DP},
+ *       {@code MOVZ DP}, {@code POP DP} — detected as any instruction whose
+ *       {@code getResultObjects()} contains the DP register), and (b) every
+ *       call it makes targets a resolved, non-external, DP-preserving
+ *       function. Indirect calls, external / thunk calls, and calls to
+ *       functions with no entry-point body all disqualify the caller. The
+ *       predicate is computed by seeding the "not preserving" set with every
+ *       function containing a DP writer or a non-direct call, then
+ *       propagating not-preserving through reverse callers until stable.</li>
+ *   <li><b>Re-seed at qualifying return sites.</b> For every direct call
+ *       whose target is DP-preserving and whose caller's {@code ctx_DP_valid}
+ *       is 1 at the call address, walk forward from {@code inst_next} via
+ *       fall-through — stopping at the first (i) call, (ii) non-fall-through
+ *       flow (jump / terminal), (iii) DP writer, or (iv) join point (an
+ *       instruction with an incoming flow reference from outside the walked
+ *       range) — and re-seed {@code ctx_DP_valid=1} plus the caller's
+ *       {@code ctx_DP} value across the range. The instructions in the range
+ *       are cleared and re-disassembled so the SLA re-emits any {@code @6bit}
+ *       operands as resolved absolute addresses.</li>
+ * </ol>
+ *
+ * <p>Runs after {@code TMS320C28xFfcReturnAnalyzer} and after auto-analysis
+ * has established the call graph. The re-disassembly is scoped strictly to
+ * the fall-through range — comments and labels attached to those addresses
+ * are preserved by {@code clearCodeUnits(..., false)}; anything the user has
+ * done to reference targets is untouched.
+ */
+public class TMS320C28xDpPropagationAnalyzer extends AbstractAnalyzer {
+
+	private static final String NAME = "TMS320C28x DP Context Propagation";
+	private static final String DESCRIPTION =
+		"Re-seeds the caller's ctx_DP snapshot at the return of every call whose " +
+		"callee provably doesn't write DP, recovering @6bit operand resolution " +
+		"that the SLA's conservative post-call invalidation loses.";
+	private static final String PROCESSOR_NAME = "TMS320C28x";
+	private static final String CTX_DP_NAME = "ctx_DP";
+	private static final String CTX_DP_VALID_NAME = "ctx_DP_valid";
+	private static final String DP_REGISTER_NAME = "DP";
+	// Hard cap on the forward walk to bound work in the presence of unstructured
+	// flow. Real fall-through blocks between calls in TI-compiler output are
+	// short (dozens of insns); 256 is a safety net, not a design target.
+	private static final int MAX_WALK_INSTRUCTIONS = 256;
+
+	public TMS320C28xDpPropagationAnalyzer() {
+		super(NAME, DESCRIPTION, AnalyzerType.INSTRUCTION_ANALYZER);
+		// FUNCTION_ANALYSIS.after() puts us after functions have been created and
+		// their bodies established — we need Function.getBody() to reason about
+		// per-function DP writes. The FFC return analyzer runs at DISASSEMBLY.after()
+		// and its re-disassembly finishes before we start, so we see a stable graph.
+		setPriority(AnalysisPriority.FUNCTION_ANALYSIS.after());
+		setDefaultEnablement(true);
+	}
+
+	@Override
+	public boolean canAnalyze(Program program) {
+		if (!program.getLanguage().getProcessor().equals(
+				Processor.findOrPossiblyCreateProcessor(PROCESSOR_NAME))) {
+			return false;
+		}
+		// Guard against being loaded on a language build that predates the DP
+		// context work — canAnalyze runs before added() so this is the right
+		// place to no-op cleanly instead of crashing at first getRegister call.
+		ProgramContext context = program.getProgramContext();
+		return context.getRegister(CTX_DP_NAME) != null &&
+			context.getRegister(CTX_DP_VALID_NAME) != null;
+	}
+
+	@Override
+	public boolean added(Program program, AddressSetView set, TaskMonitor monitor, MessageLog log)
+			throws CancelledException {
+		ProgramContext context = program.getProgramContext();
+		Register ctxDp = context.getRegister(CTX_DP_NAME);
+		Register ctxDpValid = context.getRegister(CTX_DP_VALID_NAME);
+		Register dpRegister = program.getLanguage().getRegister(DP_REGISTER_NAME);
+		if (ctxDp == null || ctxDpValid == null || dpRegister == null) {
+			log.appendMsg(NAME, "missing context or DP register — no-op");
+			return false;
+		}
+
+		FunctionManager functionManager = program.getFunctionManager();
+		Set<Function> dpPreserving = computeDpPreservingFunctions(program, dpRegister, monitor);
+		Msg.info(this, "DP-preserving functions: " + dpPreserving.size() + " / " +
+			functionManager.getFunctionCount());
+
+		AddressSet toRedisassemble = new AddressSet();
+		int propagatedSites = 0;
+		int propagatedInstructions = 0;
+
+		// Iterate every direct call in the program; for each whose callee is DP-
+		// preserving and whose caller's ctx_DP_valid at the call is 1, re-seed the
+		// fall-through range. Working from calls (rather than from functions) keeps
+		// this O(calls) and side-steps having to enumerate returns from callees.
+		Listing listing = program.getListing();
+		Iterator<Instruction> instructions = listing.getInstructions(true);
+		while (instructions.hasNext()) {
+			monitor.checkCancelled();
+			Instruction call = instructions.next();
+			FlowType flow = call.getFlowType();
+			if (!flow.isCall() || flow.isComputed()) {
+				continue;
+			}
+			Address[] flows = call.getFlows();
+			if (flows.length != 1) {
+				continue;
+			}
+			Function callee = functionManager.getFunctionAt(flows[0]);
+			if (callee == null || !dpPreserving.contains(callee)) {
+				continue;
+			}
+
+			BigInteger validAtCall = context.getValue(ctxDpValid, call.getMinAddress(), false);
+			if (validAtCall == null || !BigInteger.ONE.equals(validAtCall)) {
+				continue;
+			}
+			BigInteger dpAtCall = context.getValue(ctxDp, call.getMinAddress(), false);
+			if (dpAtCall == null) {
+				continue;
+			}
+
+			Address instNext = call.getFallThrough();
+			if (instNext == null) {
+				continue;
+			}
+
+			WalkResult walk = walkFallThrough(program, instNext, dpRegister, monitor);
+			if (walk.instructionCount == 0) {
+				continue;
+			}
+			// Only re-seed if the SLA has already invalidated at inst_next — otherwise
+			// we'd be doing redundant work and needlessly re-disassembling. The
+			// invalidation is what the analyzer exists to reverse, so if it's not
+			// present, nothing to do.
+			BigInteger validAtNext = context.getValue(ctxDpValid, instNext, false);
+			if (validAtNext != null && BigInteger.ONE.equals(validAtNext)) {
+				BigInteger dpAtNext = context.getValue(ctxDp, instNext, false);
+				if (dpAtCall.equals(dpAtNext)) {
+					continue;
+				}
+			}
+
+			try {
+				listing.clearCodeUnits(walk.range.getMinAddress(),
+					walk.range.getMaxAddress(), /*clearContext*/ false);
+				context.setValue(ctxDpValid, walk.range.getMinAddress(),
+					walk.range.getMaxAddress(), BigInteger.ONE);
+				context.setValue(ctxDp, walk.range.getMinAddress(),
+					walk.range.getMaxAddress(), dpAtCall);
+				toRedisassemble.add(walk.range);
+				propagatedSites++;
+				propagatedInstructions += walk.instructionCount;
+			}
+			catch (ContextChangeException e) {
+				log.appendException(e);
+			}
+		}
+
+		if (!toRedisassemble.isEmpty()) {
+			AutoAnalysisManager.getAnalysisManager(program)
+				.disassemble(toRedisassemble, AnalysisPriority.DISASSEMBLY);
+			Msg.info(this, "re-seeded ctx_DP across " + propagatedSites +
+				" post-call site(s), " + propagatedInstructions + " instruction(s)");
+		}
+		return true;
+	}
+
+	// --- phase 1: DP-preserving predicate over the callgraph ---------------------
+
+	private static Set<Function> computeDpPreservingFunctions(Program program,
+			Register dpRegister, TaskMonitor monitor) throws CancelledException {
+		FunctionManager functionManager = program.getFunctionManager();
+		// Seed "unsafe" (= not DP-preserving) with any function that writes DP
+		// directly or contains a call we can't reason about (indirect/external).
+		// Also build the reverse-call map for propagation.
+		Set<Function> unsafe = new HashSet<>();
+		Map<Function, Set<Function>> callers = new HashMap<>();
+		Iterator<Function> functions = functionManager.getFunctions(true);
+		while (functions.hasNext()) {
+			monitor.checkCancelled();
+			Function fn = functions.next();
+			if (fn.isExternal()) {
+				unsafe.add(fn);
+				continue;
+			}
+			if (fn.isThunk()) {
+				// A thunk to an unresolved external is unsafe; a thunk to a resolved
+				// function will be tied to that target's safety by the propagation below.
+				Function thunked = fn.getThunkedFunction(true);
+				if (thunked == null || thunked.isExternal()) {
+					unsafe.add(fn);
+					continue;
+				}
+				// Treat the thunk as calling its target so a change in the target's
+				// state flows back to the thunk.
+				callers.computeIfAbsent(thunked, k -> new HashSet<>()).add(fn);
+				continue;
+			}
+
+			boolean fnUnsafe = false;
+			AddressSetView body = fn.getBody();
+			if (body != null && !body.isEmpty()) {
+				Iterator<Instruction> insns = program.getListing().getInstructions(body, true);
+				while (insns.hasNext()) {
+					monitor.checkCancelled();
+					Instruction insn = insns.next();
+					if (writesRegister(insn, dpRegister)) {
+						fnUnsafe = true;
+						break;
+					}
+					FlowType flow = insn.getFlowType();
+					if (!flow.isCall()) {
+						continue;
+					}
+					if (flow.isComputed()) {
+						// Indirect call — target unknown, must assume it writes DP.
+						fnUnsafe = true;
+						break;
+					}
+					Address[] flows = insn.getFlows();
+					if (flows.length != 1) {
+						fnUnsafe = true;
+						break;
+					}
+					Function target = functionManager.getFunctionAt(flows[0]);
+					if (target == null) {
+						// Direct call to an address with no function object — the callee
+						// body is unknown to us, so we can't prove it doesn't write DP.
+						fnUnsafe = true;
+						break;
+					}
+					// Record the caller edge so propagation can revisit `fn` if the
+					// target later turns out to be unsafe.
+					callers.computeIfAbsent(target, k -> new HashSet<>()).add(fn);
+				}
+			}
+			else {
+				// No body means we can't inspect anything — treat as unsafe rather
+				// than optimistically preserving.
+				fnUnsafe = true;
+			}
+
+			if (fnUnsafe) {
+				unsafe.add(fn);
+			}
+		}
+
+		// Workset propagation: any function that calls an unsafe target becomes
+		// unsafe, in turn. Converges quickly because each function is added to
+		// `unsafe` at most once.
+		Deque<Function> worklist = new ArrayDeque<>(unsafe);
+		while (!worklist.isEmpty()) {
+			monitor.checkCancelled();
+			Function unsafeFn = worklist.pop();
+			Set<Function> reverseCallers = callers.get(unsafeFn);
+			if (reverseCallers == null) {
+				continue;
+			}
+			for (Function caller : reverseCallers) {
+				if (unsafe.add(caller)) {
+					worklist.push(caller);
+				}
+			}
+		}
+
+		Set<Function> preserving = new HashSet<>();
+		Iterator<Function> allFunctions = functionManager.getFunctions(true);
+		while (allFunctions.hasNext()) {
+			monitor.checkCancelled();
+			Function fn = allFunctions.next();
+			if (!unsafe.contains(fn)) {
+				preserving.add(fn);
+			}
+		}
+		return preserving;
+	}
+
+	// --- phase 2: forward walk to compute the propagation range ------------------
+
+	private static final class WalkResult {
+		final AddressSet range;
+		final int instructionCount;
+
+		WalkResult(AddressSet range, int instructionCount) {
+			this.range = range;
+			this.instructionCount = instructionCount;
+		}
+	}
+
+	private static WalkResult walkFallThrough(Program program, Address start,
+			Register dpRegister, TaskMonitor monitor) throws CancelledException {
+		Listing listing = program.getListing();
+		AddressSet range = new AddressSet();
+		Set<Address> visited = new HashSet<>();
+		Instruction current = listing.getInstructionAt(start);
+		int count = 0;
+		while (current != null && count < MAX_WALK_INSTRUCTIONS) {
+			monitor.checkCancelled();
+			Address addr = current.getMinAddress();
+			if (!visited.add(addr)) {
+				break;
+			}
+			if (count > 0 && hasIncomingFlowFromOutside(program, addr, visited)) {
+				// Join point: some other predecessor reaches here without going
+				// through our call site, so its DP snapshot may differ. Stopping
+				// keeps the propagation strictly correct.
+				break;
+			}
+			range.add(addr, current.getMaxAddress());
+			count++;
+
+			// Stop conditions past this instruction: we don't want to include an
+			// instruction that itself would break the propagation invariant.
+			if (writesRegister(current, dpRegister)) {
+				// This instruction writes DP, so ctx_DP downstream would change
+				// anyway (via the SLA's own snapshot). Include this insn in the
+				// range so it re-disassembles with our re-seeded context, but stop.
+				break;
+			}
+			FlowType flow = current.getFlowType();
+			if (flow.isCall() || flow.isJump() || flow.isTerminal() || !flow.isFallthrough()) {
+				break;
+			}
+			Address fall = current.getFallThrough();
+			if (fall == null) {
+				break;
+			}
+			current = listing.getInstructionAt(fall);
+		}
+		return new WalkResult(range, count);
+	}
+
+	private static boolean hasIncomingFlowFromOutside(Program program, Address addr,
+			Set<Address> insideWalk) {
+		ReferenceIterator refs = program.getReferenceManager().getReferencesTo(addr);
+		while (refs.hasNext()) {
+			Reference ref = refs.next();
+			if (!ref.getReferenceType().isFlow()) {
+				continue;
+			}
+			if (insideWalk.contains(ref.getFromAddress())) {
+				continue;
+			}
+			return true;
+		}
+		return false;
+	}
+
+	// --- helpers -----------------------------------------------------------------
+
+	private static boolean writesRegister(Instruction instruction, Register expected) {
+		for (Object object : instruction.getResultObjects()) {
+			if (object instanceof Register result &&
+				(expected.contains(result) || result.contains(expected))) {
+				return true;
+			}
+		}
+		return false;
+	}
+}
