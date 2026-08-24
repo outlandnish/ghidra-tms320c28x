@@ -165,6 +165,34 @@ public class SeedFunctions extends GhidraScript {
             if (run > 0) prologRun.put(base + wi, run);
         }
 
+        // Seed only the START of a prologue run. prologueRun() counts consecutive pushes
+        // from wherever it is asked, so EVERY address inside a run scores > 0: a 3-push
+        // prologue scores 3, 2, 1 on successive words. With the default minRun of 2 that
+        // admits both the true entry and the word after it, and which of the two ends up
+        // owning the body is arbitrary. When the interior one wins, every caller -- which
+        // of course targets the true entry -- has its xref land outside that function, and
+        // a perfectly ordinary function reads as permanently orphaned. (Seen on an
+        // F28377D application image: the true entry got a 1-word stub while the word after
+        // it took the whole 306-word body, and that function's one caller stayed invisible
+        // until the boundary was corrected.)
+        //
+        // The offcut guard in the creation loop cannot catch this: it rejects seeds that
+        // fall inside a decoded INSTRUCTION, and every word of a push run is its own
+        // 1-word instruction, so each looks like a legitimate boundary.
+        //
+        // A call target is direct evidence of an entry, so it is never suppressed here.
+        // Compare against a snapshot: removing a+1 must not change the verdict for a+2.
+        Map<Long,Integer> runSnapshot = new HashMap<>(prologRun);
+        int interiorDropped = 0;
+        for (java.util.Iterator<Long> it = prologRun.keySet().iterator(); it.hasNext(); ) {
+            long a = it.next();
+            Integer prev = runSnapshot.get(a - 1);
+            if (prev != null && prev > runSnapshot.get(a) && !calledTargets.contains(a)) {
+                it.remove();
+                interiorDropped++;
+            }
+        }
+
         // --- decide the seed set ------------------------------------------------
         Set<Long> raw = new TreeSet<>();
         raw.addAll(calledTargets);                          // always consider call targets
@@ -354,7 +382,8 @@ public class SeedFunctions extends GhidraScript {
         println(String.format("image: base=0x%x  words=%d", base, nwords));
         println(String.format("gap-scan (signal C): seeded %d leaf functions, rejected %d", gapSeeded, gapRejected));
         println(String.format("call/branch targets in-image: %d", calledTargets.size()));
-        println(String.format("prologue addresses (run>0): %d", prologRun.size()));
+        println(String.format("prologue addresses (run-starts): %d  (dropped %d interior "
+            + "run addresses -- see the off-by-one note at section B)", prologRun.size(), interiorDropped));
         println(String.format("candidates: %d  ->  rejected as data (entropy/non-code): %d  ->  seeds: %d",
             raw.size(), rejectedData, seeds.size()));
         println(String.format("created %d, already existed %d, failed %d, offcut-rejected %d ; call-site refs added %d",
