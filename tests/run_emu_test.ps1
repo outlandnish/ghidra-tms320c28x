@@ -47,6 +47,7 @@ Copy-Item "$Module\ghidra_scripts\EmuFlagTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuFpuCondTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuRptTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuAccPTest.java" "$ws\scripts\" -Force
+Copy-Item "$Module\ghidra_scripts\EmuCallTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\tests\fpu_flags.bin" "$ws\" -Force
 Copy-Item "$Module\tests\fpu_cond.bin" "$ws\" -Force
 
@@ -70,6 +71,7 @@ Invoke-Suite "EmuFlagTest" "fpu_flags.bin"
 Invoke-Suite "EmuFpuCondTest" "fpu_cond.bin"
 Invoke-Suite "EmuRptTest" "fpu_flags.bin"  # any import target works; test is host-driven
 Invoke-Suite "EmuAccPTest" "fpu_flags.bin"  # host-driven too
+Invoke-Suite "EmuCallTest" "fpu_flags.bin" # RPC nested-call chain (state modifier, not SLEIGH)
 
 if ($fail -eq 0) { Write-Host "emulation semantics: OK" -ForegroundColor Green }
 else { exit 1 }

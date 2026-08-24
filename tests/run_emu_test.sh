@@ -49,6 +49,7 @@ cp "$module/ghidra_scripts/EmuFlagTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuFpuCondTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuRptTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuAccPTest.java" "$tmp/scripts/"
+cp "$module/ghidra_scripts/EmuCallTest.java" "$tmp/scripts/"
 cp "$module/tests/fpu_flags.bin" "$module/tests/fpu_cond.bin" "$tmp/"
 
 fail=0
@@ -73,6 +74,7 @@ run_suite EmuFlagTest fpu_flags.bin
 run_suite EmuFpuCondTest fpu_cond.bin
 run_suite EmuRptTest fpu_flags.bin  # host-driven test, any C28x program will do as import target
 run_suite EmuAccPTest fpu_flags.bin  # host-driven too
+run_suite EmuCallTest fpu_flags.bin # RPC nested-call chain (state modifier, not SLEIGH)
 
 if [ "$fail" -eq 0 ]; then
   echo "emulation semantics: OK"

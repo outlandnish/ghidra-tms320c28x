@@ -67,6 +67,42 @@ The `EmuRptTest.java` regression test (`tests/run_emu_test.{sh,ps1}`) exercises
 both wrappers: `RPT #15 || SUBCU` (100/7 divide → ACC=0x0002000e in 17 steps)
 and `RPTB #0, #4 || ADD ACC,#1` (5 iterations → ACC=5 in 6 steps).
 
+## The RPC nested-call chain lives in the modifier, not SLEIGH
+
+`LCR` pushes the **caller's** RPC and loads RPC with its own return address; `LRETR`
+returns through RPC and pops the saved one back. That chain is what makes nested calls
+work, and it is emulated in `TMS320C28xEmulateInstructionStateModifier`
+(`rpcChainCallback`) rather than in the `LCR`/`LRETR` p-code.
+
+It was open-coded in SLEIGH once, and it wrecked decompilation. x86 gets away with
+`push(tmp); call ...` because `tmp` is the **constant** `inst_next`. The C28x push sources
+a **live-in register**, so the decompiler could not prove the store missed the caller's
+own frame. The p-code then leaked into the output verbatim -- the push, the SP bump and
+the RPC load each appearing as a statement:
+
+```c
+uVar2 = 0x1234;             /* RPC = inst_next  -- a return address, as data */
+puVar1 = &stack0x0000000a;  /* the frame, now a roaming pointer */
+*puVar1 = uVar2;            /* the push */
+puVar1 = puVar1 + 1;        /* the SP bump */
+callee();                   /* result dropped ... */
+g_field = *(undefined2 *)((long)puVar1 + -1);   /* ... then re-read off the frame */
+```
+
+With the chain moved out, the same code recovers the call result directly:
+
+```c
+iVar1 = callee();
+g_field = iVar1;
+```
+
+The cspec already declares `<returnaddress><register name="RPC"/></returnaddress>`, so the
+decompiler needs none of it — only the emulator does. `EmuCallTest.java` guards the
+move. It nests **two** deep on purpose: with one level a missing pop is invisible, because
+the single `LRETR` still finds the right address in RPC. Two levels make the inner call
+clobber RPC, so a broken chain spins on the outer return instead of terminating — the test
+asserts PC, ACC, SP *and* RPC, and trips its step cap rather than returning a wrong answer.
+
 ### Why RPT still needs the modifier
 
 The wrappers are armed by `globalset`, and **Ghidra's emulator applies a

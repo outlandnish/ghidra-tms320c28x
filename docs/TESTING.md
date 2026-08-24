@@ -92,6 +92,10 @@ development.
 
 Run `run_disasm_test` first -- it is what compiles and installs the language.
 
+`EmuCallTest` covers the RPC nested-call chain, which moved out of SLEIGH into the state
+modifier (see [EMULATION.md](EMULATION.md)); nothing in the decode or ABI suites can see
+it. It nests two calls deep, because one level passes even with the chain removed.
+
 A second suite, `EmuFpuCondTest`, covers the `TMU_COND_OPERAND` / `FPU_MINMAX_FLUSH`
 conditioning intrinsics. Those are pcodeops, so their behaviour lives in the compiled
 `TMS320C28xEmulateInstructionStateModifier` and nothing else -- not the decompiler, not
