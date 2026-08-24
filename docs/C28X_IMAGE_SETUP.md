@@ -15,7 +15,7 @@ Every step is a script in the **TMS320C28x** Script-Manager category.
 | 4 | `MaterializeSections.java` or `MaterializeCopyTable.java` | Copy the flash **load images** into their RAM **run** addresses so the RAM-resident code/data becomes real. Which one depends on the startup copy mechanism. |
 | 5 | `FinalizeRamfuncs.java` | Post-analysis cleanup: rebuild bodies, clear stale flow bookmarks, repair conflicts. Run it **after** analysis has settled. |
 | 6 | `RetypeWideMemory.java` | Retype 32/64-bit memory operands to kill `CONCAT22`/`CONCAT44` in the decompiler. |
-| 7 | **Residual-mark cleanup + verify** (inline) | Sweep leftover `Bad Instruction` marks and confirm against a known-good baseline. |
+| 7 | `SweepResidualMarks.java` + verify | Classify leftover `Bad Instruction` marks, delete only the provably cosmetic ones, and confirm against a known-good baseline. |
 
 ### The byte-swap
 
@@ -205,10 +205,26 @@ have run first (which a script on the Swing/EDT thread cannot force):
 Unchanged; run last to clean up the decompiler's 32/64-bit reads. See its
 script header.
 
-## Step 7 — Residual-mark cleanup + verification (inline)
+## Step 7 — Residual-mark cleanup + verification
 
 After the pipeline a handful of `Error`/`Bad Instruction` bookmarks usually
-remain. There is no dedicated script yet — this is a short inline sweep.
+remain. `SweepResidualMarks.java` performs the classification below and deletes only the
+cosmetic class. It is a **dry run by default** — pass `apply` to actually delete. Anything
+it cannot prove cosmetic it keeps and prints, so real gaps stay visible.
+
+Two rules matter more than they look:
+
+- A mark **inside a function body** is never cosmetic, even when the code unit under it is
+  *undefined* rather than an instruction. That pairing is the signature of a missing
+  opcode: `SeedFunctions` bound a function whose first word would not decode. It is also
+  exactly what a false seed landing on an **operand word** looks like — so check
+  `run_fw_parity` against TI before concluding it is a real ISA gap. (Observed on an
+  F28377D application image: a seed at the second word of a 2-word `MOV T,#imm16` produced
+  a 1-word stub function and an unresolvable-constructor mark; the genuine ISA gap in that
+  same range was a different address entirely.)
+- `Disassembly not permitted within uninitialized memory block` names no target address,
+  so it needs its own case; it means an un-materialized section — back to step 4/4b.
+
 **Classify by the code unit under the mark:**
 
 - **Mark on a NON-instruction (data/undefined) unit** → a phantom decode on a
