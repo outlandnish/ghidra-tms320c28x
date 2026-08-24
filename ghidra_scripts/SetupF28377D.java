@@ -572,7 +572,7 @@ public class SetupF28377D extends GhidraScript {
         }
         println("mapped " + rn + " RAM/ROM regions");
 
-        // 0c. Fill flash + OTP the imported image doesn't cover. A DIR image based at 0x82000 omits
+        // 0c. Fill flash + OTP the imported image doesn't cover. An image based at 0x82000 omits
         // sector S0 (0x80000-0x81FFF) and any tail past its last word; the CRC table at 0x80010 and S0
         // code/data are then referenced but flagged "non-existing memory". Map the uncovered parts of
         // the CPU flash bank (0x80000-0xBFFFF) + the OTP regions as UNINITIALIZED read-only (+execute
