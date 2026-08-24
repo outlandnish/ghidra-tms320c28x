@@ -87,7 +87,13 @@ separate it from the embedded data tables. Run them in this order after **import
    (LCR/LC/FFC, high-confidence — something calls them) plus **prologue patterns**
    (SP-push/frame-setup runs). It also adds call-site→target references (so the call graph
    is visible) and runs an **entropy/code-likeness filter** so prologue matches that land in
-   data don't become bogus functions. Reads only initialized memory. Tune via `-Dc28x.seed.*`
+   data don't become bogus functions. Two filters exist because the two signals fail
+   differently: a prologue match goes wrong by landing *in a data table*, which entropy
+   catches, while a call match goes wrong by inventing a target *from two adjacent words of a
+   numeric table*, which it does not — a table of small numbers is low-entropy and its high
+   bytes are all legitimate opcodes. So call targets get a **boundary gate** instead:
+   backward linear-sweep resynchronization, which refuses a "target" that turns out to sit in
+   the middle of a real instruction. Reads only initialized memory. Tune via `-Dc28x.seed.*`
    (see the script header).
 2. **`MarkJumpTables.java`** — switch/case **pointer tables** (word-pairs forming in-image
    code addresses) get mis-decoded as bogus instructions; this marks them as `pointer` data

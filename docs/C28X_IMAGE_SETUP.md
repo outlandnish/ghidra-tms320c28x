@@ -10,7 +10,7 @@ Every step is a script in the **TMS320C28x** Script-Manager category.
 |---|------|--------------|
 | 0 | **Import + set base** | Load the raw `.bin` as `TMS320C28x:LE:32:default` (F28377D) or `…:f2812`. Set the image base to the flash word address the dump starts at. See the byte-swap note. |
 | 1 | `SetupF28377D.java` (or `SetupF2812.java`) | Map the device memory — peripheral MMIO frames **and the on-chip RAM regions**, split into their datasheet banks (`M0`/`M1`, `LS0`…`LS5`, `D0`/`D1`, `GS0-15`, CLA/CPU MSGRAMs) with correct perms (SARAM → **RWX** since ramfuncs run there; ROM → RX; message RAM → RW). Also maps the DCAN `CANA`/`CANB` message RAM (`0x49000`/`0x4b000`) and (CPU1) the uPP message RAM. Mapping RAM is what lets calls into it resolve later. Pass `CPU1` or `CPU2` as the script arg — CPU1 has device-unique peripherals (UPP/XBAR/USBA/DEV_CFG) that only get labeled when the arg matches. |
-| 2 | `SeedFunctions.java` | Recover functions from the bytes (call targets + prologues) and add call-site→target refs. |
+| 2 | `SeedFunctions.java` | Recover functions from the bytes (call targets + prologues) and add call-site→target refs. Call targets pass a **boundary gate** so a coincidental word pair inside a numeric table cannot invent a target in the middle of a real instruction. |
 | 3 | `MarkJumpTables.java`, `MarkDataTables.java` | Mark switch/pointer tables and float-constant pools as data so they stop decoding as garbage. |
 | 4 | `MaterializeSections.java` or `MaterializeCopyTable.java` | Copy the flash **load images** into their RAM **run** addresses so the RAM-resident code/data becomes real. Which one depends on the startup copy mechanism. |
 | 5 | `FinalizeRamfuncs.java` | Post-analysis cleanup: rebuild bodies, clear stale flow bookmarks, repair conflicts. Run it **after** analysis has settled. |
@@ -216,12 +216,15 @@ Two rules matter more than they look:
 
 - A mark **inside a function body** is never cosmetic, even when the code unit under it is
   *undefined* rather than an instruction. That pairing is the signature of a missing
-  opcode: `SeedFunctions` bound a function whose first word would not decode. It is also
-  exactly what a false seed landing on an **operand word** looks like — so check
-  `run_fw_parity` against TI before concluding it is a real ISA gap. (Observed on an
-  F28377D application image: a seed at the second word of a 2-word `MOV T,#imm16` produced
-  a 1-word stub function and an unresolvable-constructor mark; the genuine ISA gap in that
-  same range was a different address entirely.)
+  opcode: `SeedFunctions` bound a function whose first word would not decode. It used to be
+  equally often a false seed landing on an **operand word** — `SeedFunctions`' boundary gate
+  now refuses those at the source, but an image seeded by an older build (or with
+  `-Dc28x.seed.noBoundaryGate`) still carries them, and they are indistinguishable from an
+  ISA gap by inspection. Either way, check `run_fw_parity` against TI before concluding a
+  mark is a real ISA gap. (Observed on an F28377D application image: a seed at the second
+  word of a 2-word `MOV T,#imm16` produced a 1-word stub function and an
+  unresolvable-constructor mark; the genuine ISA gap in that same range was a different
+  address entirely.)
 - `Disassembly not permitted within uninitialized memory block` names no target address,
   so it needs its own case; it means an un-materialized section — back to step 4/4b.
 
