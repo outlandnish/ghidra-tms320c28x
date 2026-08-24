@@ -18,6 +18,7 @@ import ghidra.pcode.error.LowlevelError;
 import ghidra.pcode.memstate.MemoryState;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSpace;
+import ghidra.program.model.lang.RegisterValue;
 import ghidra.program.model.pcode.PcodeOp;
 import ghidra.program.model.pcode.Varnode;
 
@@ -97,6 +98,18 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 	private long rptWord;      // word address of the instruction being repeated
 	private long rptRemaining; // re-executions still owed after the natural first pass
 
+	// Single-word return opcodes that restore RPC from the hardware nested-call stack.
+	private static final int OP_LRETR = 0x0006;
+	private static final int OP_XRET = 0x56FF;
+	// Single-word indirect calls that use RPC.
+	private static final int OP_LC_XAR7 = 0x7604;
+	private static final int OP_XCALL_AL = 0x5634;
+
+	// RPC as it stood *before* the instruction that just executed. A call overwrites RPC
+	// with its own return address, so by the time postExecuteCallback runs the caller's
+	// RPC -- the value the hardware pushes -- is only available from this snapshot.
+	private long prevRpc;
+
 	public TMS320C28xEmulateInstructionStateModifier(Emulate emulate) {
 		super(emulate);
 		// Register the custom compute pcodeops. Guard each so a name that a future .sla no longer
@@ -121,6 +134,83 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 	}
 
 	/**
+	 * Seed {@link #prevRpc} so the first call of a run pushes the real inbound RPC rather
+	 * than zero.
+	 */
+	@Override
+	public void initialExecuteCallback(Emulate emu, Address currentAddress,
+			RegisterValue contextRegisterValue) throws LowlevelError {
+		prevRpc = emu.getMemoryState().getValue("RPC") & 0xFFFFFFFFL;
+	}
+
+	@Override
+	public void postExecuteCallback(Emulate emu, Address lastExecuteAddress,
+			PcodeOp[] lastExecutePcode, int lastPcodeIndex, Address currentAddress)
+			throws LowlevelError {
+
+		MemoryState mem = emu.getMemoryState();
+		AddressSpace space = lastExecuteAddress.getAddressSpace();
+		long lastByteOff = lastExecuteAddress.getOffset();
+		int w0 = (int) (mem.getValue(space, lastByteOff, 2) & 0xFFFF);
+
+		try {
+			rpcChainCallback(mem, space, w0);
+			rptCallback(emu, mem, space, lastByteOff, w0, currentAddress);
+		}
+		finally {
+			prevRpc = mem.getValue("RPC") & 0xFFFFFFFFL;
+		}
+	}
+
+	/**
+	 * Maintain the RPC nested-call chain that the hardware keeps on the stack: a call pushes
+	 * the caller's RPC and {@code LRETR}/{@code XRET} pops it back.
+	 *
+	 * <p>This used to live in SLEIGH, but pushing RPC there wrecked decompilation. Unlike
+	 * x86's {@code CALL}, which pushes the constant {@code inst_next}, the C28x push sources a
+	 * live-in register, so the decompiler could not prove the store missed the caller's own
+	 * frame: every local collapsed into an offset off a roaming frame pointer and each
+	 * return address surfaced as an ordinary value. The cspec already declares RPC via
+	 * {@code <returnaddress>}, so the decompiler needs none of this -- only the emulator does.
+	 *
+	 * <p>SP holds a word address; {@link MemoryState} offsets are byte offsets, hence the
+	 * {@code << 1}. The saved RPC occupies 4 bytes (2 words), matching the old SLEIGH store.
+	 */
+	private void rpcChainCallback(MemoryState mem, AddressSpace space, int w0)
+			throws LowlevelError {
+		if (isRpcCall(w0)) {
+			long sp = mem.getValue("SP") & 0xFFFFFFFFL;
+			mem.setValue(space, sp << 1, 4, prevRpc);
+			mem.setValue("SP", sp + 2);
+		}
+		else if (w0 == OP_LRETR || w0 == OP_XRET) {
+			long sp = (mem.getValue("SP") & 0xFFFFFFFFL) - 2;
+			mem.setValue("SP", sp);
+			mem.setValue("RPC", mem.getValue(space, sp << 1, 4));
+		}
+	}
+
+	/**
+	 * True for the calls that route their return address through RPC. Field extents mirror
+	 * the SLEIGH tokens: {@code op_hi8}=(8,15), {@code op_lo_76}=(6,7), {@code op_lo_35}=(3,7).
+	 * FFC is excluded -- it returns via XAR7 and never touches the RPC chain.
+	 */
+	private static boolean isRpcCall(int w0) {
+		int ophi8 = w0 >>> 8;
+		int lo76 = (w0 >>> 6) & 0x3;
+		if (ophi8 == 0x76 && lo76 == 0x1) {                     // LCR #22bit
+			return true;
+		}
+		if (ophi8 == 0x3E && ((w0 >>> 3) & 0x1F) == 0x0C) {     // LCR *XARn
+			return true;
+		}
+		if (ophi8 == 0x00 && lo76 == 0x2) {                     // LC #22bit
+			return true;
+		}
+		return w0 == OP_LC_XAR7 || w0 == OP_XCALL_AL;           // LC *XAR7 / XCALL *AL
+	}
+
+	/**
 	 * Drive the RPT single-instruction repeat under emulation, which the SLEIGH wrapper
 	 * cannot do (see the class comment: {@code globalset(inst_next, ...)} lands one
 	 * instruction late in the emulator). After each instruction, arm on an RPT opcode and
@@ -131,15 +221,9 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 	 * <p>Word addresses throughout: this is a wordsize=2 space, so {@code Address.getOffset()}
 	 * is a byte offset (word&nbsp;&times;&nbsp;2).
 	 */
-	@Override
-	public void postExecuteCallback(Emulate emu, Address lastExecuteAddress,
-			PcodeOp[] lastExecutePcode, int lastPcodeIndex, Address currentAddress)
-			throws LowlevelError {
+	private void rptCallback(Emulate emu, MemoryState mem, AddressSpace space,
+			long lastByteOff, int w0, Address currentAddress) throws LowlevelError {
 
-		MemoryState mem = emu.getMemoryState();
-		AddressSpace space = lastExecuteAddress.getAddressSpace();
-		long lastByteOff = lastExecuteAddress.getOffset();
-		int w0 = (int) (mem.getValue(space, lastByteOff, 2) & 0xFFFF);
 		int ophi8 = w0 >>> 8;
 
 		// --- arm a single-instruction RPT ----------------------------------------

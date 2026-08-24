@@ -141,10 +141,12 @@ ffcdest: reloc  is op_hi8=0x00 & op_lo_76=0b11 & loc_off6 ; imm16  [ reloc = (lo
 # field is a 0 reloc placeholder, which made it look like a self-call.)
 :LCR lcrdest  is rpt_phase=1 & lcrdest
         [ ctx_DP_valid = 0; globalset(inst_next, ctx_DP_valid); ] {
-    # hardware pushes the OLD RPC (nested-call save) then loads RPC with the return
-    # addr; LRETR pops it back. Needed for EMULATION of nested calls; net-neutral for
-    # decompilation (push+pop cancel across the call). inst_next>>1 = word return addr.
-    local sp2:4 = SP; *[ram]:4 sp2 = RPC; SP = SP + 2;
+    # RPC nested-call save/restore is NOT modeled here on purpose. Pushing the OLD RPC
+    # (a live-in register, unlike x86's constant inst_next) made the decompiler treat the
+    # store as an unprovable write into the caller's own frame, so every local degraded to
+    # an offset off a roaming frame pointer and return addresses surfaced as data values.
+    # The chain is emulated in TMS320C28xEmulateInstructionStateModifier instead.
+    # inst_next>>1 = word return address (wordsize=2 space).
     RPC = inst_next >> 1;
     call lcrdest;
 }
@@ -152,8 +154,7 @@ ffcdest: reloc  is op_hi8=0x00 & op_lo_76=0b11 & loc_off6 ; imm16  [ reloc = (lo
 # LCR *XARn           0011 1110 0110 0RRR  (indirect call using RPC)
 :LCR "*"loc_areg  is rpt_phase=1 & op_hi8=0x3E & op_lo_35=0b01100 & loc_areg
         [ ctx_DP_valid = 0; globalset(inst_next, ctx_DP_valid); ] {
-    local sp2:4 = SP; *[ram]:4 sp2 = RPC; SP = SP + 2;
-    RPC = inst_next >> 1;
+    RPC = inst_next >> 1;   # nested-call chain: see the LCR #22bit note above.
     call [loc_areg];
 }
 
@@ -167,10 +168,8 @@ ffcdest: reloc  is op_hi8=0x00 & op_lo_76=0b11 & loc_off6 ; imm16  [ reloc = (lo
 
 # LRETR               0000 0000 0000 0110   (long return using RPC)
 :LRETR  is rpt_phase=1 & op16=0x0006 {
-    # return to RPC, then pop the saved caller RPC back off the stack (mirror of LCR).
-    local ret:4 = RPC;
-    SP = SP - 2; local sp2:4 = SP; RPC = *[ram]:4 sp2;
-    return [ret];
+    # Mirror of LCR: the caller-RPC pop is emulated in the state modifier, not here.
+    return [RPC];
 }
 
 # LRET                0111 0110 0001 0100

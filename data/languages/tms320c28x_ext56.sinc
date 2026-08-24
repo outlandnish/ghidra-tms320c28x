@@ -277,8 +277,8 @@
 :XB "*AL"              is rpt_phase=1 & op16=0x5614 { local tgt:4 = zext(AL); goto [tgt]; }
 :XCALL "*AL"           is rpt_phase=1 & op16=0x5634
         [ ctx_DP_valid = 0; globalset(inst_next, ctx_DP_valid); ]
-        { local tgt:4 = zext(AL); local sp2:4 = SP; *[ram]:4 sp2 = RPC; SP = SP + 2; RPC = inst_next >> 1; call [tgt]; }
-:XRET                  is rpt_phase=1 & op16=0x56ff { local ret:4 = RPC; SP = SP - 2; local sp2:4 = SP; RPC = *[ram]:4 sp2; return [ret]; }
+        { local tgt:4 = zext(AL); RPC = inst_next >> 1; call [tgt]; }
+:XRET                  is rpt_phase=1 & op16=0x56ff { return [RPC]; }
 
 # =============================================================================
 # 64-bit ACC:P shifts by #1..16 (single word; SHFT in low nibble). ACC = high 32,
