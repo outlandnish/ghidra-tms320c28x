@@ -11,7 +11,25 @@
 //
 //   (A) CALL/BRANCH TARGETS — HIGH confidence. LCR/LC/FFC/LB encode an absolute 22-bit
 //       target; anything called is, by definition, a real code entry. These never land in
-//       data, so they are the trustworthy signal.
+//       data, so they are the trustworthy signal. Gated by a BOUNDARY test (below), because
+//       a byte scan also finds "calls" that are really two adjacent words of a numeric table.
+//
+//   BOUNDARY GATE (signal A only). A raw scan cannot tell a call from a coincidence, and the
+//   entropy/vocabulary filter cannot either when the coincidence lives in a table of SMALL
+//   numbers — low entropy, and high bytes in 0x00..0x03 are all legitimate opcode bytes, so
+//   such a table scores as clean code. The phantom target that results is arbitrary and often
+//   lands in the MIDDLE of a real instruction, where seeding it splits a healthy function and
+//   leaves a stub that reads as a missing opcode. The offcut check in the creation loop cannot
+//   help: it only rejects seeds inside an ALREADY-DECODED instruction, and at scan time nothing
+//   is decoded — in particular the enclosing function may have a sub-threshold prologue and no
+//   caller, so nothing seeds it first. So test the target directly, by BACKWARD LINEAR-SWEEP
+//   RESYNCHRONIZATION: pseudo-disassemble from each of the preceding K words in turn and see
+//   where each decode stream lands. Code is self-synchronizing, so a real entry is landed on
+//   from nearly every back-off, while a mid-instruction address is STEPPED OVER by nearly all
+//   of them. Read-only (PseudoDisassembler), so probing never lays down code. Measured over
+//   2169 distinct targets in two application images: every real target drew at most 2
+//   step-over votes and every mid-instruction target at least 7 — 36 phantoms rejected, 0 real
+//   targets lost. Disable with -Dc28x.seed.noBoundaryGate.
 //
 //   (B) PROLOGUE patterns — MEDIUM confidence. C-compiled functions open with callee-saved
 //       pushes / frame setup (MOVL *SP++,XARn = lo8 0xBD; ADDB SP,#N = hi8 0xFE; MOV32
@@ -48,6 +66,9 @@
 //                                                        words look like plausible opcodes
 //   c28x.seed.window               (int,  default 24)    words to sample for the data filter
 //   c28x.seed.noDataFilter         (bool, default false) disable the entropy/code-likeness gate
+//   c28x.seed.noBoundaryGate       (bool, default false) disable the signal-A boundary gate
+//   c28x.seed.boundaryBackoff      (int,  default 10)    words to resynchronize from
+//   c28x.seed.boundaryVotes        (int,  default 4)     step-over votes needed to reject
 //
 // @category TMS320C28x
 import ghidra.app.script.GhidraScript;
@@ -74,6 +95,13 @@ public class SeedFunctions extends GhidraScript {
     // word address -> Ghidra Address (API takes a BYTE offset = word * 2)
     Address addr(long word) { return space.getAddress(word * 2); }
 
+    // --- signal-A boundary gate state (see BOUNDARY GATE in the header) ---
+    ghidra.app.util.PseudoDisassembler pdis;
+    int boundaryBackoff = 10, boundaryVotes = 4;
+    boolean noBoundaryGate = false;
+    final Map<Long,Integer> pdLenCache = new HashMap<>();     // word addr -> length in WORDS (0 = undecodable)
+    final Map<Long,Boolean> boundaryCache = new HashMap<>();  // word addr -> is an instruction boundary
+
     @Override
     public void run() throws Exception {
         int minRun = Integer.getInteger("c28x.seed.minPrologueRun", 2);
@@ -83,6 +111,9 @@ public class SeedFunctions extends GhidraScript {
         double minCodeFrac  = Double.parseDouble(System.getProperty("c28x.seed.minCodeFrac", "0.55"));
         int    window       = Integer.getInteger("c28x.seed.window", 24);
         boolean noDataFilter = Boolean.getBoolean("c28x.seed.noDataFilter");
+        noBoundaryGate  = Boolean.getBoolean("c28x.seed.noBoundaryGate");
+        boundaryBackoff = Integer.getInteger("c28x.seed.boundaryBackoff", 10);
+        boundaryVotes   = Integer.getInteger("c28x.seed.boundaryVotes", 4);
 
         space = currentProgram.getAddressFactory().getDefaultAddressSpace();
 
@@ -130,6 +161,8 @@ public class SeedFunctions extends GhidraScript {
         // so the call graph would otherwise stay invisible until late in analysis.
         Set<Long> calledTargets = new TreeSet<>();
         Map<Long,Long> callSiteToTarget = new HashMap<>();   // callSite word -> target word
+        Set<Long> phantomOffcut = new TreeSet<>();           // targets refused by the boundary gate
+        int phantomSites = 0;                                // sites whose target was refused
         for (long wi = 0; wi < nwords - 1; wi++) {
             int w1 = wordAt(wi * 2);
             if (w1 < 0) continue;
@@ -154,6 +187,14 @@ public class SeedFunctions extends GhidraScript {
             // F28377D image: 7 halt_baddata stubs seeded into the const-table region, four
             // of them carrying fake call xrefs from other data words.)
             if (!noDataFilter && !looksLikeCode(base + wi, window, maxEntropy, minCodeFrac)) continue;
+            // BOUNDARY GATE: refuse a target that sits INSIDE an instruction (see the header).
+            // The site's reference is dropped with it -- a "call" to a mid-instruction address
+            // is phantom by construction, and injecting the xref anyway would let a later
+            // analysis pass re-create the very function this gate just refused to seed.
+            if (!noBoundaryGate && !isInstructionBoundary(tgt)) {
+                phantomOffcut.add(tgt); phantomSites++;
+                continue;
+            }
             calledTargets.add(tgt);
             if (isCall) callSiteToTarget.put(base + wi, tgt);   // record CALL sites for ref-adding
         }
@@ -163,6 +204,34 @@ public class SeedFunctions extends GhidraScript {
         for (long wi = 0; wi < nwords; wi++) {
             int run = prologueRun(wi);
             if (run > 0) prologRun.put(base + wi, run);
+        }
+
+        // Seed only the START of a prologue run. prologueRun() counts consecutive pushes
+        // from wherever it is asked, so EVERY address inside a run scores > 0: a 3-push
+        // prologue scores 3, 2, 1 on successive words. With the default minRun of 2 that
+        // admits both the true entry and the word after it, and which of the two ends up
+        // owning the body is arbitrary. When the interior one wins, every caller -- which
+        // of course targets the true entry -- has its xref land outside that function, and
+        // a perfectly ordinary function reads as permanently orphaned. (Seen on an
+        // F28377D application image: the true entry got a 1-word stub while the word after
+        // it took the whole 306-word body, and that function's one caller stayed invisible
+        // until the boundary was corrected.)
+        //
+        // The offcut guard in the creation loop cannot catch this: it rejects seeds that
+        // fall inside a decoded INSTRUCTION, and every word of a push run is its own
+        // 1-word instruction, so each looks like a legitimate boundary.
+        //
+        // A call target is direct evidence of an entry, so it is never suppressed here.
+        // Compare against a snapshot: removing a+1 must not change the verdict for a+2.
+        Map<Long,Integer> runSnapshot = new HashMap<>(prologRun);
+        int interiorDropped = 0;
+        for (java.util.Iterator<Long> it = prologRun.keySet().iterator(); it.hasNext(); ) {
+            long a = it.next();
+            Integer prev = runSnapshot.get(a - 1);
+            if (prev != null && prev > runSnapshot.get(a) && !calledTargets.contains(a)) {
+                it.remove();
+                interiorDropped++;
+            }
         }
 
         // --- decide the seed set ------------------------------------------------
@@ -354,7 +423,18 @@ public class SeedFunctions extends GhidraScript {
         println(String.format("image: base=0x%x  words=%d", base, nwords));
         println(String.format("gap-scan (signal C): seeded %d leaf functions, rejected %d", gapSeeded, gapRejected));
         println(String.format("call/branch targets in-image: %d", calledTargets.size()));
-        println(String.format("prologue addresses (run>0): %d", prologRun.size()));
+        if (!noBoundaryGate) {
+            println(String.format("boundary gate: refused %d phantom targets landing mid-instruction "
+                + "(from %d call/branch sites; backoff=%d, votes>=%d)",
+                phantomOffcut.size(), phantomSites, boundaryBackoff, boundaryVotes));
+            int shown = 0;
+            for (long t : phantomOffcut) {
+                if (shown++ >= 20) { println(String.format("  ... and %d more", phantomOffcut.size() - 20)); break; }
+                println(String.format("  phantom call target @%05x (offcut)", t));
+            }
+        }
+        println(String.format("prologue addresses (run-starts): %d  (dropped %d interior "
+            + "run addresses -- see the off-by-one note at section B)", prologRun.size(), interiorDropped));
         println(String.format("candidates: %d  ->  rejected as data (entropy/non-code): %d  ->  seeds: %d",
             raw.size(), rejectedData, seeds.size()));
         println(String.format("created %d, already existed %d, failed %d, offcut-rejected %d ; call-site refs added %d",
@@ -422,6 +502,51 @@ public class SeedFunctions extends GhidraScript {
             a = nxt;
         }
         return false;
+    }
+
+    // --- Signal A gate: is `tgtWord` at a real INSTRUCTION BOUNDARY? -------------------------
+    // Backward linear-sweep resynchronization. Decode forward from each of the preceding
+    // `boundaryBackoff` words; each run either LANDS exactly on the target (so the target is a
+    // boundary) or STEPS OVER it (so the target is inside an instruction). Code is
+    // self-synchronizing, which is what makes this work: real entries are landed on from nearly
+    // every back-off, mid-instruction addresses are stepped over by nearly all of them, and the
+    // two populations do not overlap in practice. An undecodable back-off abstains rather than
+    // votes, so a target preceded by data keeps the benefit of the doubt. Read-only:
+    // PseudoDisassembler works off the bytes, so this is safe to run before any disassembly.
+    boolean isInstructionBoundary(long tgtWord) {
+        Boolean memo = boundaryCache.get(tgtWord);
+        if (memo != null) return memo;
+        if (pdis == null) pdis = new ghidra.app.util.PseudoDisassembler(currentProgram);
+        int landed = 0, steppedOver = 0;
+        for (int k = 1; k <= boundaryBackoff; k++) {
+            long s = tgtWord - k;
+            if (s < lo) break;
+            long p = s;
+            for (int step = 0; step <= boundaryBackoff; step++) {
+                if (p == tgtWord) { landed++; break; }
+                if (p > tgtWord)  { steppedOver++; break; }
+                int len = pdWordLen(p);
+                if (len <= 0) break;                        // undecodable -> abstain
+                p += len;
+            }
+        }
+        boolean ok = !(steppedOver >= boundaryVotes && steppedOver > landed);
+        boundaryCache.put(tgtWord, ok);
+        return ok;
+    }
+
+    // Length in WORDS of the instruction the bytes at `word` decode to, or 0 if undecodable.
+    // Cached: the sweep above revisits the same addresses from many different back-offs.
+    int pdWordLen(long word) {
+        Integer c = pdLenCache.get(word);
+        if (c != null) return c;
+        int len = 0;
+        try {
+            ghidra.program.model.listing.Instruction ins = pdis.disassemble(addr(word));
+            if (ins != null) len = ins.getLength() / 2;
+        } catch (Exception e) { len = 0; }
+        pdLenCache.put(word, len);
+        return len;
     }
 
     // --- Signal C guard (0): is `entryWord` in a CODE neighborhood (vs a data table)? --------
