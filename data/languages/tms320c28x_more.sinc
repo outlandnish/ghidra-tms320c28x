@@ -751,8 +751,17 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 :MPYU ACCreg, Treg, loc16  is rpt_phase=1 & op_hi8=0x36 & ACCreg & Treg & loc16 {
     local a:4 = zext(T); local b:4 = zext(loc16); ACC = a * b;
 }
-# SUB loc16, AX   0111 010A LLLL LLLL  (reverse-subtract: loc16 = AX - loc16).
-:SUB loc16, AX  is rpt_phase=1 & op_hi7=0x3A & loc16 & AX  { loc16 = AX - loc16; }
+# SUB loc16, AX   0111 010A LLLL LLLL  ([loc16] = [loc16] - AX).  C/V/N/Z.
+# SPRU430F p.419: despite the manual's "Reverse-Subtract ... From AX" title, the
+# Description/Example are unambiguous (`SUB @AR0,AL ; AR0 = AR0 - AL`).  This used
+# to emit `AX - loc16` (that's SUBR's job, right below) and set no flags -- see #56.
+:SUB loc16, AX  is rpt_phase=1 & op_hi7=0x3A & loc16 & AX  {
+    local m:2 = loc16;
+    $(C) = !(m < AX);
+    $(V) = sborrow(m, AX);
+    loc16 = m - AX;
+    setNZ16(loc16);
+}
 # SUBR loc16, AX  1110 101A LLLL LLLL  (reverse-subtract store: [loc16] = AX - [loc16]).
 # Confirmed via dis2000 (word 0xeaa8) — the binary-pattern grep missed it. C/V/N/Z.
 :SUBR loc16, AX  is rpt_phase=1 & op_hi7=0x75 & loc16 & AX  {
