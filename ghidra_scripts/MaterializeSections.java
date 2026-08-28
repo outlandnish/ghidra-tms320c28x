@@ -89,8 +89,26 @@ public class MaterializeSections extends GhidraScript {
     // word address -> Ghidra Address (the API takes a BYTE offset = word * 2; wordsize=2 space).
     Address addr(long word) { return space.getAddress(word * 2); }
 
+    // run_ghidra_script / the MCP bridge deliver -Dkey=value as getScriptArgs(), NOT as JVM system
+    // properties, so the c28x.mat.* System.getProperty overrides in run() silently no-op when the
+    // script is driven headless or over MCP (forcing -Dc28x.mat.copyfn / -Dc28x.mat.minSites=1 did
+    // nothing). Promote any -Dkey=value (or bare -Dkey -> "true") script arg to a system property so
+    // one override mechanism works identically from the GUI, headless, and MCP.
+    void promoteDashDArgs() {
+        String[] args = getScriptArgs();
+        if (args == null) return;
+        for (String a : args) {
+            if (a == null || !a.startsWith("-D")) continue;
+            String kv = a.substring(2);
+            int eq = kv.indexOf('=');
+            if (eq > 0) System.setProperty(kv.substring(0, eq), kv.substring(eq + 1));
+            else if (!kv.isEmpty()) System.setProperty(kv, "true");
+        }
+    }
+
     @Override
     public void run() throws Exception {
+        promoteDashDArgs();          // -Dkey=value passed via getScriptArgs() -> system properties
         boolean dryRun  = Boolean.getBoolean("c28x.mat.dryRun");
         int minSites    = Integer.getInteger("c28x.mat.minSites", 2);
         maxWords        = Integer.getInteger("c28x.mat.maxWords", 0x40000);
@@ -209,36 +227,58 @@ public class MaterializeSections extends GhidraScript {
         List<List<Long>> secs = sections;
 
         // --- classify + materialize --------------------------------------------------------------
+        // Classify EVERY section CODE/DATA up front (phase 0), BEFORE any mutation. A section is code
+        // if its RAM run region has incoming CALL refs -- from the flash, OR from the load-image
+        // phantoms of a SIBLING ramfunc region that calls it. Materializing that sibling marks its
+        // flash load-image as data and drops those phantoms (and their calls), and the sibling's fresh
+        // RUN body is still stubbed at that instant (CreateFunction precedes analysis), so re-deriving
+        // classification mid-run would demote a genuinely-code region to DATA. Classifying first is
+        // what keeps a ramfunc region reachable ONLY from another ramfunc region marked as code.
+        // (Live on a dual-core CPU2 image: the GS region 0xefff is called only by the D0 region 0xb000, whose load
+        // image is dropped when 0xb000 materializes -- so 0xefff must be classified before 0xb000 is
+        // touched.)
         int done = 0;
-        List<Address> codeTargets = new ArrayList<>();     // all CODE-section entries (for the repair)
+        boolean[] isCodeArr = new boolean[secs.size()];
+        List<List<Address>> callTargetsArr = new ArrayList<>();
         for (List<Long> t : secs) {
             long size = t.get(0), run = t.get(1), load = t.get(2);
-            // CODE vs DATA: a section holding RAM-resident code has incoming CALL/branch refs from
-            // the flash (created when SeedFunctions disassembled the callers); pure data does not.
-            AddressSet region = new AddressSet(addr(run), space.getAddress((run + size) * 2 - 1));
-            List<Address> callTargets = callTargetsIn(region);
-            boolean isCode = !callTargets.isEmpty();
+            List<Address> ct = callTargetsIn(new AddressSet(addr(run), space.getAddress((run + size) * 2 - 1)));
+            int si = callTargetsArr.size();
+            callTargetsArr.add(ct);
+            isCodeArr[si] = !ct.isEmpty();
             println(String.format("  section run=0x%05x load=0x%05x size=0x%-6x %s  (%d call-target%s)",
-                run, load, size, isCode ? "CODE" : "DATA",
-                callTargets.size(), callTargets.size() == 1 ? "" : "s"));
-            if (dryRun) continue;
+                run, load, size, isCodeArr[si] ? "CODE" : "DATA", ct.size(), ct.size() == 1 ? "" : "s"));
+        }
+        if (dryRun) {
+            println(String.format("DRY RUN: %d section(s) detected (no changes)", secs.size()));
+            return;
+        }
 
-            // place the flash load-image into the RAM run region (split at block boundaries)
+        // phase 1 -- place each flash load-image into its RAM run region (split at block boundaries).
+        List<List<MemoryBlock>> touchedPer = new ArrayList<>();
+        for (List<Long> t : secs) {
+            long size = t.get(0), run = t.get(1), load = t.get(2);
             byte[] blob = new byte[(int) (size * 2)];
             System.arraycopy(mem, (int) ((load - base) * 2), blob, 0, blob.length);
-            List<MemoryBlock> touched = writeSplit(run, blob);
+            touchedPer.add(writeSplit(run, blob));
+        }
 
-            if (isCode) {
-                for (MemoryBlock b : touched) { try { b.setExecute(true); } catch (Exception ex) {} }
+        // phase 2 -- materialize with the phase-0 classification (never re-derived, so a dropped
+        // sibling load-image cannot demote a code section to data mid-run).
+        for (int si = 0; si < secs.size(); si++) {
+            List<Long> t = secs.get(si);
+            long size = t.get(0), run = t.get(1), load = t.get(2);
+            if (isCodeArr[si]) {
+                for (MemoryBlock b : touchedPer.get(si)) { try { b.setExecute(true); } catch (Exception ex) {} }
                 if (doDisasm) {
-                    // TWO passes. Disassemble EVERY entry's flow (followFlow, unrestricted — the
-                    // SeedFunctions recipe) FIRST, THEN bind functions. A single interleaved pass
-                    // stubs ~half the ramfuncs: CreateFunction(E) runs before a neighbouring entry's
-                    // followFlow has laid down E's fall-through, so it binds a 1-word body. CALL-only
-                    // targets (not jump/switch-table destinations) keep the sweep off data.
-                    for (Address ta : callTargets)
+                    // Disassemble EVERY entry's flow (followFlow, unrestricted -- the SeedFunctions
+                    // recipe) FIRST, THEN bind functions. A single interleaved pass stubs ~half the
+                    // ramfuncs: CreateFunction(E) runs before a neighbouring entry's followFlow has
+                    // laid down E's fall-through, so it binds a 1-word body. CALL-only targets (not
+                    // jump/switch-table destinations) keep the sweep off data.
+                    for (Address ta : callTargetsArr.get(si))
                         new DisassembleCommand(ta, null, true).applyTo(currentProgram, monitor);
-                    for (Address ta : callTargets)
+                    for (Address ta : callTargetsArr.get(si))
                         if (fm.getFunctionAt(ta) == null)     // never overwrite an existing function
                             new CreateFunctionCmd(ta).applyTo(currentProgram, monitor);
                 }
@@ -248,12 +288,11 @@ public class MaterializeSections extends GhidraScript {
             // non-deprecated path; the run start is fresh RAM so this clobbers nothing).
             setPlateComment(addr(run), String.format(
                 "materialized %s section: flash 0x%05x -> RAM 0x%05x, 0x%x words",
-                isCode ? "code (.ramfunc)" : "data (.cinit/initialized)", load, run, size));
+                isCodeArr[si] ? "code (.ramfunc)" : "data (.cinit/initialized)", load, run, size));
             done++;
         }
-        println(String.format("%s: %d section(s) %s", dryRun ? "DRY RUN" : "done", secs.size(),
-            dryRun ? "detected (no changes)" : ("materialized (" + done + " written)")));
-        if (!dryRun && !codeTargets.isEmpty())
+        println(String.format("done: %d section(s) materialized (%d written)", secs.size(), done));
+        if (done > 0)
             println("NOTE: run FinalizeRamfuncs.java AFTER analysis settles to rebuild stubbed ramfunc "
                 + "bodies and undo the false no-return Ghidra stamps on them (truncates flash callers).");
     }
@@ -346,10 +385,11 @@ public class MaterializeSections extends GhidraScript {
             if (!inImage(load)) continue;
             for (long run : vals) {
                 if (!inRam(run)) continue;
-                for (long size : vals)               // explicit count constant (a scalar, not a
-                    if (!inImage(size) && !inRam(size)   // pointer — else a dst/src addr like 0x9300
-                            && validTriple(size, run, load))  // masquerades as a second valid size)
-                        out.add(List.of(size, run, load));
+                for (long size : vals)               // explicit count constant. A count is NOT one of
+                    if (size != run && size != load      // THIS triple's pointer args, and not a flash
+                            && !inImage(size)            // load pointer -- but it MAY legitimately equal
+                            && validTriple(size, run, load))  // a mapped address (e.g. size 0xd2a lands
+                        out.add(List.of(size, run, load));    // in PIE_VECT); validTriple gates the rest.
                 for (long loadEnd : vals)            // count derived from a flash load-end pointer
                     if (inImage(loadEnd) && loadEnd > load && validTriple(loadEnd - load, run, load))
                         out.add(List.of(loadEnd - load, run, load));
