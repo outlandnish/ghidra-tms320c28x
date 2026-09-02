@@ -98,6 +98,20 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 	private long rptWord;      // word address of the instruction being repeated
 	private long rptRemaining; // re-executions still owed after the natural first pass
 
+	// PREAD/PWRITE *XAR7 repeat SHADOW (SPRU430F): "When repeated, the *XAR7 program-memory
+	// address is copied to an internal shadow register and the address is post-incremented by 1
+	// during each repetition." So `RPT || PREAD` walks program memory forward while the
+	// ARCHITECTURAL XAR7 is left untouched -- which is exactly why TI's .cinit walk advances XAR7
+	// by hand afterwards (XAR7 += AR1+1). SLEIGH reads *XAR7 every iteration and has no shadow, so
+	// without this a repeated PREAD re-reads one word: a block copy degenerates into a fill, and
+	// the .cinit walk lands 0x34cc34cc where the table says 0x000134cc. Model it here, where the
+	// repeat is already driven: step XAR7 for each re-issue, then restore it when the repeat ends.
+	private static final int OP_PREAD_OPHI8 = 0x24;   // PREAD  loc16,*XAR7
+	private static final int OP_PWRITE_OPHI8 = 0x26;  // PWRITE *XAR7,loc16
+	private boolean xar7Shadowed = false;
+	private long xar7Saved;    // architectural XAR7, restored when the repeat finishes
+	private long xar7Step;     // repetitions issued so far (the shadow's offset from xar7Saved)
+
 	// Single-word return opcodes that restore RPC from the hardware nested-call stack.
 	private static final int OP_LRETR = 0x0006;
 	private static final int OP_XRET = 0x56FF;
@@ -239,6 +253,7 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 				}
 				else {
 					rptActive = false;                       // unknown count source: execute once
+					xar7Shadowed = false;
 					return;
 				}
 			}
@@ -247,6 +262,18 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 			rptWord = currentAddress.getOffset() >> 1;
 			rptRemaining = count;
 			rptActive = count > 0;
+
+			// Arm the *XAR7 shadow if the instruction about to be repeated is PREAD/PWRITE. The
+			// first (natural) execution reads the base address, so nothing moves until the first
+			// re-issue.
+			int repeatedW = (int) (mem.getValue(space, currentAddress.getOffset(), 2) & 0xFFFF);
+			int repeatedOp = repeatedW >>> 8;
+			xar7Shadowed = rptActive
+				&& (repeatedOp == OP_PREAD_OPHI8 || repeatedOp == OP_PWRITE_OPHI8);
+			if (xar7Shadowed) {
+				xar7Saved = mem.getValue("XAR7") & 0xFFFFFFFFL;
+				xar7Step = 0;
+			}
 			return;
 		}
 
@@ -254,10 +281,22 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 		if (rptActive && (lastByteOff >> 1) == rptWord) {
 			if (rptRemaining > 0) {
 				rptRemaining--;
+				if (xar7Shadowed) {
+					// Advance the shadow. Assign from the saved base rather than incrementing the
+					// live register, so an instruction that writes XAR7 itself (SPRU430F gives the
+					// loc16 field priority, e.g. `PREAD *XAR7++,*XAR7`) cannot compound the step.
+					xar7Step++;
+					mem.setValue("XAR7", xar7Saved + xar7Step);
+				}
 				emu.setExecuteAddress(space.getAddress(rptWord << 1));
 			}
 			else {
 				rptActive = false;
+				if (xar7Shadowed) {
+					// The shadow is internal: hardware leaves the architectural XAR7 where it was.
+					mem.setValue("XAR7", xar7Saved);
+					xar7Shadowed = false;
+				}
 			}
 		}
 	}
