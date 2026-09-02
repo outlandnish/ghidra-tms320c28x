@@ -406,29 +406,43 @@ Materialization restores the *bytes*; the graph is built from *references*, and
 nothing in Step 4c turns a materialized RAM pointer word into an edge. That is
 what **Step 4d (`MarkComponentRegistry`)** is for.
 
-Running Step 4d on that image takes it to **112 / 2174 (5.2%)**, with
-NO-REFS-AT-ALL falling 493 → 405. That is a much smaller jump than the edge count
-suggests, and the reason is worth internalizing: **the remaining gap is a rooting
-problem, not an edge problem.** The component dispatchers are themselves called
-from flash *task-table records* (`{fn, 0, state, state, rate, period, …}`, not a
-dense pointer run, so `MarkJumpTables` does not see them either) — and nothing in
-the image references those records. So the scheduler and all three dispatchers
-have **zero** incoming references and stay unrooted, stranding everything below
-them in "called only by unreachable code", which is why that bucket *grows*.
+Emitting those edges alone only reaches **112 / 2174 (5.2%)**, because the
+remaining gap is a **rooting** problem rather than an edge problem — worth
+understanding, because it is the shape of every dispatch-driven image.
 
-Measure the latent value by rooting them by hand — pass the scheduler and the
-dispatchers (Step 4d prints their addresses) as extra roots:
+The component dispatchers are called from OS **task-control blocks** that
+`.cinit` builds in RAM as a circular linked list: a header word points at the
+first node, each node carries next/prev links and the task function at a fixed
+offset inside it. Because the walker reaches a node through a *pointer* and not
+an array base, no instruction anywhere holds a node's address as an immediate,
+and nothing in the image references the records at all. The walker itself has
+zero incoming references: it is the tick ISR.
 
-```
-ReachabilityReport -Dc28x.reach.roots=<scheduler>,<dispatcher>,...
-  -> 1096 / 2174 reachable (50.4%)
-```
+**Where its vector would be:** on F28377D the PIE vector table is RAM at
+`0x000D00–0x000DFF` (128 vectors × 2 words), mapped by `SetupF28377D` as
+`PIE_VECT_REGS`. It is not in flash and is not missing from the dump — it is
+simply **uninitialized**, because the application writes it at runtime and
+Step 4c stops at the handoff into `main`. So the chain terminates in a vector
+table that has never been filled in.
 
-So the edges Step 4d creates are real and worth ~980 functions; they are gated
-behind one more indirection layer (whatever registers those task-table records
-with the OS tick). Chase that layer next — it is the single highest-value
-remaining edge in the pipeline. Until then, read a low percentage as **"not yet
-rooted"**, and use `-Dc28x.reach.roots` to see past it.
+Step 4d therefore does what this pipeline already does for ISRs: a flash
+function whose address `.cinit` planted in RAM, and which nothing calls, is
+**runtime-dispatched** — an entry point in every sense except that its vector is
+unwritten — so it is registered as one. Deliberately narrow: the value must land
+exactly on a function entry in flash, and the function must have no incoming
+call/jump reference at all, so nothing the edge passes just connected is
+affected.
+
+With that, the same image goes to **1070 / 2191 reachable (48.8%)** from 31
+registered entry points, NO-REFS-AT-ALL falling 493 → 389. Confirmed
+independently beforehand by rooting the dispatchers by hand
+(`-Dc28x.reach.roots=…` gave 1096 / 2174, 50.4%), so the automatic result is
+within noise of the hand-derived one.
+
+The honest remaining lever is emulating **past** the handoff so the PIE table is
+actually populated, which would turn those 31 assumed roots into real ISR
+edges — at the cost of running application init against peripherals the
+emulator does not model.
 
 ## Per-CPU notes (F28377D)
 

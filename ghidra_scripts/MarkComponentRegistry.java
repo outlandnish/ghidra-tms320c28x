@@ -82,6 +82,7 @@
 //   c28x.reg.noSeedDispatchers (bool)         don't recover a dispatch site's enclosing function
 //   c28x.reg.maxBack     (int,  default 512)  instructions to walk back looking for that entry
 //   c28x.reg.noHooks     (bool)               skip the single-slot RAM hook pass
+//   c28x.reg.noRootDispatched (bool)          don't register runtime-dispatched functions as roots
 //   c28x.reg.noLabels    (bool)               don't label descriptors
 //   c28x.reg.dryRun      (bool)               report only, change nothing
 //
@@ -325,6 +326,14 @@ public class MarkComponentRegistry extends GhidraScript {
         int hooks = 0;
         if (!Boolean.getBoolean("c28x.reg.noHooks")) hooks = resolveRamHooks(window);
         println(String.format("RAM single-slot hooks resolved: %d", hooks));
+
+        // ---- 5b. roots for what the runtime dispatches and nothing calls -----------------------
+        int rooted = 0;
+        if (!Boolean.getBoolean("c28x.reg.noRootDispatched")) {
+            println("");
+            rooted = rootRuntimeDispatched(createFns);
+            println(String.format("runtime-dispatched entry points registered: %d", rooted));
+        }
 
         // ---- 6. what it bought ---------------------------------------------------------------
         int liveAfter = closureSize();
@@ -583,6 +592,78 @@ public class MarkComponentRegistry extends GhidraScript {
         if (dry) return true;
         try { createLabel(wa(w), name, true, SourceType.ANALYSIS); return true; }
         catch (Exception e) { return false; }
+    }
+
+    /**
+     * Roots for code the RUNTIME dispatches and no static caller ever names.
+     *
+     * Emitting the registry edges is not enough on its own, and chasing the chain upward explains
+     * why. The component dispatchers are called from OS task-control blocks that `.cinit` builds in
+     * RAM as a circular linked list -- a header word pointing at the first node, each node holding
+     * next/prev links and the task function at a fixed offset inside it. Because the walker reaches
+     * a node through a POINTER rather than an array base, no instruction anywhere contains a node's
+     * address as an immediate, and nothing in the image references the records at all.
+     *
+     * The function that walks that list has zero incoming references itself: it is the tick ISR,
+     * and on F28377D the PIE vector table that would name it lives in RAM at 0x000D00-0x000DFF and
+     * is written AT RUNTIME. That region is mapped but uninitialized here, because replaying
+     * startup stops at the handoff into main and any PIE setup the application does happens after
+     * that point. So the chain terminates in a vector table that has never been filled in, and no
+     * amount of static edge recovery can root it. (Emulating past the handoff would populate it --
+     * see the note in the image-setup guide -- but that means running application init against
+     * peripherals the emulator does not model.)
+     *
+     * That is the same situation this repo already accepts for ISRs generally, so treat it the same
+     * way. A flash function whose address `.cinit` planted in RAM, and which nothing calls, is
+     * dispatched at runtime -- an entry point in every sense except that its vector is unwritten.
+     * Register it as one.
+     *
+     * Deliberately narrow, so this cannot paper over a real missing edge: the value must land
+     * exactly on a function ENTRY in flash, and the function must have no incoming call/jump
+     * reference at all. Anything the registry pass above just connected is therefore skipped.
+     */
+    int rootRuntimeDispatched(boolean createFns) {
+        LinkedHashMap<Long,Long> firstSite = new LinkedHashMap<>();   // fn word -> RAM word holding it
+        for (MemoryBlock b : mem.getBlocks()) {
+            if (!b.isInitialized()) continue;
+            long s = b.getStart().getOffset() / 2, e = b.getEnd().getOffset() / 2;
+            if (s >= 0x80000L) continue;                              // RAM only
+            for (long w = s; w + 1 <= e; w++) {
+                long v = word32(w);
+                if (v <= 0 || !inFlash(v)) continue;
+                if (fnAt(v) == null) {
+                    if (!createFns || fm.getFunctionContaining(wa(v)) != null) continue;
+                    if (!makeFunction(v)) continue;
+                    if (fnAt(v) == null) continue;
+                }
+                firstSite.putIfAbsent(v, w);
+            }
+        }
+        int rooted = 0;
+        for (Map.Entry<Long,Long> e : firstSite.entrySet()) {
+            Function f = fnAt(e.getKey());
+            if (f == null) continue;
+            boolean called = false;
+            for (Reference r : rm.getReferencesTo(f.getEntryPoint())) {
+                RefType t = r.getReferenceType();
+                if (t.isCall() || t.isJump()) { called = true; break; }
+            }
+            if (called) continue;
+            if (currentProgram.getSymbolTable().isExternalEntryPoint(f.getEntryPoint())) continue;
+            rooted++;
+            println(String.format("  root %05x %-22s (pointer planted in RAM at %05x, no static caller)",
+                e.getKey(), f.getName(), e.getValue()));
+            if (dry) continue;
+            currentProgram.getSymbolTable().addExternalEntryPoint(f.getEntryPoint());
+            if (getPlateComment(f.getEntryPoint()) == null)
+                setPlateComment(f.getEntryPoint(),
+                    "Runtime-dispatched entry point (MarkComponentRegistry).\n"
+                    + "Its address was written into RAM by .cinit at startup and nothing in the image "
+                    + "calls it, so it is reached only through an OS table/list walked by a dispatcher "
+                    + "whose own root is an interrupt vector absent from this dump.\n"
+                    + "Registered as an entry point so reachability reflects what actually runs.");
+        }
+        return rooted;
     }
 
     /** Reachable-function count, using the same roots + edge rule as ReachabilityReport. */
