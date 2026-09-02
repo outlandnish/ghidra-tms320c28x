@@ -87,14 +87,28 @@ dis=$("$tibin/dis2000" -i "$work/$Tag.obj" 2>&1)
 # Parse "<8hex>  <4hex>  MNEM  ops" lines. Store in two files keyed by word addr:
 #   ti_txt: "wordaddr\tMNEM ops"
 #   ti_mnem: "wordaddr\tMNEM"
+#
+# dis2000 prefixes a mnemonic with "||" in two cases: an instruction running under a repeat
+# (`RPT #7` then `||PREAD *XAR5++,*XAR7`), and the second half of a parallel pair. The prefix used
+# to fail this pattern, so EVERY repeated instruction was silently missing from the TI side and
+# parity never checked one -- which is the whole PREAD / PWRITE / XPREAD block-transfer family.
+#
+# FIRST occurrence at an address wins. That is what makes admitting "||" safe: dis2000 prints the
+# "||" half of a PARALLEL pair at the SAME address as the primary (so the primary is kept, and a
+# one-line `MPYF32 ...||ADDF32 ...` on our side still compares against it), while a REPEATED
+# instruction sits at its own NEW address (and dis2000 prints it twice, so first-wins dedupes it).
+# Primary lines never repeat an address, so first-wins is a no-op for everything that already
+# worked.
 ti_txt="$work/ti_txt.tsv"
 ti_mnem="$work/ti_mnem.tsv"
 : > "$ti_txt"; : > "$ti_mnem"
 printf '%s\n' "$dis" | awk -v start="$start" '
-  match($0, /^[[:space:]]*([0-9a-fA-F]{8})[[:space:]]+[0-9a-fA-F]{4}[[:space:]]+([A-Z][A-Z0-9_]*)[[:space:]]*(.*)$/, m) {
+  match($0, /^[[:space:]]*([0-9a-fA-F]{8})[[:space:]]+[0-9a-fA-F]{4}[[:space:]]+(\|\|)?[[:space:]]*([A-Z][A-Z0-9_]*)[[:space:]]*(.*)$/, m) {
     wa = strtonum("0x" m[1]) + start
-    mn = m[2]
-    ops = m[3]
+    if (wa in seen) next
+    seen[wa] = 1
+    mn = m[3]
+    ops = m[4]
     gsub(/[[:space:]]+$/, "", ops)
     gsub(/[[:space:]]+/, " ", ops)
     line = (ops == "") ? mn : (mn " " ops)

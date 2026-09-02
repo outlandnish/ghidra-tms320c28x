@@ -1,5 +1,14 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Nishanth Samala
+# Copyright the mwdmwd/ghidra-c28x contributors (https://github.com/mwdmwd/ghidra-c28x)
+#
+# Portions adapted from mwdmwd/ghidra-c28x (Apache-2.0): the switch_canonical
+# constructor variants of MOV/ADD ACC,loc16<<#shft; the @AH / @AL destination split
+# on XPREAD that gives SPRU430F's exact N/Z rule; and most of the C2xLP X* family
+# below -- the 0x3F program page, the software-stack XCALL/XRETC model, the
+# XB / XBANZ / XCALL / XRETC forms this module was missing, and the &XAR0 + ARP*4
+# register indexing XBANZ uses. See THIRD-PARTY.md.
+#
 # C28x 0x56-prefix 2-word "extended" instruction family.
 # Included by tms320c28x.sinc. Encodings from docs/c28x/ch6_instruction_detail.txt.
 #
@@ -270,15 +279,222 @@
 }
 
 # =============================================================================
-# C2xLP program read/write + branches (decode-only -- rare, exotic).
+# C2xLP source-compatible family (X*)
 # =============================================================================
-:XPREAD loc16, "*AL"   is rpt_phase=1 & op16=0x563c ; loc16  { local pma:4 = zext(AL); loc16 = *[ram]:2 pma; }
-:XPWRITE "*A", loc16   is rpt_phase=1 & op16=0x563d ; loc16  { local pma:4 = zext(AL); *[ram]:2 pma = loc16; }
-:XB "*AL"              is rpt_phase=1 & op16=0x5614 { local tgt:4 = zext(AL); goto [tgt]; }
-:XCALL "*AL"           is rpt_phase=1 & op16=0x5634
+# Every instruction here forces the upper 6 bits of the 22-bit program address to 0x3F -- see the
+# xpmadest / xpmaval sub-tables in tms320c28x_flow.sinc for the rule and the trap (the NON-X
+# counterparts force 0x00 instead). The `*AL` forms below do the same at runtime.
+#
+# These exist for hand-ported C2xLP assembly; TI's C compiler does not emit them, and a sweep of
+# four production images found none in real code. Modelled anyway so a hand-written routine
+# decompiles correctly rather than silently reading the wrong page.
+#
+# Encodings and rendering verified against TI's own asm2000/dis2000 for all 28 forms.
+
+# XCALL pushes only the LOW 16 bits of the return address onto the SOFTWARE STACK -- SPRU430F:
+# "temp(21:0) = PC + 1; [SP] = temp(15:0); SP = SP + 1" -- and XRETC pops it back, re-forcing the
+# page: "SP = SP - 1; PC = 0x3F:[SP]". This is NOT the RPC mechanism LCR/LRETR use. An XCALL
+# leaves RPC untouched and moves SP; this module previously modelled the exact opposite, which
+# was self-consistent (XCALL wrote RPC, XRET read it) and therefore invisible, but left SP
+# unchanged across the call and clobbered a register hardware does not touch.
+macro xcall_push(retlo) {
+    local sp:4 = SP;
+    *[ram]:2 sp = retlo;
+    SP = SP + 1;
+}
+macro xret_pop(tgt) {
+    SP = SP - 1;
+    local sp:4 = SP;
+    local lo:2 = *[ram]:2 sp;
+    tgt = 0x3f0000 | zext(lo);
+}
+
+# XBANZ tests and updates XAR[ARP] -- the auxiliary register selected at RUNTIME by ARP. SLEIGH
+# CAN index a register file: take the address of the first register and offset into the register
+# space by the runtime index. XAR0..XAR7 are contiguous 4-byte registers (slaspec offset 0x20),
+# so `&XAR0 + ARP*4` is the selected one. Technique from mwdmwd/ghidra-c28x.
+macro arp_xar_ptr(p) {
+    p = &XAR0 + zext(ARP) * 4;
+}
+
+# --- program read / write -----------------------------------------------------------------
+# XPREAD carries the same destination-conditioned N/Z as PREAD (SPRU430F: flags only when the
+# destination is an accumulator half), hence the @AH / @AL split. The page is applied to AL
+# BEFORE the destination is written, so the @AL form is not self-clobbering. Repeated forms
+# (which shadow the program-side pointer while leaving AL alone) live in tms320c28x_rpt.sinc.
+:XPREAD "@AH", "*AL"   is rpt_phase=1 & ctx_AMODE=0 & op16=0x563c ; loc_full8=0b10101000  { local pma:4 = 0x3f0000 | zext(AL); AH = *[ram]:2 pma; setNZ16(AH); }
+:XPREAD "@AL", "*AL"   is rpt_phase=1 & ctx_AMODE=0 & op16=0x563c ; loc_full8=0b10101001  { local pma:4 = 0x3f0000 | zext(AL); AL = *[ram]:2 pma; setNZ16(AL); }
+:XPREAD loc16, "*AL"   is rpt_phase=1 & op16=0x563c ; loc16  { local pma:4 = 0x3f0000 | zext(AL); loc16 = *[ram]:2 pma; }
+# dis2000 renders the destination as `*AL`; this module printed `*A`.
+:XPWRITE "*AL", loc16  is rpt_phase=1 & op16=0x563d ; loc16  { local pma:4 = 0x3f0000 | zext(AL); *[ram]:2 pma = loc16; }
+
+# --- branches -----------------------------------------------------------------------------
+:XB "*AL"  is rpt_phase=1 & op16=0x5614 { local tgt:4 = 0x3f0000 | zext(AL); goto [tgt]; }
+# XB pma,COND   0101 0110 1101 COND : pma
+# The UNC row needs its own constructor: `if (UNC) goto` compiles to a CBRANCH that keeps a dead
+# fall-through edge. Same reason as the B/SB UNC forms in tms320c28x_flow.sinc.
+:XB xpmadest,CC     is rpt_phase=1 & op_hi8=0x56 & loc_hi4=0b1101 & cond4 & CC ; imm16 & xpmadest { if (CC) goto xpmadest; }
+:XB xpmadest,"UNC"  is rpt_phase=1 & op_hi8=0x56 & loc_hi4=0b1101 & cond4=0xf ; imm16 & xpmadest { goto xpmadest; }
+# XB pma,*,ARPn   0011 1110 0111 0nnn : pma   (unconditional, with ARP reload)
+:XB xpmadest,"*,ARP"^loc_arp  is rpt_phase=1 & op_hi8=0x3E & op_lo_hi5=0b01110 & loc_arp ; imm16 & xpmadest {
+    ARP = loc_arp:1;
+    goto xpmadest;
+}
+
+# --- calls --------------------------------------------------------------------------------
+:XCALL "*AL"  is rpt_phase=1 & op16=0x5634
         [ ctx_DP_valid = 0; globalset(inst_next, ctx_DP_valid); ]
-        { local tgt:4 = zext(AL); RPC = inst_next >> 1; call [tgt]; }
-:XRET                  is rpt_phase=1 & op16=0x56ff { return [RPC]; }
+        {
+    local tgt:4 = 0x3f0000 | zext(AL);
+    local nxt:4 = inst_next >> 1;
+    local retlo:2 = nxt(0);
+    xcall_push(retlo);
+    call [tgt];
+}
+# XCALL pma,COND   0101 0110 1110 COND : pma
+:XCALL xpmadest,CC  is rpt_phase=1 & op_hi8=0x56 & loc_hi4=0b1110 & cond4 & CC ; imm16 & xpmadest
+        [ ctx_DP_valid = 0; globalset(inst_next, ctx_DP_valid); ]
+        {
+    if (CC == 0) goto <skip>;
+    local nxt:4 = inst_next >> 1;
+    local retlo:2 = nxt(0);
+    xcall_push(retlo);
+    call xpmadest;
+  <skip>
+}
+:XCALL xpmadest,"UNC"  is rpt_phase=1 & op_hi8=0x56 & loc_hi4=0b1110 & cond4=0xf ; imm16 & xpmadest
+        [ ctx_DP_valid = 0; globalset(inst_next, ctx_DP_valid); ]
+        {
+    local nxt:4 = inst_next >> 1;
+    local retlo:2 = nxt(0);
+    xcall_push(retlo);
+    call xpmadest;
+}
+# XCALL pma,*,ARPn   0011 1110 0110 1nnn : pma
+:XCALL xpmadest,"*,ARP"^loc_arp  is rpt_phase=1 & op_hi8=0x3E & op_lo_hi5=0b01101 & loc_arp ; imm16 & xpmadest
+        [ ctx_DP_valid = 0; globalset(inst_next, ctx_DP_valid); ]
+        {
+    ARP = loc_arp:1;
+    local nxt:4 = inst_next >> 1;
+    local retlo:2 = nxt(0);
+    xcall_push(retlo);
+    call xpmadest;
+}
+
+# --- XBANZ pma,*ind{,ARPn} ------------------------------------------------------------------
+# Branch if the LOW 16 bits of XAR[ARP] are non-zero, THEN apply the indirect-mode update --
+# the update lands on both paths, which is why it is emitted before the branch (same shape as
+# the non-X BANZ in tms320c28x_flow.sinc).
+:XBANZ xpmadest,"*"  is rpt_phase=1 & op16=0x560c ; imm16 & xpmadest {
+    local rp:4;
+    arp_xar_ptr(rp);
+    local rv:4 = *[register]:4 rp;
+    local low:2 = rv(0);
+    if (low == 0) goto inst_next;
+    goto xpmadest;
+}
+:XBANZ xpmadest,"*++"  is rpt_phase=1 & op16=0x560a ; imm16 & xpmadest {
+    local rp:4;
+    arp_xar_ptr(rp);
+    local rv:4 = *[register]:4 rp;
+    *[register]:4 rp = rv + 1;
+    local low:2 = rv(0);
+    if (low == 0) goto inst_next;
+    goto xpmadest;
+}
+:XBANZ xpmadest,"*--"  is rpt_phase=1 & op16=0x560b ; imm16 & xpmadest {
+    local rp:4;
+    arp_xar_ptr(rp);
+    local rv:4 = *[register]:4 rp;
+    *[register]:4 rp = rv - 1;
+    local low:2 = rv(0);
+    if (low == 0) goto inst_next;
+    goto xpmadest;
+}
+:XBANZ xpmadest,"*0++"  is rpt_phase=1 & op16=0x560e ; imm16 & xpmadest {
+    local rp:4;
+    arp_xar_ptr(rp);
+    local rv:4 = *[register]:4 rp;
+    *[register]:4 rp = rv + zext(AR0);
+    local low:2 = rv(0);
+    if (low == 0) goto inst_next;
+    goto xpmadest;
+}
+:XBANZ xpmadest,"*0--"  is rpt_phase=1 & op16=0x560f ; imm16 & xpmadest {
+    local rp:4;
+    arp_xar_ptr(rp);
+    local rv:4 = *[register]:4 rp;
+    *[register]:4 rp = rv - zext(AR0);
+    local low:2 = rv(0);
+    if (low == 0) goto inst_next;
+    goto xpmadest;
+}
+:XBANZ xpmadest,"*ARP"^loc_arp  is rpt_phase=1 & op_hi8=0x3E & op_lo_hi5=0b00110 & loc_arp ; imm16 & xpmadest {
+    local rp:4;
+    arp_xar_ptr(rp);
+    local rv:4 = *[register]:4 rp;
+    ARP = loc_arp:1;
+    local low:2 = rv(0);
+    if (low == 0) goto inst_next;
+    goto xpmadest;
+}
+:XBANZ xpmadest,"*++,ARP"^loc_arp  is rpt_phase=1 & op_hi8=0x3E & op_lo_hi5=0b00111 & loc_arp ; imm16 & xpmadest {
+    local rp:4;
+    arp_xar_ptr(rp);
+    local rv:4 = *[register]:4 rp;
+    *[register]:4 rp = rv + 1;
+    ARP = loc_arp:1;
+    local low:2 = rv(0);
+    if (low == 0) goto inst_next;
+    goto xpmadest;
+}
+:XBANZ xpmadest,"*--,ARP"^loc_arp  is rpt_phase=1 & op_hi8=0x3E & op_lo_hi5=0b01000 & loc_arp ; imm16 & xpmadest {
+    local rp:4;
+    arp_xar_ptr(rp);
+    local rv:4 = *[register]:4 rp;
+    *[register]:4 rp = rv - 1;
+    ARP = loc_arp:1;
+    local low:2 = rv(0);
+    if (low == 0) goto inst_next;
+    goto xpmadest;
+}
+:XBANZ xpmadest,"*0++,ARP"^loc_arp  is rpt_phase=1 & op_hi8=0x3E & op_lo_hi5=0b01001 & loc_arp ; imm16 & xpmadest {
+    local rp:4;
+    arp_xar_ptr(rp);
+    local rv:4 = *[register]:4 rp;
+    *[register]:4 rp = rv + zext(AR0);
+    ARP = loc_arp:1;
+    local low:2 = rv(0);
+    if (low == 0) goto inst_next;
+    goto xpmadest;
+}
+:XBANZ xpmadest,"*0--,ARP"^loc_arp  is rpt_phase=1 & op_hi8=0x3E & op_lo_hi5=0b01010 & loc_arp ; imm16 & xpmadest {
+    local rp:4;
+    arp_xar_ptr(rp);
+    local rv:4 = *[register]:4 rp;
+    *[register]:4 rp = rv - zext(AR0);
+    ARP = loc_arp:1;
+    local low:2 = rv(0);
+    if (low == 0) goto inst_next;
+    goto xpmadest;
+}
+
+# --- returns --------------------------------------------------------------------------------
+# XRETC COND   0101 0110 1111 COND.  XRET is an alias for the UNC row (SPRU430F), and dis2000
+# renders 0x56ff as `XRETC UNC` -- so that is what this prints, where the module used to print
+# `XRET` and disagree with TI on the mnemonic itself.
+:XRETC CC     is rpt_phase=1 & op_hi8=0x56 & loc_hi4=0b1111 & cond4 & CC {
+    if (CC == 0) goto <skip>;
+    local tgt:4;
+    xret_pop(tgt);
+    return [tgt];
+  <skip>
+}
+:XRETC "UNC"  is rpt_phase=1 & op_hi8=0x56 & loc_hi4=0b1111 & cond4=0xf {
+    local tgt:4;
+    xret_pop(tgt);
+    return [tgt];
+}
 
 # =============================================================================
 # 64-bit ACC:P shifts by #1..16 (single word; SHFT in low nibble). ACC = high 32,

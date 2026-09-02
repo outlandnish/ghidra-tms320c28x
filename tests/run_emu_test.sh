@@ -43,6 +43,10 @@ cp "$module/ghidra_scripts/EmuFpuCondTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuRptTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuCallTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuAluStoreTest.java" "$tmp/scripts/"
+cp "$module/ghidra_scripts/EmuAddbAccFlagsTest.java" "$tmp/scripts/"
+cp "$module/ghidra_scripts/EmuPreadFlagsTest.java" "$tmp/scripts/"
+cp "$module/ghidra_scripts/EmuPreadRepeatTest.java" "$tmp/scripts/"
+cp "$module/ghidra_scripts/EmuC2xlpTest.java" "$tmp/scripts/"
 cp "$module/tests/fpu_flags.bin" "$module/tests/fpu_cond.bin" "$tmp/"
 
 fail=0
@@ -67,7 +71,11 @@ run_suite EmuFlagTest fpu_flags.bin
 run_suite EmuFpuCondTest fpu_cond.bin
 run_suite EmuRptTest fpu_flags.bin  # host-driven test, any C28x program will do as import target
 run_suite EmuCallTest fpu_flags.bin # RPC nested-call chain (state modifier, not SLEIGH)
-run_suite EmuAluStoreTest fpu_flags.bin # store-side loc16,AX ALU trio (issue #56)
+run_suite EmuAluStoreTest fpu_flags.bin     # store-side loc16,AX ALU trio (issue #56)
+run_suite EmuAddbAccFlagsTest fpu_flags.bin # ADDB ACC,#8bit Z/N/C/V (host-driven)
+run_suite EmuPreadFlagsTest fpu_flags.bin   # PREAD loc16,*XAR7 N/Z (host-driven)
+run_suite EmuPreadRepeatTest fpu_flags.bin  # RPT||PREAD *XAR7 shadow (state modifier)
+run_suite EmuC2xlpTest fpu_flags.bin        # C2xLP 0x3F page + XCALL/XRET software stack
 
 if [ "$fail" -eq 0 ]; then
   echo "emulation semantics: OK"

@@ -24,6 +24,12 @@ attach variables [ loc_areg ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 # loc16 @ARn register-direct mode.
 attach variables [ loc_areg16 ] [ AR0 AR1 AR2 AR3 AR4 AR5 AR6 AR7 ];
 
+# ARP is a register NUMBER in the *,ARPn syntax, so it renders as a bare decimal digit --
+# TI writes "*,ARP4" and "XB pma,*,ARP1". Without this it formats as a scalar and prints
+# "ARP0x4"; the `dec` field attribute does not help, because the operand is formatted by
+# Ghidra, not by SLEIGH.
+attach names [ loc_arp ] [ "0" "1" "2" "3" "4" "5" "6" "7" ];
+
 # The high-byte 3-bit AR selector (arsel3, bits 8..10) used by MOV loc16,ARn etc.,
 # attached to the 16-bit AR view.
 attach variables [ arsel3 ] [ AR0 AR1 AR2 AR3 AR4 AR5 AR6 AR7 ];

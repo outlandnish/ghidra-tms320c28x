@@ -14,6 +14,16 @@
 #   * every top-level `:MNEMONIC` constructor must constrain  rpt_phase=1
 #   * the `:^instruction` wrappers must constrain             rpt_phase=0
 #
+# ONE DELIBERATE EXCEPTION: a specialised REPEATED form. The repeated program transfers
+# (PREAD / PWRITE / XPREAD / XPWRITE in tms320c28x_rpt.sinc) model the C28x program-pointer
+# shadow, which the generic wrapper cannot express, so they are top-level constructors that
+# claim `rpt_phase=0` and pre-empt the wrapper. That is only safe when the constructor is a
+# strict SUBSET of the wrapper's pattern, which needs the wrapper's other two context bits
+# too -- so this check demands `rpt_active=1` AND `rptb_flag=0` alongside `rpt_phase=0`.
+# Without them the pattern merely OVERLAPS the wrapper's and sleigh reports "constructor
+# patterns cannot be distinguished" (or silently resolves the wrong way), which is the same
+# class of silent failure this test exists to prevent.
+#
 # WHY THIS TEST EXISTS. A new `:MNEMONIC` added without `& rpt_phase=1` decodes perfectly
 # and passes every existing fixture. The only symptom is that `RPT || <that instruction>`
 # quietly executes once instead of N+1 times -- wrong emulation and a missing loop in the
@@ -30,7 +40,7 @@ $ErrorActionPreference = "Stop"
 $lang = Join-Path $Module "data\languages"
 if (-not (Test-Path $lang)) { throw "no such directory: $lang" }
 
-$ok = 0; $wrappers = 0
+$ok = 0; $wrappers = 0; $repeated = 0
 $bad = New-Object System.Collections.Generic.List[string]
 
 # NB: filter on the extension rather than `-Include`, which silently matches NOTHING
@@ -65,6 +75,14 @@ foreach ($file in $files) {
     }
     elseif ($head -match '\sis\s') {
       if ($head -match 'rpt_phase\s*=\s*1') { $ok++ }
+      elseif ($head -match 'rpt_phase\s*=\s*0') {
+        # Specialised repeated form: legal, but only as a strict subset of the wrapper's
+        # pattern, which needs the wrapper's other two context bits as well.
+        if (($head -match 'rpt_active\s*=\s*1') -and ($head -match 'rptb_flag\s*=\s*0')) { $repeated++ }
+        else {
+          $bad.Add(("  {0}:{1}: rpt_phase=0 constructor must also carry ``rpt_active=1`` and ``rptb_flag=0```n      {2}" -f $file.Name, $start, $first))
+        }
+      }
       else {
         $bad.Add(("  {0}:{1}: top-level constructor missing ``& rpt_phase=1```n      {2}" -f $file.Name, $start, $first))
       }
@@ -75,6 +93,7 @@ foreach ($file in $files) {
 foreach ($b in $bad) { Write-Host $b }
 Write-Host ("top-level constructors with rpt_phase=1 : {0}" -f $ok)
 Write-Host (":^instruction wrappers                  : {0}" -f $wrappers)
+Write-Host ("specialised repeated forms              : {0}" -f $repeated)
 Write-Host ("violations                              : {0}" -f $bad.Count)
 
 if ($bad.Count -gt 0) {

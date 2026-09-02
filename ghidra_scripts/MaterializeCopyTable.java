@@ -118,6 +118,20 @@ public class MaterializeCopyTable extends GhidraScript {
         return bestBase;
     }
 
+    // Word address of a uniquely-named symbol, or -1. Used to prefer _c_int00's own copy-table
+    // pointer (labeled __TI_COPY_TABLE by SeedFunctions) over the structural scan.
+    long symbolWord(String name) {
+        try {
+            var it = currentProgram.getSymbolTable().getSymbols(name);
+            while (it.hasNext()) {
+                Symbol s = it.next();
+                long w = s.getAddress().getOffset() / 2;
+                if (w >= fStart && w <= fEnd) return w;
+            }
+        } catch (Exception e) { }
+        return -1;
+    }
+
     void ensureInit(long w) {
         MemoryBlock blk = mem.getBlock(wa(w));
         if (blk != null && !blk.isInitialized()) {
@@ -152,7 +166,28 @@ public class MaterializeCopyTable extends GhidraScript {
         for (var b : del) bm.removeBookmark(b);
     }
 
+    // run_ghidra_script / the MCP bridge deliver -Dkey=value as getScriptArgs(), NOT as JVM system
+    // properties, so the c28x.ct.* overrides (especially -Dc28x.ct.base, the documented escape hatch
+    // when auto-detection fails) silently no-op over MCP/headless. Promote any -Dkey=value (or bare
+    // -Dkey -> "true") script arg to a real property first.
+    // Clear first: system properties are JVM-global and survive between script runs in one Ghidra
+    // session, so a flag passed once would stay set for every later run in that session.
+    void promoteDashDArgs() {
+        for (String k : new java.util.ArrayList<>(System.getProperties().stringPropertyNames()))
+            if (k.startsWith("c28x.ct.")) System.clearProperty(k);
+        String[] args = getScriptArgs();
+        if (args == null) return;
+        for (String a : args) {
+            if (a == null || !a.startsWith("-D")) continue;
+            String kv = a.substring(2);
+            int eq = kv.indexOf('=');
+            if (eq > 0) System.setProperty(kv.substring(0, eq), kv.substring(eq + 1));
+            else if (!kv.isEmpty()) System.setProperty(kv, "true");
+        }
+    }
+
     public void run() throws Exception {
+        promoteDashDArgs();
         space = currentProgram.getAddressFactory().getDefaultAddressSpace();
         mem = currentProgram.getMemory();
 
@@ -164,9 +199,30 @@ public class MaterializeCopyTable extends GhidraScript {
         }
         if (fEnd == 0) { println("no initialized flash block >= 0x80000 found"); return; }
 
+        // Table address, most trustworthy source first:
+        //   1. an explicit -Dc28x.ct.base
+        //   2. the __TI_COPY_TABLE symbol, which SeedFunctions reads straight out of _c_int00's
+        //      `MOVL XARn,#tableptr ; LCR walker` startup call -- that is the pointer the CPU
+        //      itself uses, so it beats any structural guess
+        //   3. the structural scan (a run of valid records + terminator), for images seeded
+        //      before signal D existed or where the startup call was not recognized
         String p = System.getProperty("c28x.ct.base");
-        long tbase = (p != null) ? Long.decode(p.trim()) : detectTable();
-        if (tbase < 0) { println("copy-table not found; pass -Dc28x.ct.base=0xWORD"); return; }
+        long tbase;
+        if (p != null) {
+            tbase = Long.decode(p.trim());
+            println(String.format("copy table 0x%05x (from -Dc28x.ct.base)", tbase));
+        } else if ((tbase = symbolWord("__TI_COPY_TABLE")) >= 0) {
+            println(String.format("copy table 0x%05x (from the __TI_COPY_TABLE symbol -- _c_int00's own pointer)", tbase));
+        } else {
+            tbase = detectTable();
+        }
+        if (tbase < 0) {
+            println("copy-table not found; pass -Dc28x.ct.base=0xWORD.");
+            println("NOTE: if SeedFunctions reported the copy-table pointer as ABSENT (0x3fffff), this image");
+            println("      has no copy table at all -- it initializes data through the inlined .cinit walk in");
+            println("      _c_int00 (see __TI_CINIT_Base), so there is nothing here to materialize.");
+            return;
+        }
         if (Integer.getInteger("c28x.ct.words", 6) == 8) { recW = 8; offLd = 0; offRn = 2; offSz = 4; }
         println(String.format("flash 0x%05x-0x%05x ; copy table @ 0x%05x", fStart, fEnd, tbase));
 

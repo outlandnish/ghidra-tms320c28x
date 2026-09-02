@@ -90,7 +90,7 @@ not require attribution.
 
 ## Adapted from mwdmwd/ghidra-c28x (Apache-2.0)
 
-An independent C28x Ghidra processor module,
+A C28x Ghidra processor module developed independently and in parallel with this one,
 [`mwdmwd/ghidra-c28x`](https://github.com/mwdmwd/ghidra-c28x), is also
 Apache-2.0-licensed. Its maintainer invited reuse under that license in
 [issue #12](https://github.com/outlandnish/ghidra-tms320c28x/issues/12).
@@ -111,12 +111,12 @@ Files adapted so far:
   prototype. See #15.
 - **`src/main/java/ghidra/app/plugin/core/analysis/TMS320C28xFfcReturnAnalyzer.java`**
   — port of their `TMS320C28FfcReturnAnalyzer`. Local changes: the processor-name
-  string ("TMS320C28x" here vs "TMS320C28" upstream), the class rename, and the
-  FFC/LB detection in `ffcTarget()` / `isXar7Branch()`. Upstream matches XAR7 as
+  string ("TMS320C28x" here vs "TMS320C28" in theirs), the class rename, and the
+  FFC/LB detection in `ffcTarget()` / `isXar7Branch()`. They match XAR7 as
   operand 0; this module's SLEIGH renders `FFC XAR7,#t` / `LB *XAR7` with XAR7 as a
   print literal (FFC operand 0 is the target; `LB *XAR7` has no operand), so
   detection is by mnemonic + resolved call flow / the `*XAR7` print form. Runtime-
-  verified: with upstream's operand-0 checks the analyzer never fired on this
+  verified: with their operand-0 checks the analyzer never fired on this
   module. See #16.
 - **`data/languages/tms320c28x_more.sinc`** (partial) — the three-variant
   `LB *XAR7` constructor split dispatched by (`ffc_return`, `switch_canonical`)
@@ -169,8 +169,8 @@ Files adapted so far:
   then sets `switch_canonical=1` on the proven index instruction, the optional
   range-subtraction, and the terminal `LB *XAR7` so Ghidra's generic Decompiler
   Switch Analysis can recover case labels. Local changes: processor-name string
-  ("TMS320C28x" vs upstream "TMS320C28"), class rename, and XAR7 detection in
-  `isComputedXar7Branch()` / `isRegisterOperand()`. Upstream matches XAR7 as
+  ("TMS320C28x" vs "TMS320C28" in theirs), class rename, and XAR7 detection in
+  `isComputedXar7Branch()` / `isRegisterOperand()`. They match XAR7 as
   operand 0 of `LB`; this module's SLEIGH renders `LB *XAR7` with XAR7 baked into
   the mnemonic literal (zero operands), so the terminal branch is matched by
   mnemonic + operand-count + `*XAR7` print form + `isJump && isComputed` flow.
@@ -178,7 +178,7 @@ Files adapted so far:
   `*XAR7` operands (e.g. `MOVL XAR7,*+XAR7[0]`). See #18. Complements — does not
   replace — [`ghidra_scripts/MarkJumpTables.java`](ghidra_scripts/MarkJumpTables.java),
   which is the structured-data marker for the pointer table itself (an original
-  entropy-gated pattern detector, no upstream counterpart).
+  entropy-gated pattern detector, with no counterpart in mwdmwd).
 - **`data/languages/tms320c28x_ext56.sinc`** (partial, `switch_canonical=1`
   variants of `MOV ACC,loc16<<#shft` at 0x5603 and `ADD ACC,loc16<<#shft` at
   0x5604) and **`data/languages/tms320c28x_more.sinc`** (partial,
@@ -204,8 +204,8 @@ Files adapted so far:
   is retained for emulation only — see "Emulator cannot arm `inst_next`" below.
   See #19.
 
-  **Divergence from mwdmwd upstream — phase-bit partition on every base constructor.**
-  Upstream's wrappers pattern-match on `rpt_phase=0 & rpt_active=1 & instruction`
+  **Divergence from mwdmwd — phase-bit partition on every base constructor.**
+  Their wrappers pattern-match on `rpt_phase=0 & rpt_active=1 & instruction`
   and rely on the wrapper being "more constrained" than the base to win the
   SLEIGH pattern-resolution race. In practice `sleigh -l` reports the wrapper
   and every base constructor as *"Constructor patterns cannot be distinguished"*
@@ -227,7 +227,7 @@ Files adapted so far:
   `= inst_next` (which stores Ghidra's byte offset). The wrapper's
   `goto [RB_RSTART]` treats the register value as a raw PC (word units on this
   wordsize=2 space), so without the shift the branch lands at 2× the intended
-  address. Upstream's `= inst_next` form works only on architectures whose
+  address. Their `= inst_next` form works only on architectures whose
   PC and register-file agree on units; this is documented for the next port.
 
   **`rpt_phase` must be `noflow`.** All three dispatch bits are declared
@@ -242,18 +242,47 @@ Files adapted so far:
   image over `0x82000+0x8000`: 57 extra UNDEFs and 3 extra length-skews versus
   `main`, 42 of them exactly two words after an RPT opcode.
 
-  **Emulator cannot arm `inst_next`.** Ghidra's emulator applies a `globalset`
-  context commit one instruction too late — the value written for the target
-  address only becomes visible after that instruction has already been decoded
-  and executed. RPTB is unaffected because its target is the block-end address,
-  several instructions ahead. RPT targets `inst_next`, so under emulation the
-  base constructor always wins and the wrapper's p-code never runs (`RPTC` is
-  never decremented). The RPT arm / re-issue logic therefore stays in
-  `postExecuteCallback`; the SLEIGH wrapper remains the decompiler model.
-  Disassembly is unaffected — firmware decode parity against TI `dis2000` is
-  identical to `main`. See `docs/EMULATION.md` for the measured context dump.
+  **Emulator context timing — corrected 2026-09.** The note above said the wrapper
+  cannot fire under emulation. It does: `RPT #2 ‖ ADDB ACC,#1` steps `RPTC` 2 → 1 → 0,
+  and only the wrapper decrements `RPTC`. The `postExecuteCallback` re-issue runs
+  alongside it without compounding, because the wrapper loops back to the same address
+  the re-issue sets. Whether the re-issue is now redundant is untested. See
+  `docs/EMULATION.md`.
+- **`data/languages/tms320c28x_rpt.sinc`**, **`_flow.sinc`**, **`_more.sinc`**,
+  **`_ext56.sinc`** (the repeated program transfers and the C2xLP `X*` family) —
+  adapted from mwdmwd's "Model repeated program-transfer shadows" and their C2xLP
+  constructors, which covered this ground first. Adopted:
+
+  - Repeated PREAD / PWRITE / XPREAD / XPWRITE, holding the shadowed program pointer
+    in a SLEIGH unique and looping on `RPTC`, so a repeated transfer reads as the
+    block copy it is. Replaces an emulator-only model that covered `PREAD` alone.
+  - The `@AH` / `@AL` destination split for SPRU430F's exact N/Z rule, retiring an
+    approximation that set N/Z for every `loc16` destination.
+  - The `0x3F` program page on every `X*` instruction. This module formed a plain
+    16-bit address. The non-X forms force `0x00`, so it is not a blanket substitution.
+  - The software-stack `XCALL` / `XRETC` model. This module routed both through `RPC`,
+    which was self-consistent and so went unnoticed: `SP` never moved across a call.
+  - `XB pma,COND`, `XB pma,*,ARPn`, `XCALL pma,COND`, `XCALL pma,*,ARPn`, `XBANZ`
+    (10 encodings) and `XRETC COND`, none of which this module had.
+  - `&XAR0 + ARP*4` register-space indexing for the ARP-selected register in `XBANZ`.
+
+  Local changes: our token names (`op_hi8` / `op16` / `loc_full8` + the `loc16`
+  sub-table, vs `op8_8` / `op0_16` / `op4_4` / `regax`); each repeated form also
+  carries `rptb_flag=0`, making its pattern a strict subset of the RPT wrapper's so
+  sleigh resolves it first; and the page is resolved in a disassembly action
+  (`xpmadest` / `xpmaval` / `xpmaaddr`) rather than at runtime, so Ghidra shows and
+  follows the target. Encodings and rendering re-verified against asm2000/dis2000
+  (`tests/c2xlp.bin`), which also corrected `XRET` to `XRETC UNC` and `XPWRITE *A`
+  to `*AL`.
+
+  Two knock-on fixes. The internal `RPTC` loop and our `postExecuteCallback` re-issue
+  both drove the repeat, running it twice (a 3-word copy advanced its destination 5
+  times); the modifier now zeroes `RPTC` when it arms one of these opcodes. And
+  `run_fw_parity` rejected dis2000's `||` prefix — the marker on an instruction
+  running under a repeat — so no repeated instruction had ever been checked against
+  TI. See #59.
 - **`data/languages/tms320c28x_ext56.sinc`** (partial, `CSB ACC` body) —
-  pure-SLEIGH port of upstream's `csb` at `tms320c28.sinc:2314` using SLEIGH's
+  pure-SLEIGH port of their `csb` at `tms320c28.sinc:2314` using SLEIGH's
   built-in `lzcount`: for non-negative ACC, `lzcount(ACC)` gives the leading
   redundant sign bits; for negative ACC, `lzcount(~ACC)` gives the leading
   ones. Retires the `countSignBits` CALLOTHER from the Java state modifier.
@@ -261,7 +290,7 @@ Files adapted so far:
 
 Deferred (tracked as a follow-up):
 
-- **VCRC8L / VCRC16P1L / VCRC32L** are not ported. Upstream mwdmwd/ghidra-c28x
+- **VCRC8L / VCRC16P1L / VCRC32L** are not ported. mwdmwd/ghidra-c28x
   does not implement VCU-II at all, so there is no reference to lean on, and a
   pure-SLEIGH port would need an 8× manually unrolled MSB-first bit loop per
   instruction (~30 pcode ops). The `VCRC` pcodeop is kept in the Java modifier

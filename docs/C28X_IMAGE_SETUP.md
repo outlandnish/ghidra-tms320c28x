@@ -10,10 +10,13 @@ Every step is a script in the **TMS320C28x** Script-Manager category.
 |---|------|--------------|
 | 0 | **Import + set base** | Load the raw `.bin` as `TMS320C28x:LE:32:default` (F28377D) or `…:f2812`. Set the image base to the flash word address the dump starts at. See the byte-swap note. |
 | 1 | `SetupF28377D.java` (or `SetupF2812.java`) | Map the device memory — peripheral MMIO frames **and the on-chip RAM regions**, split into their datasheet banks (`M0`/`M1`, `LS0`…`LS5`, `D0`/`D1`, `GS0-15`, CLA/CPU MSGRAMs) with correct perms (SARAM → **RWX** since ramfuncs run there; ROM → RX; message RAM → RW). Also maps the DCAN `CANA`/`CANB` message RAM (`0x49000`/`0x4b000`) and (CPU1) the uPP message RAM. Mapping RAM is what lets calls into it resolve later. Pass `CPU1` or `CPU2` as the script arg — CPU1 has device-unique peripherals (UPP/XBAR/USBA/DEV_CFG) that only get labeled when the arg matches. |
-| 2 | `SeedFunctions.java` | Recover functions from the bytes (call targets + prologues) and add call-site→target refs. Call targets pass a **boundary gate** so a coincidental word pair inside a numeric table cannot invent a target in the middle of a real instruction. |
+| 2 | `SeedFunctions.java` | Recover functions from the bytes (call targets + prologues) and add call-site→target refs. Call targets pass a **boundary gate** so a coincidental word pair inside a numeric table cannot invent a target in the middle of a real instruction. Also recovers `_c_int00` and marks it an entry point — see below. |
 | 3 | `MarkJumpTables.java`, `MarkDataTables.java` | Mark switch/pointer tables and float-constant pools as data so they stop decoding as garbage. |
 | 4 | `MaterializeSections.java` or `MaterializeCopyTable.java` | Copy the flash **load images** into their RAM **run** addresses so the RAM-resident code/data becomes real. Which one depends on the startup copy mechanism. |
+| 4c | `EmulateStartup.java` | The general alternative to 4/4b: **run the image's own `_c_int00`** and keep the RAM it writes. Covers whatever mechanism the image uses — including the inlined `.cinit` walk that neither materializer implements. Dry run by default. |
+| 4d | `MarkComponentRegistry.java` | Turns the materialized RAM dispatch table into actual call-graph **references**. 4/4b/4c restore the bytes; without this the graph never sees the indirect edges and every handler still looks dead. Finds the table structurally, reads each dispatcher's descriptor field offset out of the code, creates functions at proven call targets, and recovers a dispatcher's own function when nothing calls it either. Idempotent; `-Dc28x.reg.dryRun` to preview. |
 | 5 | `FinalizeRamfuncs.java` | Post-analysis cleanup: rebuild bodies, clear stale flow bookmarks, repair conflicts. Run it **after** analysis has settled. |
+| 8 | `ReachabilityReport.java` | What is actually reachable from `_c_int00`, and *why* the rest is not. Run last — it is only as good as the reference graph. |
 | 6 | `RetypeWideMemory.java` | Retype 32/64-bit memory operands to kill `CONCAT22`/`CONCAT44` in the decompiler. |
 | 7 | `SweepResidualMarks.java` + verify | Classify leftover `Bad Instruction` marks, delete only the provably cosmetic ones, and confirm against a known-good baseline. |
 
@@ -25,6 +28,83 @@ import THAT, and set the base. In this `wordsize=2` space Ghidra's
 `Address.getOffset()` returns a **byte** offset (= word × 2) while TI's
 `dis2000` prints **word** addresses — divide by 2 when comparing. Scripts that
 walk the listing already account for this.
+
+## Step 2b — the C-runtime entry (`_c_int00`)
+
+Per **SPRU513Z** (*TMS320C28x Assembly Language Tools*) §3.3.1, `_c_int00` is the
+C/C++ startup (boot) routine, and the name means it is **the interrupt handler
+for interrupt number 0, RESET**; §3.3.2.3 notes the linker defines `_c_int00` as
+the program entry point. §3.2 adds that the device cannot read the entry-point
+field out of the object file, so it is encoded in the program in one of three
+ways: a **bootloader's boot table** branches to it, it is installed as the
+**RESET interrupt handler**, or a **hosted debugger** sets PC to it.
+
+The startup routine's responsibilities, in order:
+
+1. set up status and configuration registers
+2. set up the stack
+3. process the `.cinit` table to autoinitialize globals (`--rom_model`)
+4. call all global object constructors in `.init_array` (EABI) / `.pinit` (COFF)
+5. call `main`
+6. call `exit` when `main` returns
+
+A partial flash dump usually omits the sector holding the reset vector / boot
+table, so Ghidra never learns where execution starts. `_c_int00` is then
+invisible to every other seed signal: nothing *calls* it under any of the three
+encodings above, and it opens with status-register setup rather than the
+callee-saved pushes signal B looks for. The image has **no flow anchor at all** —
+the startup path is never disassembled, so the `.cinit`/copy-table call chain and
+anything reached only from it stay dark, and you cannot emulate from reset.
+
+`SeedFunctions` recovers it in three steps; the first two key directly off
+responsibilities 2 and 1:
+
+1. **Anchor** on the word `0x28AD` = `MOV @SP,#16bit` (responsibility 2).
+   Absolute stack-pointer initialization is the one thing only a C-runtime entry
+   does — compiled C moves SP with `ADDB`/`SUBB SP,#imm`, never a literal load.
+   It occurs *once* per application image in the corpus tested.
+2. **Corroborate** within `crtWindow` words (responsibility 1): at least
+   `crtMinModeOps` **distinct** members of the C28x configuration-register trio —
+   `SETC OBJMODE` (`0x561F`), `CLRC AMODE` (`0x5616`), `SETC M0M1MAP` (`0x561A`) —
+   plus at least one `LCR`, since responsibilities 3-6 are reached by call
+   (`__TI_auto_init`, then `main`).
+
+That the spec orders **configuration registers before the stack** is exactly why
+step 3 below is needed: the true entry sits a few words *before* the anchor, at
+the start of the status-register setup rather than at the SP load.
+3. **Walk back** to the true first instruction. The anchor sits *inside*
+   `_c_int00` — the application entries in the corpus open
+   `SETC INTM|DBGM ; MOV @AL,#0 ; MOV IER,@AL` three words earlier, while the
+   bootloader entries start at the anchor. Seeding the anchor would repeat the
+   off-by-one that section B of the script warns about, and would additionally
+   point the program's entry point at the middle of a function. So the script
+   reuses the boundary gate's **backward linear-sweep resynchronization**:
+   decode forward from each of the preceding `crtBackoff` words, keep only the
+   streams that land exactly on the anchor, and in each take the last flow
+   terminator (`LRETR`/`LRET`/`IRET`, or any no-fall-through op) before it — the
+   entry is the instruction after it, since functions are emitted back-to-back.
+   Streams vote; a stream that desyncs abstains.
+
+The recovered entry is created as a function, named, given a plate comment, and
+**registered as an external entry point** — that last part is what re-roots
+analysis and emulation.
+
+Measured over 5 F28377D images / 658k words — four application images spanning
+three firmware generations, plus a bootloader: **8 anchors → 7 entries
+recovered, 1 rejected** by the corroboration gate (a `0x28AD` scoring 0/3 mode
+ops with no `LCR`). Every accepted entry drew a **unanimous** vote across 20–24
+back-offs, and the one case with independent ground truth resolved to exactly
+the hand-recovered address.
+
+**Multiple entries are normal, not an error.** The bootloader image yields
+three — that flash region links several C-runtime units. When there is more than
+one, none is promoted to the bare `_c_int00` name; each is named
+`_c_int00_<wordaddr>` so nothing implies a choice the bytes don't support.
+
+Properties: `-Dc28x.seed.noCrtScan` (disable), `-Dc28x.seed.crtWindow`,
+`-Dc28x.seed.crtMinModeOps`, `-Dc28x.seed.crtBackoff`. A name you chose is never
+overwritten, and an entry already owned by another function is reported and left
+alone.
 
 ## Step 4 — MaterializeSections
 
@@ -152,6 +232,42 @@ flash-resident code + the D0 flash-write ramfunc are fully analyzed; the LS
 section is a known gap (pinning its load/run/size needs tracing the
 `_c_int00` pointer-dispatch).
 
+## Step 4c — EmulateStartup (replay startup instead of reimplementing it)
+
+`MaterializeSections` and `MaterializeCopyTable` each re-implement one startup
+mechanism in Java — memcpy-with-constants, and the TI copy table with a
+hand-written LZSS decoder. That only ever covers mechanisms someone has already
+reversed. A third form is common and implemented by **neither**: the `.cinit`
+record walk TI emits *inline into `_c_int00`* (`__TI_CINIT_Base`, which
+`SeedFunctions` labels). The firmware already contains a correct implementation
+of all of them, so `EmulateStartup` runs it.
+
+Execution starts at `_c_int00` and stops at the application handoff
+(`_args_main`/`main`/`exit` — found by symbol, else derived from `_c_int00`'s
+shape, so it works on programs analysed before signal D existed). Two things are
+deliberately not executed: `__TI_auto_init` (despite the name, the
+global-constructor runner — arbitrary application code) and indirect calls (the
+`.pinit` constructor loop). Ghidra's own write tracking records every store;
+only writes landing in RAM blocks are kept, so peripheral pokes are counted and
+discarded and flash is never touched. **Dry run by default — pass the script
+argument `apply` to write.**
+
+Verified on an F28377D application image: stops cleanly at the handoff after
+~128k steps, writes 20,326 words into GS RAM, and reproduces all three `.cinit`
+records that were decoded by hand from the table — destination and 32-bit value
+both — exactly. The component-dispatch registry comes back populated with real
+flash function pointers instead of zeros, which is the whole point: those
+pointers are what turn indirect dispatch into references Ghidra can follow.
+
+**This is also the sharpest ISA test in the tree.** Replaying real startup found
+two SLEIGH semantic holes that decode parity is structurally blind to, because
+the mnemonic and operands are correct either way — `ADDB ACC,#8bit` setting no
+flags, and `PREAD` setting no N/Z. It also surfaced the `*XAR7` repeat shadow
+(SPRU430F: a repeated `PREAD` advances an *internal* copy of the address, so the
+source walks forward while the architectural `XAR7` stays put), now modelled in
+the state modifier. See `EmuAddbAccFlagsTest`, `EmuPreadFlagsTest`,
+`EmuPreadRepeatTest`.
+
 ## Step 5 — FinalizeRamfuncs (run AFTER analysis settles)
 
 Three artifacts of Ghidra's auto-analysis, all needing background analysis to
@@ -263,6 +379,90 @@ ramfunc *run* region that now bind to a real function
 (`getReferenceDestinationIterator` over the run range → callers ≥ `0x80800`).
 Non-zero and matching the copy record's expected fan-in = the ramfunc is live
 and its callers resolve.
+
+## Step 8 — ReachabilityReport (what is live, and why the rest is not)
+
+With `_c_int00` recovered there is finally a root, so the call graph can be
+walked. The report splits the unreachable set by *why* nothing reaches it:
+**DATA REFS ONLY** (address stored somewhere but never called from live code —
+fn-ptr tables, ISR vectors; usually live, and the highest-value bucket),
+**called only by unreachable code** (orphaned components — follow them to a root
+in the first bucket), and **NO REFS AT ALL**.
+
+**Read a low percentage as a missing-edge result, not a dead-code result.** On a
+component/task-dispatch firmware the dispatcher calls through a function-pointer
+registry that `.cinit` fills in at runtime, so until startup is replayed those
+pointers are inert flash words and live handlers look unreferenced. Measured on
+an F28377D application image straight out of the pipeline: **53 of 2139
+functions reachable (2.5%)**, with a 1371-word function that had been confirmed
+live by hand sitting in NO-REFS-AT-ALL. Nothing was dead — the registry had
+simply never been filled in.
+The script warns when the fraction is implausibly low and points at Step 4c.
+
+**Materializing is necessary but NOT sufficient — Step 4c alone does not move
+this number.** Verified on a clean import of that image: after `EmulateStartup
+apply` wrote the registry into RAM, reachability was still **53 / 2140 (2.5%)**.
+Materialization restores the *bytes*; the graph is built from *references*, and
+nothing in Step 4c turns a materialized RAM pointer word into an edge. That is
+what **Step 4d (`MarkComponentRegistry`)** is for.
+
+Emitting those edges alone only reaches **112 / 2174 (5.2%)**, because the
+remaining gap is a **rooting** problem rather than an edge problem — worth
+understanding, because it is the shape of every dispatch-driven image.
+
+The component dispatchers are called from OS **task-control blocks** that
+`.cinit` builds in RAM as a circular linked list: a header word points at the
+first node, each node carries next/prev links and the task function at a fixed
+offset inside it. Because the walker reaches a node through a *pointer* and not
+an array base, no instruction anywhere holds a node's address as an immediate,
+and nothing in the image references the records at all. The walker itself has
+zero incoming references: it is the tick ISR.
+
+**Where its vector would be:** on F28377D the PIE vector table is RAM at
+`0x000D00–0x000DFF` (128 vectors × 2 words), mapped by `SetupF28377D` as
+`PIE_VECT_REGS`. It is not in flash and is not missing from the dump — it is
+simply **uninitialized**, because the application writes it at runtime and
+Step 4c stops at the handoff into `main`. So the chain terminates in a vector
+table that has never been filled in.
+
+**You do not have to emulate that far to recover it, though.** TI's
+`InitPieVectTable` copies a *const initializer* out of flash, and that
+initializer is fully populated in the image. Step 4d finds it structurally, with
+a signature strong enough to need no tuning: a long run of consecutive 32-bit
+code addresses, dominated by one repeated value (the default unused-interrupt
+handler TI fills every spare slot with — 209 of 224 entries on the image tested,
+93%), whose **entry 0 is the reset vector**, i.e. the `_c_int00` that signal D
+already recovered. That last test is what makes it unambiguous.
+
+Every distinct target is an interrupt handler: it runs, and nothing calls it. So
+the table's slots get data references to their targets, the targets get
+functions, and each is registered as an entry point. Handlers that live in RAM
+(time-critical ISRs are ramfuncs) only resolve once a materialize step has
+populated D0/D1 — those are reported and skipped rather than guessed at.
+
+Step 4d therefore does what this pipeline already does for ISRs: a flash
+function whose address `.cinit` planted in RAM, and which nothing calls, is
+**runtime-dispatched** — an entry point in every sense except that its vector is
+unwritten — so it is registered as one. Deliberately narrow: the value must land
+exactly on a function entry in flash, and the function must have no incoming
+call/jump reference at all, so nothing the edge passes just connected is
+affected.
+
+With both passes the same image reaches **1084 / 2195 (49.4%)** — 31 inferred
+runtime-dispatched roots plus 5 handlers rooted from the vector table —
+with NO-REFS-AT-ALL falling 493 → 389. Confirmed independently beforehand by
+rooting the dispatchers by hand (`-Dc28x.reach.roots=…` gave 1096 / 2174,
+50.4%), so the automatic result lands within noise of the hand-derived one
+rather than inventing reachability.
+
+Note the two passes are complementary, not redundant: the OS tick walker is
+**not** in the PIE table, so it is only ever rooted by inference, while the
+interrupt handlers are rooted on evidence. Run the vector pass first so the
+inference pass never has to guess at anything the table already proves.
+
+The remaining lever is emulating **past** the handoff, which would let the RAM
+vector table and the D0/D1 ramfunc ISRs resolve directly — at the cost of
+running application init against peripherals the emulator does not model.
 
 ## Per-CPU notes (F28377D)
 

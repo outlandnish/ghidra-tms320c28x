@@ -26,7 +26,12 @@ define token instr16 (16)
     loc_mode5 = (3,7)       # mode selector for the 1 0 xxx group
     loc_areg  = (0,2)       # XARn selector (AAA) -> attached to XAR0..XAR7
     loc_areg16= (0,2)       # same bits, attached to AR0..AR7 (16-bit @ARn mode)
-    loc_arp   = (0,2)       # ARP number 0..7 for *,ARPn (plain, NOT attached to a reg)
+    loc_arp   = (0,2)       # ARP number 0..7 for *,ARPn (NOT attached to a register -- it names
+                            # one, it does not select an operand). Rendered decimal via
+                            # `attach names` in tms320c28x_addr.sinc: it is a register NUMBER, and
+                            # the default scalar formatting printed TI's "*,ARP4" as "*,ARP0x4".
+                            # The `dec` field attribute does NOT fix this -- Ghidra formats the
+                            # scalar operand itself.
     loc_off6  = (0,5)       # 6-bit offset (@6bit, *-SP[6bit])
     loc_imm3  = (3,5)       # 3-bit index III in *+XARn[3bit] (1 1 III AAA) — NOT bits
                             # 0-2 (those are the XARn selector AAA); was a real bug:

@@ -6,7 +6,9 @@
 # macros (packst0/unpackst0/packst1/unpackst1) and their wiring on PUSH|POP ST0|ST1,
 # the per-flag SETC|CLRC #imm8 bodies, the decoded-signed PM convention used by SPM,
 # and the three-variant LB *XAR7 split dispatched by the ffc_return /
-# switch_canonical context bits. See THIRD-PARTY.md.
+# switch_canonical context bits; the @AH / @AL destination split on PREAD and XPREAD
+# that gives SPRU430F's exact N/Z rule; and the 0x3F program page on XPREAD / XMAC /
+# XMACD. See THIRD-PARTY.md.
 #
 # Additional C28x instructions seen in the real firmware (DIR/PM) but not in the
 # core families. Encodings verified against docs/c28x/ch6_instruction_detail.txt.
@@ -169,7 +171,21 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 # SUBB ACC, #8bit   0001 1001 CCCC CCCC
 :SUBB ACCreg, "#"imm8  is rpt_phase=1 & op_hi8=0x19 & ACCreg & imm8  { ACC = ACC - zext(imm8:1); }
 # ADDB ACC, #8bit   0000 1001 CCCC CCCC
-:ADDB ACCreg, "#"imm8  is rpt_phase=1 & op_hi8=0x09 & ACCreg & imm8  { ACC = ACC + zext(imm8:1); }
+# Flags matter here and used to be missing entirely (the body was just the add). SPRU430F has this
+# form affecting Z/N/C/V like any other ACC add, and the C runtime leans on it: TI's startup tests a
+# weak linker symbol for the "absent" sentinel with `MOV @AL,#0xffff ; MOV @AH,#0xffff ;
+# ADDB ACC,#1 ; SB skip,EQ` -- i.e. it adds 1 to -1 and branches on Z. With no Z update the branch
+# read a stale flag, fell through, and _c_int00 "called" the copy-table walker with the 0x3fffff
+# absent-pointer, walking garbage. Disassembly parity never saw it: the mnemonic and operands were
+# always right. Caught by emulating real startup code (EmulateStartup) -- the flag-order class the
+# testing notes warn only emulation catches. Guarded by EmuAddbAccFlagsTest.
+:ADDB ACCreg, "#"imm8  is rpt_phase=1 & op_hi8=0x09 & ACCreg & imm8  {
+    local b:4 = zext(imm8:1);
+    $(C) = carry(ACC, b);
+    $(V) = scarry(ACC, b);
+    ACC = ACC + b;
+    setNZ32(ACC);
+}
 # ADDB AX, #8bit    1001 110A CCCC CCCC
 :ADDB AX, "#"imm8   is rpt_phase=1 & op_hi7=0x4E & AX & imm8  {
     local b:2 = zext(imm8:1);
@@ -200,10 +216,9 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
     local a:4 = sext(T); local b:4 = zext(loc16); P = a * b;
 }
 # XMACD P,loc16,*pma  1010 0100 LLLL LLLL : pma   (mac with data move) decode-only-ish
-:XMACD Preg, loc16, "*"imm16  is rpt_phase=1 & op_hi8=0xA4 & Preg & loc16 ; imm16 {
+:XMACD Preg, loc16, "*("xpmaval")"  is rpt_phase=1 & op_hi8=0xA4 & Preg & loc16 ; imm16 & xpmaval {
     ACC = ACC + P;
-    local pma:4 = zext(imm16:2);
-    local pv:2 = *[ram]:2 pma;
+    local pv:2 = xpmaval;
     local a:4 = sext(loc16); local b:4 = sext(pv);
     P = a * b;
 }
@@ -243,10 +258,9 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 :MOV ACCreg, loc16^"<<#0"  is rpt_phase=1 & op_hi8=0x85 & ACCreg & loc16 {
     ACC = sext(loc16);
 }
-:XMAC Preg, loc16, "*pma"  is rpt_phase=1 & op_hi8=0x84 & Preg & loc16 ; imm16 {
+:XMAC Preg, loc16, "*("xpmaval")"  is rpt_phase=1 & op_hi8=0x84 & Preg & loc16 ; imm16 & xpmaval {
     ACC = ACC + P;
-    local pma:4 = zext(imm16:2);
-    local pv:2 = *[ram]:2 pma;
+    local pv:2 = xpmaval;
     local a:4 = sext(loc16); local b:4 = sext(pv);
     P = a * b;
 }
@@ -272,10 +286,42 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 # MOV IER, loc16   0010 0011 LLLL LLLL
 :MOV "IER", loc16  is rpt_phase=1 & op_hi8=0x23 & loc16  { IER = loc16; }
 # PREAD loc16,*XAR7   0010 0100 LLLL LLLL  (read program memory @XAR7 -> loc16)
+#
+# N/Z are conditioned on the DESTINATION, which is how SPRU430F states the rule: "If (loc16 = @AX)
+# and bit 15 of AX is 1, then N is set" -- a memory destination leaves both flags alone. So @AH and
+# @AL are their own constructors below and the generic loc16 form writes no flags. This replaces a
+# deliberate approximation (N/Z on every destination) that also wrote flags for block-copy forms
+# such as `PREAD *XAR6++,*XAR7`, where hardware writes none. The @AX split is adapted from
+# mwdmwd/ghidra-c28x; see THIRD-PARTY.md.
+#
+# The @AX half is load-bearing, and the firmware proves it: TI's inlined .cinit walk in _c_int00
+# reads a record's count with `PREAD @AL,*XAR7` and immediately does `SB skip,GEQ` -- a SIGNED test
+# on the word just loaded, where a negative count means "this record has a 32-bit destination". With
+# no N update the branch read a stale flag, the sign test inverted, and the walk took the count
+# 0xffff literally: it copied 65535 words to a destination truncated to 16 bits instead of 1 word
+# to the real 32-bit one, scribbling 85k words across M0/LS/GS RAM. Disassembly parity cannot
+# see this -- the mnemonic and operand are correct either way. Found by EmulateStartup replaying a
+# real F28377D application image.
+#
+# EmuPreadFlagsTest guards it, and now guards constructor PRECEDENCE with it: the test assembles
+# 0x24A9 (`PREAD @AL,*XAR7`), so it fails outright if the flagless generic form ever wins the
+# pattern match against the @AL specialisation.
+#
+# The REPEAT SHADOW (`RPT || PREAD`) is modelled in tms320c28x_rpt.sinc.
+:PREAD "@AH", "*XAR7"  is rpt_phase=1 & op_hi8=0x24 & ctx_AMODE=0 & loc_full8=0b10101000  {
+    AH = *[ram]:2 XAR7;
+    setNZ16(AH);
+}
+:PREAD "@AL", "*XAR7"  is rpt_phase=1 & op_hi8=0x24 & ctx_AMODE=0 & loc_full8=0b10101001  {
+    AL = *[ram]:2 XAR7;
+    setNZ16(AL);
+}
 :PREAD loc16, "*XAR7"  is rpt_phase=1 & op_hi8=0x24 & loc16  {
     loc16 = *[ram]:2 XAR7;
 }
 # PWRITE *XAR7,loc16  0010 0110 LLLL LLLL  (write loc16 -> program memory @XAR7)
+# No flags: the destination is program memory, never an accumulator half. Repeated form (which
+# shadows the *XAR7 destination the same way PREAD shadows its source) in tms320c28x_rpt.sinc.
 :PWRITE "*XAR7", loc16  is rpt_phase=1 & op_hi8=0x26 & loc16  {
     *[ram]:2 XAR7 = loc16;
 }
@@ -297,9 +343,22 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 # XOR loc16,#16bit   0001 1100 LLLL LLLL : iiii
 :XOR loc16, "#"imm16  is rpt_phase=1 & op_hi8=0x1C & loc16 ; imm16  { loc16 = loc16 ^ imm16:2; }
 # XPREAD loc16,*(pma)  1010 1100 MMMM MMMM : pma  (program-mem read, single-word form)
-:XPREAD loc16, "*(pma)"  is rpt_phase=1 & op_hi8=0xAC & loc16 ; imm16  {
-    local pma:4 = zext(imm16:2);
-    loc16 = *[ram]:2 pma;
+# Destination-conditioned N/Z, same SPRU430F rule as PREAD above: flags only when the destination
+# is an accumulator half, hence the @AH / @AL split. Repeated forms in tms320c28x_rpt.sinc.
+#
+# `pma` is page-forced to 0x3F -- see the xpmaval sub-table in tms320c28x_flow.sinc. This also
+# fixes the rendering: the operand used to be the LITERAL TEXT "*(pma)" (the letters p-m-a), so
+# the listing never showed which address was read.
+:XPREAD "@AH", "*("xpmaval")"  is rpt_phase=1 & op_hi8=0xAC & ctx_AMODE=0 & loc_full8=0b10101000 ; imm16 & xpmaval  {
+    AH = xpmaval;
+    setNZ16(AH);
+}
+:XPREAD "@AL", "*("xpmaval")"  is rpt_phase=1 & op_hi8=0xAC & ctx_AMODE=0 & loc_full8=0b10101001 ; imm16 & xpmaval  {
+    AL = xpmaval;
+    setNZ16(AL);
+}
+:XPREAD loc16, "*("xpmaval")"  is rpt_phase=1 & op_hi8=0xAC & loc16 ; imm16 & xpmaval  {
+    loc16 = xpmaval;
 }
 
 # =============================================================================

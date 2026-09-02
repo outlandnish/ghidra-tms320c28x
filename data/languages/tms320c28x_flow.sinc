@@ -1,5 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Nishanth Samala
+# Copyright the mwdmwd/ghidra-c28x contributors (https://github.com/mwdmwd/ghidra-c28x)
+#
+# Portions adapted from mwdmwd/ghidra-c28x (Apache-2.0): the 0x3F program-page base
+# for the C2xLP X* family, which the xpmadest / xpmaval / xpmaaddr sub-tables below
+# resolve. See THIRD-PARTY.md.
+#
 # C28x control flow: branches, calls, returns.
 # Included by tms320c28x.sinc. Encodings verified against ch6_instruction_detail.txt.
 #
@@ -59,6 +65,34 @@ CC8: "UNC"  is cond4hi=0xf { local c:1 = 1:1;                      export c; }
 # use it and Ghidra shows/follows the absolute target.
 rel16dest: reloc  is simm16  [ reloc = inst_start + simm16; ] { export *[ram]:4 reloc; }
 rel8dest:  reloc  is simm8   [ reloc = inst_start + simm8;  ] { export *[ram]:4 reloc; }
+
+# =============================================================================
+# C2xLP program addresses (the X* family)
+# =============================================================================
+# SPRU430F forces the upper 6 bits of the 22-bit program address to 0x3F for EVERY
+# C2xLP source-compatible instruction -- "PC = 0x3F:pma", "[loc16] = Prog[0x3F:pma]",
+# "the C28x forces the upper 6 bits ... to 0x3F". So the 16-bit `pma` operand names a
+# location in the high 64K of program space (0x3F0000-0x3FFFFF), NOT the bare 16-bit
+# address. These instructions exist for hand-ported C2xLP assembly, which lived up
+# there; TI's C compiler does not emit them.
+#
+# BEWARE the near-identical NON-X forms, which force the page to 0x00 instead
+# (SPRU430F on `MAC P,loc16,*(pma)`: "P = signed T * signed Prog[0x00:pma]"). A plain
+# zext is correct for those and wrong for these, so this is not a family-wide search
+# and replace.
+#
+# Resolved in the disassembly action rather than computed at runtime, so Ghidra shows
+# and follows the real target and lays down a reference -- same reason as rel16dest.
+# The rendered operand is therefore the resolved 22-bit address where TI's dis2000
+# prints the raw 16-bit pma; that is the same absolute-vs-encoded operand difference
+# the parity harness already tolerates for every PC-relative branch.
+# Three exports of the same resolved address, because the three uses need different things:
+# a branch target, the data word AT the address (the `*[ram]` export is what gives Ghidra the
+# reference), and the address itself as a constant -- which the repeated forms need, since they
+# walk a shadow copy of it rather than dereferencing it once.
+xpmadest: reloc  is imm16  [ reloc = 0x3f0000 | imm16; ] { export *[ram]:4 reloc; }    # branch/call target
+xpmaval:  reloc  is imm16  [ reloc = 0x3f0000 | imm16; ] { export *[ram]:2 reloc; }    # 16-bit data word
+xpmaaddr: reloc  is imm16  [ reloc = 0x3f0000 | imm16; ] { export *[const]:4 reloc; }  # the address itself
 
 # ABSOLUTE 22-bit call/branch targets (LCR/LC/FFC/LB #22bit). word1 low 6 bits = addr[21:16],
 # word2 (imm16) = addr[15:0]. Like rel16dest, the destination subtable EXPORTs a ram varnode at the

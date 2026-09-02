@@ -15,6 +15,16 @@
 #   * every top-level `:MNEMONIC` constructor must constrain  rpt_phase=1
 #   * the `:^instruction` wrappers must constrain             rpt_phase=0
 #
+# ONE DELIBERATE EXCEPTION: a specialised REPEATED form. The repeated program transfers
+# (PREAD / PWRITE / XPREAD / XPWRITE in tms320c28x_rpt.sinc) model the C28x program-pointer
+# shadow, which the generic wrapper cannot express, so they are top-level constructors that
+# claim `rpt_phase=0` and pre-empt the wrapper. That is only safe when the constructor is a
+# strict SUBSET of the wrapper's pattern, which needs the wrapper's other two context bits
+# too -- so this check demands `rpt_active=1` AND `rptb_flag=0` alongside `rpt_phase=0`.
+# Without them the pattern merely OVERLAPS the wrapper's and sleigh reports "constructor
+# patterns cannot be distinguished" (or silently resolves the wrong way), which is the same
+# class of silent failure this test exists to prevent.
+#
 # WHY THIS TEST EXISTS. A new `:MNEMONIC` added without `& rpt_phase=1` decodes perfectly
 # and passes every existing fixture. The only symptom is that `RPT || <that instruction>`
 # quietly executes once instead of N+1 times -- wrong emulation and a missing loop in the
@@ -46,6 +56,16 @@ function flush(   head, p) {
     } else if (head ~ /[ \t]is[ \t]/) {
         if (head ~ /rpt_phase[ \t]*=[ \t]*1/) {
             ok++
+        } else if (head ~ /rpt_phase[ \t]*=[ \t]*0/) {
+            # Specialised repeated form: legal, but only as a strict subset of the wrapper
+            # pattern, which needs the wrapper other two context bits as well.
+            if (head ~ /rpt_active[ \t]*=[ \t]*1/ && head ~ /rptb_flag[ \t]*=[ \t]*0/) {
+                repeated++
+            } else {
+                printf("  %s:%d: rpt_phase=0 constructor must also carry `rpt_active=1` and `rptb_flag=0`\n      %s\n",
+                       shortname, start, first)
+                bad++
+            }
         } else {
             printf("  %s:%d: top-level constructor missing `& rpt_phase=1`\n      %s\n",
                    shortname, start, first)
@@ -78,6 +98,7 @@ END {
     flush()
     printf("top-level constructors with rpt_phase=1 : %d\n", ok)
     printf(":^instruction wrappers                  : %d\n", wrappers)
+    printf("specialised repeated forms              : %d\n", repeated)
     printf("violations                              : %d\n", bad)
     if (bad > 0) exit 1
 }

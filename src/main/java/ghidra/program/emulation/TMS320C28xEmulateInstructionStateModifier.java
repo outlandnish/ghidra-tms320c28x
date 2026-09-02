@@ -58,10 +58,28 @@ import ghidra.program.model.pcode.Varnode;
  * unsigned divide and {@code RPT || VCRCxx} block CRC emulating. The RPTB half of the old
  * callback is gone for good; SLEIGH handles it.
  *
- * <p>The two mechanisms do not fight: because the wrapper never fires at {@code inst_next}
- * under emulation, the callback is the only thing driving the RPT loop there, while under
- * disassembly the callback does not run at all and the wrapper is the only thing modelling
- * it. Verified by the RPT and RPTB cases of {@code ghidra_scripts/EmuRptTest.java}.
+ * <p><b>The wrapper does fire under emulation — measured 2026-09.</b> The trace above says the
+ * base constructor wins at {@code inst_next}; that is no longer what happens on Ghidra 12.1.2.
+ * Emulating {@code RPT #2 || ADDB ACC,#1} and reading {@code RPTC} after every step gives
+ * {@code RPTC} 2 → 1 → 0, and the ONLY thing that decrements {@code RPTC} is the wrapper's own
+ * p-code. So the wrapper matches from the first decode of the repeated address and drives the
+ * loop, while this callback re-issues the same address in parallel. They agree rather than
+ * compound, because the wrapper's loop-back is an external {@code goto inst_start} — the very
+ * address the re-issue was going to set — so exactly one execution happens per step either way
+ * ({@code ADDB} ran 3 times for {@code RPT #2}, which is correct). Whether the re-issue is now
+ * redundant is a separate question; it is not answered here, and removing it needs its own
+ * evidence.
+ *
+ * <p><b>Where they DO compound: the repeated program transfers.</b> The specialised PREAD /
+ * PWRITE / XPREAD / XPWRITE constructors in {@code tms320c28x_rpt.sinc} loop INTERNALLY on
+ * {@code RPTC} — the whole repeat runs inside one instruction — so the re-issue above adds a
+ * further pass on top of a repeat that already completed. Measured as a 3-word block copy
+ * advancing its destination pointer 5 times. {@link #rptCallback} therefore zeroes
+ * {@code RPTC} when it arms one of those opcodes, collapsing each issue to exactly one transfer
+ * and leaving this callback the single driver (it also still supplies the {@code *XAR7} shadow,
+ * which one transfer per issue cannot). Under disassembly the callback does not run at all and
+ * SLEIGH is the only model. Verified by the RPT and RPTB cases of
+ * {@code ghidra_scripts/EmuRptTest.java} and by {@code EmuPreadRepeatTest.java}.
  *
  * <p>What remains in this class:
  * <ul>
@@ -98,12 +116,38 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 	private long rptWord;      // word address of the instruction being repeated
 	private long rptRemaining; // re-executions still owed after the natural first pass
 
-	// Single-word return opcodes that restore RPC from the hardware nested-call stack.
+	// PREAD/PWRITE *XAR7 repeat SHADOW (SPRU430F): "When repeated, the *XAR7 program-memory
+	// address is copied to an internal shadow register and the address is post-incremented by 1
+	// during each repetition." So `RPT || PREAD` walks program memory forward while the
+	// ARCHITECTURAL XAR7 is left untouched -- which is exactly why TI's .cinit walk advances XAR7
+	// by hand afterwards (XAR7 += AR1+1). SLEIGH reads *XAR7 every iteration and has no shadow, so
+	// without this a repeated PREAD re-reads one word: a block copy degenerates into a fill, and
+	// the .cinit walk lands 0x34cc34cc where the table says 0x000134cc. Model it here, where the
+	// repeat is already driven: step XAR7 for each re-issue, then restore it when the repeat ends.
+	private static final int OP_PREAD_OPHI8 = 0x24;   // PREAD  loc16,*XAR7
+	private static final int OP_PWRITE_OPHI8 = 0x26;  // PWRITE *XAR7,loc16
+	private boolean xar7Shadowed = false;
+	private long xar7Saved;    // architectural XAR7, restored when the repeat finishes
+	private long xar7Step;     // repetitions issued so far (the shadow's offset from xar7Saved)
+
+	// The program transfers whose REPEATED form has a specialised SLEIGH constructor that loops
+	// internally on RPTC (tms320c28x_rpt.sinc), instead of deferring to the generic
+	// :^instruction wrapper's external `goto inst_start`. See the class comment: this callback
+	// zeroes RPTC when it arms one, so each issue performs exactly one transfer.
+	private static final int OP_XPREAD_OPHI8 = 0xAC;  // XPREAD loc16,*(pma)   (2-word)
+	private static final int OP_XPREAD_AL = 0x563C;   // XPREAD loc16,*AL      (2-word, C2xLP)
+	private static final int OP_XPWRITE_AL = 0x563D;  // XPWRITE *A,loc16      (2-word, C2xLP)
+
+	// Single-word return opcode that restores RPC from the hardware nested-call stack.
 	private static final int OP_LRETR = 0x0006;
-	private static final int OP_XRET = 0x56FF;
-	// Single-word indirect calls that use RPC.
+	// Single-word indirect call that uses RPC.
 	private static final int OP_LC_XAR7 = 0x7604;
-	private static final int OP_XCALL_AL = 0x5634;
+	//
+	// XCALL *AL (0x5634) and XRETC/XRET (0x56Fx) used to be handled here as RPC calls. They are
+	// NOT: SPRU430F has XCALL push only the low 16 bits of the return address onto the SOFTWARE
+	// stack ("[SP] = temp(15:0); SP = SP + 1") and XRETC pop it back, leaving RPC untouched.
+	// SLEIGH models that directly now, so anything left here would push a SECOND, 2-word RPC
+	// frame on top of it -- measured as SP moving by 3 words across an XCALL instead of 1.
 
 	// RPC as it stood *before* the instruction that just executed. A call overwrites RPC
 	// with its own return address, so by the time postExecuteCallback runs the caller's
@@ -164,7 +208,9 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 
 	/**
 	 * Maintain the RPC nested-call chain that the hardware keeps on the stack: a call pushes
-	 * the caller's RPC and {@code LRETR}/{@code XRET} pops it back.
+	 * the caller's RPC and {@code LRETR} pops it back. The C2xLP {@code XCALL}/{@code XRETC}
+	 * family is deliberately NOT part of this chain -- it uses the software stack directly,
+	 * modelled in SLEIGH (see the opcode constants above).
 	 *
 	 * <p>This used to live in SLEIGH, but pushing RPC there wrecked decompilation. Unlike
 	 * x86's {@code CALL}, which pushes the constant {@code inst_next}, the C28x push sources a
@@ -183,7 +229,7 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 			mem.setValue(space, sp << 1, 4, prevRpc);
 			mem.setValue("SP", sp + 2);
 		}
-		else if (w0 == OP_LRETR || w0 == OP_XRET) {
+		else if (w0 == OP_LRETR) {
 			long sp = (mem.getValue("SP") & 0xFFFFFFFFL) - 2;
 			mem.setValue("SP", sp);
 			mem.setValue("RPC", mem.getValue(space, sp << 1, 4));
@@ -193,7 +239,8 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 	/**
 	 * True for the calls that route their return address through RPC. Field extents mirror
 	 * the SLEIGH tokens: {@code op_hi8}=(8,15), {@code op_lo_76}=(6,7), {@code op_lo_35}=(3,7).
-	 * FFC is excluded -- it returns via XAR7 and never touches the RPC chain.
+	 * FFC is excluded -- it returns via XAR7 and never touches the RPC chain. So is the C2xLP
+	 * XCALL family, which pushes the software stack instead (see the opcode constants above).
 	 */
 	private static boolean isRpcCall(int w0) {
 		int ophi8 = w0 >>> 8;
@@ -207,7 +254,18 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 		if (ophi8 == 0x00 && lo76 == 0x2) {                     // LC #22bit
 			return true;
 		}
-		return w0 == OP_LC_XAR7 || w0 == OP_XCALL_AL;           // LC *XAR7 / XCALL *AL
+		return w0 == OP_LC_XAR7;                                // LC *XAR7
+	}
+
+	/**
+	 * True for the program transfers whose repeated form is modelled by a SLEIGH constructor
+	 * with an internal RPTC loop. Both single-word (opcode in the high byte) and two-word
+	 * (whole first word is the opcode) forms.
+	 */
+	private static boolean isInternallyLoopedTransfer(int w) {
+		int hi = w >>> 8;
+		return hi == OP_PREAD_OPHI8 || hi == OP_PWRITE_OPHI8 || hi == OP_XPREAD_OPHI8
+			|| w == OP_XPREAD_AL || w == OP_XPWRITE_AL;
 	}
 
 	/**
@@ -239,6 +297,7 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 				}
 				else {
 					rptActive = false;                       // unknown count source: execute once
+					xar7Shadowed = false;
 					return;
 				}
 			}
@@ -247,6 +306,29 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 			rptWord = currentAddress.getOffset() >> 1;
 			rptRemaining = count;
 			rptActive = count > 0;
+
+			// Arm the *XAR7 shadow if the instruction about to be repeated is PREAD/PWRITE. The
+			// first (natural) execution reads the base address, so nothing moves until the first
+			// re-issue.
+			int repeatedW = (int) (mem.getValue(space, currentAddress.getOffset(), 2) & 0xFFFF);
+			int repeatedOp = repeatedW >>> 8;
+			xar7Shadowed = rptActive
+				&& (repeatedOp == OP_PREAD_OPHI8 || repeatedOp == OP_PWRITE_OPHI8);
+			if (xar7Shadowed) {
+				xar7Saved = mem.getValue("XAR7") & 0xFFFFFFFFL;
+				xar7Step = 0;
+			}
+
+			// Hand the iteration count to exactly one driver. The specialised repeated
+			// program-transfer constructors DO match under emulation (see the class comment) and
+			// loop INTERNALLY on RPTC, so the first issue alone completes the whole repeat --
+			// and then the re-issue below runs it again. Zeroing RPTC collapses each issue to a
+			// single transfer, which is what lets this callback keep driving the count and
+			// stepping the *XAR7 shadow. The full loop stays in the .sla, where the DECOMPILER
+			// reads it. Nothing else consumes RPTC, and hardware leaves it at 0 anyway.
+			if (rptActive && isInternallyLoopedTransfer(repeatedW)) {
+				mem.setValue("RPTC", 0);
+			}
 			return;
 		}
 
@@ -254,10 +336,22 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 		if (rptActive && (lastByteOff >> 1) == rptWord) {
 			if (rptRemaining > 0) {
 				rptRemaining--;
+				if (xar7Shadowed) {
+					// Advance the shadow. Assign from the saved base rather than incrementing the
+					// live register, so an instruction that writes XAR7 itself (SPRU430F gives the
+					// loc16 field priority, e.g. `PREAD *XAR7++,*XAR7`) cannot compound the step.
+					xar7Step++;
+					mem.setValue("XAR7", xar7Saved + xar7Step);
+				}
 				emu.setExecuteAddress(space.getAddress(rptWord << 1));
 			}
 			else {
 				rptActive = false;
+				if (xar7Shadowed) {
+					// The shadow is internal: hardware leaves the architectural XAR7 where it was.
+					mem.setValue("XAR7", xar7Saved);
+					xar7Shadowed = false;
+				}
 			}
 		}
 	}
