@@ -328,6 +328,35 @@ Files adapted so far:
   R0H. Four probes in `tests/abi_probe.expected.txt` pin both sides of the step.
   See #63.
 
+- **`src/main/java/ghidra/app/plugin/core/analysis/TMS320C28xCodePointerAnalyzer.java`**
+  — port of their `TMS320C28CodePointerAnalyzer`. It proves, by intraprocedural
+  constant propagation over p-code, exactly which function address a store writes into
+  a code-pointer slot. Because it reads p-code rather than operand text, it needed none
+  of the print-form adaptation the switch and FFC ports did.
+
+  **Local change — the destination gate.** They accept a candidate only when the store's
+  destination is *already typed* as a pointer to a `FunctionDefinition`. That is sound
+  for a program someone has begun annotating and unsatisfiable on a raw firmware image:
+  measured after this module's pipeline, 344 defined data items, 344 of them already
+  4-byte pointer-typed, and **0** pointing at a `FunctionDefinition`. Rather than drop
+  the precision, this port moves the proof to the other end and also accepts a store
+  whose proved constant is *exactly* the entry point of an existing function — the same
+  criterion `MarkCodePointers.java` uses, and safe for the same reason. A typed
+  destination still qualifies on its own, so nothing they recover is lost.
+  `MarkComponentRegistry` additionally types the RAM dispatch slots it proves, so the
+  original gate has something to match too.
+
+  **What it recovers here: nothing, for a measured reason.** The funnel it logs reads
+  `57 stores proved constant, 22 formed a code address, 0 passed target safety`. The
+  machinery works — it proves constants on this module's p-code — but the 22 candidates
+  are numeric constants that merely fit in 22 bits (200000, 2000000, 10526), and all of
+  them land outside any memory block or inside defined data. This image does not install
+  handlers by storing an immediate function address; its dispatch tables arrive as
+  `.cinit`/copy-table *data*, which materialization and the registry pass already own.
+  Kept enabled anyway: it is cheap, it is a proof rather than a heuristic, and it covers
+  the case those passes structurally cannot — a pointer written on a path startup never
+  takes. See #61.
+
 Evaluated and **not** adopted (recorded so the next reader does not re-derive it):
 
 - **mwdmwd's three newer switch variants** (`6d6c48c`, `a290d6a`):

@@ -313,12 +313,15 @@ public class MarkComponentRegistry extends GhidraScript {
         // Union of the profiled offsets and the ones the dispatchers actually use: the profile
         // finds fields that are widely populated, attribution finds fields that are actually
         // called. Neither is a superset of the other.
-        int slotRefs = 0, fieldRefs = 0, labels = 0;
+        int slotRefs = 0, fieldRefs = 0, labels = 0, typed = 0;
         for (Table t : tables) {
             for (int i = 0; i < t.slots; i++) {
                 long slot = t.base + i * 2, val = t.ptrs.get(i);
                 if (!inFlash(val)) continue;
                 if (addRef(wa(slot), wa(val), RefType.DATA)) slotRefs++;
+                // A registry slot holding a function is a function-pointer global. Typing
+                // it is what lets the store-tracking analyzer see writes to it (#61).
+                if (!inFlash(slot) && fnAt(val) != null && typeFunctionPointer(slot)) typed++;
                 if (t.descriptor && !Boolean.getBoolean("c28x.reg.noLabels")
                         && labelIfUnnamed(val, String.format("compdesc_%05x", val))) labels++;
             }
@@ -332,8 +335,10 @@ public class MarkComponentRegistry extends GhidraScript {
                 }
         }
         println("");
-        println(String.format("data refs: %d slot->descriptor, %d descriptor-field->handler, %d descriptor labels",
-            slotRefs, fieldRefs, labels));
+        println(String.format(
+            "data refs: %d slot->descriptor, %d descriptor-field->handler, %d descriptor labels, "
+            + "%d RAM slots typed as function pointers",
+            slotRefs, fieldRefs, labels, typed));
 
         // ---- 5. single-slot RAM hooks --------------------------------------------------------
         int hooks = 0;
@@ -569,6 +574,9 @@ public class MarkComponentRegistry extends GhidraScript {
                     if (already) continue;              // registry pass (or Ghidra) already resolved it
                 }
                 Set<Long> cands = new LinkedHashSet<>();
+                // The RAM slots the candidates were read out of, kept so a proven hook
+                // can have its slot typed as a function pointer (#61).
+                Set<Long> hookSlots = new LinkedHashSet<>();
                 Instruction p = in;
                 for (int k = 0; k < window; k++) {
                     p = p.getPrevious();
@@ -581,13 +589,16 @@ public class MarkComponentRegistry extends GhidraScript {
                         MemoryBlock b = mem.getBlock(r.getToAddress());
                         if (b == null || !b.isInitialized()) continue;
                         long v = word32(slot);
-                        if (fnAt(v) != null) cands.add(v);
+                        if (fnAt(v) != null) { cands.add(v); hookSlots.add(slot); }
                     }
                 }
                 if (cands.size() != 1) continue;                            // ambiguous -> leave alone
                 long tgt = cands.iterator().next();
                 if (addRef(in.getAddress(), wa(tgt), RefType.COMPUTED_CALL)) {
                     done++;
+                    // Same reasoning as the registry slots: the hook slot is a RAM
+                    // function-pointer global, so type it for the store-tracking pass.
+                    for (long slot : hookSlots) typeFunctionPointer(slot);
                     println(String.format("  hook %05x in %-20s -> %s",
                         in.getAddress().getOffset() / 2, f.getName(), fnAt(tgt).getName()));
                 }
@@ -599,6 +610,50 @@ public class MarkComponentRegistry extends GhidraScript {
     // ---------------------------------------------------------------------------------------
     // mutation helpers (all no-ops under dryRun) + measurement
     // ---------------------------------------------------------------------------------------
+
+    /**
+     * Type a proven RAM function-pointer slot as {@code pointer to FunctionDefinition}.
+     *
+     * <p>This is what makes the slot visible to TMS320C28xCodePointerAnalyzer, whose
+     * only trigger is a store into data already typed that way. Without it that
+     * analyzer has nothing to fire on and silently recovers nothing (#61).
+     *
+     * <p>Only RAM slots are typed. A flash slot is a constant, never a store
+     * destination, so typing one buys nothing; the RAM slots ARE the globals that
+     * code writes at runtime, which is exactly the set the store-tracking analyzer
+     * exists to follow.
+     *
+     * <p>Applying a pointer type here is safe despite the wordsize=2 space: Ghidra
+     * resolves the stored value through the space's addressable-unit size, so a
+     * stored WORD address lands on the right word. Measured on a production image --
+     * all 344 pointer-typed slots resolved to value*2, none to value-as-bytes. (The
+     * older warning in MarkCodePointers.java's header says otherwise; it does not
+     * hold on Ghidra 12.x.)
+     */
+    boolean typeFunctionPointer(long slotWord) {
+        if (dry) return false;
+        Address at = wa(slotWord);
+        try {
+            ghidra.program.model.data.DataTypeManager dtm = currentProgram.getDataTypeManager();
+            if (fnPtrType == null) {
+                ghidra.program.model.data.FunctionDefinitionDataType def =
+                    new ghidra.program.model.data.FunctionDefinitionDataType(
+                        new ghidra.program.model.data.CategoryPath("/C28x"), "code_ptr_target", dtm);
+                fnPtrType = new ghidra.program.model.data.PointerDataType(def, 4, dtm);
+                fnPtrType = dtm.resolve(fnPtrType, null);
+            }
+            Data existing = currentProgram.getListing().getDefinedDataAt(at);
+            if (existing != null && fnPtrType.isEquivalent(existing.getDataType())) return false;
+            currentProgram.getListing().clearCodeUnits(at, at.add(3), false);
+            currentProgram.getListing().createData(at, fnPtrType);
+            return true;
+        }
+        catch (Exception e) {
+            return false;
+        }
+    }
+
+    ghidra.program.model.data.DataType fnPtrType;
 
     boolean addRef(Address from, Address to, RefType type) {
         for (Reference r : rm.getReferencesFrom(from))
