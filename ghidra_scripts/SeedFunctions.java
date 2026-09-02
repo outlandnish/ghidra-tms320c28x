@@ -45,6 +45,66 @@
 //       The fn-ptr-table scan is high-precision instead. (Found PCS411's 0xaa00..0xaa04 service
 //       dispatch table — 7 leaf handlers, all missed by A+B.) Disable with -Dc28x.seed.noGapScan.
 //
+//   (D) C-RUNTIME ENTRY (_c_int00) — recovers the one entry NO other signal can reach.
+//       Per SPRU513Z (TMS320C28x Assembly Language Tools) §3.3.1: _c_int00 is the startup (boot)
+//       routine; the name means it is *the interrupt handler for interrupt number 0, RESET*, and
+//       the linker defines it as the program entry point (§3.3.2.3). §3.2 also notes the device
+//       cannot read the entry-point field out of the object file, so it is encoded in the program
+//       one of three ways — the bootloader's boot table branches to it, it is installed as the
+//       RESET interrupt handler, or a hosted debugger sets PC to it. Every one of those means
+//       nothing CALLS it, and on a partial dump the vector/boot table usually lives in a sector
+//       the dump omits. It also opens with status/configuration-register setup rather than
+//       callee-saved pushes, so signals A, B and C all miss it and the image ends up with no flow
+//       anchor at all. That is not cosmetic: with no entry, Ghidra never disassembles the startup
+//       path, so the .cinit/copy-table call chain and anything reached only from it stay
+//       invisible, and emulation from the entry is impossible. (Observed on that application image,
+//       whose swapped dump starts at 0x80800 and omits the 0x80000 sector.)
+//
+//       §3.3.1 lists what the startup routine must do, IN THIS ORDER, and signal D's two tests
+//       are just the first two of them:
+//         1. set up status and configuration registers      <- the CORROBORATION below
+//         2. set up the stack                               <- the ANCHOR below
+//         3. process the .cinit table to autoinitialize globals (--rom_model)
+//         4. call all global object constructors in .init_array (EABI) / .pinit (COFF)
+//         5. call main
+//         6. call exit when main returns
+//
+//       ANCHOR (responsibility 2): the word 0x28AD = `MOV @SP,#16bit`. Absolute stack-pointer
+//       initialization is the one thing only a C-runtime entry does — compiled C moves SP with
+//       ADDB/SUBB SP,#imm, never a literal load. Measured: 0x28AD occurs ONCE in each of two
+//       ~86k/238k-word application images, and every occurrence in the corpus sits in a boot
+//       sequence.
+//
+//       CORROBORATION (responsibility 1): within `crtWindow` words of the anchor, require at
+//       least `crtMinModeOps` of the C28x configuration-register trio — SETC OBJMODE (0x561F) /
+//       CLRC AMODE (0x5616) / SETC M0M1MAP (0x561A) — AND at least one LCR (responsibilities
+//       3-6 are reached by call: __TI_auto_init, then main). This rejects a coincidental 0x28AD.
+//
+//       Note the ORDER is why the walk-back below is needed at all: configuration registers come
+//       FIRST and the stack SECOND, so the true entry sits a few words BEFORE the anchor, at the
+//       start of the status-register setup. On the application images in the corpus that is
+//       `SETC INTM|DBGM ; MOV @AL,#0 ; MOV IER,@AL` — responsibility 1 — three words ahead of
+//       the `MOV @SP,#16bit` anchor.
+//
+//       ENTRY WALK-BACK: the anchor is the stack init, which is NOT the first instruction —
+//       the app entries in the corpus open `SETC INTM|DBGM ; MOV @AL,#0 ; MOV IER,@AL` three
+//       words earlier, while the bootloader entries start at the anchor itself. So seeding the
+//       anchor would repeat exactly the off-by-one section B warns about. Instead reuse the
+//       backward linear-sweep resynchronization from the boundary gate: decode forward from
+//       each of the preceding `crtBackoff` words, keep only the streams that land exactly on
+//       the anchor, and in each take the last flow TERMINATOR (LRETR/LRET/IRET or any
+//       no-fall-through op) before it — the entry is the instruction right after it, because
+//       functions are laid out back-to-back. Streams vote; the majority wins. A back-off that
+//       desyncs abstains rather than votes.
+//
+//       Measured over 5 F28377D images / 658k words — four application images spanning three
+//       firmware generations, plus a bootloader: 8 anchors -> 7 recovered, 1 rejected by the gate
+//       (a 0x28AD scoring 0/3 mode ops and no LCR). Every accepted entry drew a UNANIMOUS vote
+//       (20-24 back-offs, one distinct candidate), and the one case with independent ground
+//       truth resolved to exactly the hand-recovered address. The bootloader image yields 3
+//       entries — it links several C-runtime units — so multiples are expected, not an error.
+//       Disable with -Dc28x.seed.noCrtScan.
+//
 //   FALSE-SEED FILTER (general). The failure mode is a prologue/call-like byte pattern that
 //   occurs by CHANCE inside a DATA table (strings, calibration/crypto blobs), producing a
 //   bogus function that immediately hits halt_baddata. Real C28x code is LOW-entropy and
@@ -69,6 +129,12 @@
 //   c28x.seed.noBoundaryGate       (bool, default false) disable the signal-A boundary gate
 //   c28x.seed.boundaryBackoff      (int,  default 10)    words to resynchronize from
 //   c28x.seed.boundaryVotes        (int,  default 4)     step-over votes needed to reject
+//   c28x.seed.noCrtScan            (bool, default false) disable the signal-D _c_int00 scan
+//   c28x.seed.crtWindow            (int,  default 24)    words after the anchor to corroborate in
+//   c28x.seed.crtMinModeOps        (int,  default 2)     of the 3 boot mode-setup ops required
+//   c28x.seed.crtBackoff           (int,  default 24)    words to resynchronize the entry from
+//   c28x.seed.noCrtNames           (bool, default false) don't name the C-runtime skeleton /
+//                                                        main / the .cinit + copy-table symbols
 //
 // @category TMS320C28x
 import ghidra.app.script.GhidraScript;
@@ -101,9 +167,31 @@ public class SeedFunctions extends GhidraScript {
     boolean noBoundaryGate = false;
     final Map<Long,Integer> pdLenCache = new HashMap<>();     // word addr -> length in WORDS (0 = undecodable)
     final Map<Long,Boolean> boundaryCache = new HashMap<>();  // word addr -> is an instruction boundary
+    final Map<Long,Boolean> termCache = new HashMap<>();      // word addr -> ends a function body (signal D)
+
+    // run_ghidra_script / the MCP bridge deliver -Dkey=value as getScriptArgs(), NOT as JVM system
+    // properties, so every c28x.seed.* override below silently no-ops when the script is driven that
+    // way — the documented knobs appear to work and quietly do nothing. Promote any -Dkey=value (or
+    // bare -Dkey -> "true") script arg to a real property first.
+    // Clear first: system properties are JVM-global and survive between script runs in one Ghidra
+    // session, so a flag passed once would stay set for every later run in that session.
+    void promoteDashDArgs() {
+        for (String k : new ArrayList<>(System.getProperties().stringPropertyNames()))
+            if (k.startsWith("c28x.seed.")) System.clearProperty(k);
+        String[] args = getScriptArgs();
+        if (args == null) return;
+        for (String a : args) {
+            if (a == null || !a.startsWith("-D")) continue;
+            String kv = a.substring(2);
+            int eq = kv.indexOf('=');
+            if (eq > 0) System.setProperty(kv.substring(0, eq), kv.substring(eq + 1));
+            else if (!kv.isEmpty()) System.setProperty(kv, "true");
+        }
+    }
 
     @Override
     public void run() throws Exception {
+        promoteDashDArgs();
         int minRun = Integer.getInteger("c28x.seed.minPrologueRun", 2);
         boolean prologOnlyIfCalled = Boolean.getBoolean("c28x.seed.prologuesOnlyIfCalled");
         boolean includeLoneProlog  = Boolean.getBoolean("c28x.seed.includeLoneProlog");
@@ -373,6 +461,95 @@ public class SeedFunctions extends GhidraScript {
             println(String.format("gap-scan: minDensity=%.2f win=%d minLeafWords=%d", minDensity, densWin, minLeafWords));
         }
 
+        // --- (D) C-runtime entry (_c_int00) -------------------------------------------------
+        // The reset entry is unreachable by A/B/C: nothing calls it, and it opens with mode-setup
+        // ops instead of pushes. Anchor on `MOV @SP,#16bit` (0x28AD), corroborate with the boot
+        // mode-setup trio + an LCR into the C runtime, then walk back to the true first
+        // instruction. See section (D) in the header for the measurements behind each gate.
+        int crtSeeded = 0, crtRejected = 0;
+        if (!Boolean.getBoolean("c28x.seed.noCrtScan")) {
+            int crtWindow     = Integer.getInteger("c28x.seed.crtWindow", 24);
+            int crtMinModeOps = Integer.getInteger("c28x.seed.crtMinModeOps", 2);
+            int crtBackoff    = Integer.getInteger("c28x.seed.crtBackoff", 24);
+            if (pdis == null) pdis = new ghidra.app.util.PseudoDisassembler(currentProgram);
+
+            java.util.TreeSet<Long> crtEntries = new java.util.TreeSet<>();
+            for (long wi = 0; wi < nwords; wi++) {
+                if (wordAt(wi * 2) != 0x28AD) continue;            // MOV @SP,#16bit
+                long anchor = base + wi;
+                // DISTINCT ops, not occurrences: CLRC AMODE alone appears 7-8 times in a typical
+                // image, so counting repeats would let one op standing in for the trio pass.
+                int seen = 0; boolean lcr = false;
+                for (long k = anchor; k < anchor + crtWindow && k <= hi; k++) {
+                    int w = wordAt((k - base) * 2);
+                    if (w < 0) break;
+                    if (w == 0x561F) seen |= 1;                                    // SETC OBJMODE
+                    else if (w == 0x5616) seen |= 2;                               // CLRC AMODE
+                    else if (w == 0x561A) seen |= 4;                               // SETC M0M1MAP
+                    if (((w >> 8) & 0xff) == 0x76 && ((w >> 6) & 0x3) == 0x1) lcr = true;   // LCR
+                }
+                int modeOps = Integer.bitCount(seen);
+                if (modeOps < crtMinModeOps || !lcr) {
+                    println(String.format("  CRT anchor @%05x rejected (mode ops %d/3, LCR %s)",
+                        anchor, modeOps, lcr ? "yes" : "no"));
+                    crtRejected++;
+                    continue;
+                }
+                crtEntries.add(crtEntryOf(anchor, crtBackoff));
+            }
+
+            // One entry -> it is THE C-runtime entry. Several -> the image links several runtime
+            // units (a bootloader region holding more than one linked program does this), and
+            // nothing in the bytes says which is "the" one, so each is named by its address
+            // rather than silently promoting one of them.
+            boolean single = crtEntries.size() == 1;
+            for (long w : crtEntries) {
+                Address a = addr(w);
+                var fmgr2 = currentProgram.getFunctionManager();
+                Function f = fmgr2.getFunctionAt(a);
+                Function covering = fmgr2.getFunctionContaining(a);
+                if (f == null && covering != null) {
+                    // Something already owns these bytes from a different start. Re-cutting it
+                    // here would split a function analysis already bound; report and leave it.
+                    println(String.format("  CRT entry @%05x lies inside %s -- left alone", w, covering.getName()));
+                    continue;
+                }
+                if (f == null) {
+                    if (currentProgram.getListing().getInstructionAt(a) == null)
+                        new DisassembleCommand(a, null, true).applyTo(currentProgram, monitor);
+                    new CreateFunctionCmd(a).applyTo(currentProgram, monitor);
+                    f = fmgr2.getFunctionAt(a);
+                    if (f == null) { println(String.format("  CRT entry @%05x FAILED to bind", w)); continue; }
+                    created++; createdEntries.add(w);
+                }
+                String nm = single ? "_c_int00" : String.format("_c_int00_%05x", w);
+                // never rename over a name the operator chose
+                if (f.getSymbol() == null
+                        || f.getSymbol().getSource() == ghidra.program.model.symbol.SourceType.DEFAULT) {
+                    try { f.setName(nm, ghidra.program.model.symbol.SourceType.ANALYSIS); }
+                    catch (Exception e) { println("  CRT rename failed @" + Long.toHexString(w) + ": " + e); }
+                }
+                // Mark it an entry point: this is the flow anchor the image was missing, and it
+                // is what lets later analysis (and emulation) start from the real reset path.
+                currentProgram.getSymbolTable().addExternalEntryPoint(a);
+                if (getPlateComment(a) == null)
+                    setPlateComment(a, "C-runtime startup routine (SeedFunctions signal D): recovered "
+                        + "from the MOV @SP,#16bit stack init + configuration-register idiom.\n"
+                        + "_c_int00 is the handler for interrupt 0 (RESET) and the linker's program "
+                        + "entry point, so nothing calls it -- it is reached by the boot table, the "
+                        + "RESET vector, or a debugger setting PC (SPRU513Z 3.2/3.3.1).\n"
+                        + "Order per SPRU513Z 3.3.1: (1) status/config registers, (2) stack, "
+                        + "(3) .cinit autoinit of globals, (4) global ctors in .init_array (EABI) or "
+                        + ".pinit (COFF), (5) main, (6) exit.");
+                println(String.format("  CRT entry @%05x -> %s", w, f.getName()));
+                crtSeeded++;
+                if (!Boolean.getBoolean("c28x.seed.noCrtNames")) nameCRuntime(w);
+            }
+            if (crtEntries.size() > 1)
+                println("  NOTE: " + crtEntries.size() + " C-runtime entries -- this image links "
+                    + "several runtime units; none was promoted to the bare _c_int00 name.");
+        }
+
         // --- PRUNE: drop seeds that are immediately-truncating stubs sitting in DATA ------
         // A seeded function whose very first fall-through path runs into an undecodable word
         // is either (a) data misread as code, or (b) a genuine hole in the SLEIGH module.
@@ -422,6 +599,7 @@ public class SeedFunctions extends GhidraScript {
 
         println(String.format("image: base=0x%x  words=%d", base, nwords));
         println(String.format("gap-scan (signal C): seeded %d leaf functions, rejected %d", gapSeeded, gapRejected));
+        println(String.format("C-runtime entry (signal D): %d recovered, %d anchors rejected", crtSeeded, crtRejected));
         println(String.format("call/branch targets in-image: %d", calledTargets.size()));
         if (!noBoundaryGate) {
             println(String.format("boundary gate: refused %d phantom targets landing mid-instruction "
@@ -444,6 +622,257 @@ public class SeedFunctions extends GhidraScript {
                     " words, filtered by the data/entropy gate. Tune with -Dc28x.seed.* ;\n" +
                     " -Dc28x.seed.noDataFilter=true disables the gate; -Dc28x.seed.includeLoneProlog=true\n" +
                     " adds every 1-op prologue match. See the header for all properties.)");
+    }
+
+    // --- Signal D follow-on: name the TI C-runtime skeleton laid out around _c_int00 ----------
+    // Once the entry is known, the rest of the startup skeleton falls out of its SHAPE, and with
+    // it `main` -- which roots the whole application call graph and is otherwise just another
+    // FUN_xxx. The layout below was identical in all three application images checked, spanning
+    // three firmware generations, which is unsurprising: it is TI's stock boot28.asm/args_main.c,
+    // emitted once per link.
+    //
+    //   _c_int00:
+    //     <mode setup>
+    //     LCR  _system_pre_init      \ first call, then CMPB AL,#0 / SB join,EQ:
+    //     CMPB AL,#0                 / a zero return skips C init but still runs main
+    //     SB   join,EQ
+    //     ... guarded weak calls, then the INLINED .cinit walk:
+    //     MOV  @AL,#lo / MOV @AH,#hi ; MOVL XAR7,#(hi:lo)   <- __TI_CINIT_Base
+    //     ... PREAD copy loop ...
+    //     MOVL XAR4,#tableptr ; LCR walker                  <- copy-table init (see below)
+    //     MOV  @AL,#lo / MOV @AH,#hi ; LCR (hi:lo)          <- __TI_auto_init
+    //   join:
+    //     LCR  _args_main            <- and _args_main's one call is main()
+    //     LCR  exit
+    //
+    // TWO rules do the real work, and both are self-checking rather than positional:
+    //
+    //   * __TI_auto_init is the guarded call whose materialized 32-bit CONSTANT EQUALS ITS OWN
+    //     TARGET. The startup code loads a weak symbol's address, tests it against 0/-1 and calls
+    //     it only if present, so const == target identifies it exactly. This matters because
+    //     _c_int00 contains SEVERAL such guarded calls -- in every image checked there is another
+    //     one whose constant is 0x00001 (a flag, not an address), and a purely positional "the
+    //     Nth call" rule would name that one instead.
+    //   * The COPY-TABLE pointer is the `MOVL XARn,#imm22` that is FOLLOWED by a call; the
+    //     .cinit base is the one that is NOT (it feeds the inlined PREAD loop). In all three
+    //     images the copy-table pointer was 0x3fffff -- the linker's "absent" sentinel -- which
+    //     is itself worth reporting: it means the image has no copy table and any table a
+    //     structural scan turns up is not the one startup uses.
+    //
+    // Everything here is additive and never renames a symbol the operator set.
+    void nameCRuntime(long entryWord) {
+        java.util.ArrayList<ghidra.program.model.listing.Instruction> ins = crtWalk(entryWord, 200);
+        long preInit = -1, join = -1, argsMain = -1, exitFn = -1, autoInit = -1;
+        long cinitBase = -1, ctPtr = -1, ctWalker = -1;
+        long lastAl = -1, lastAh = -1;
+        for (int k = 0; k < ins.size(); k++) {
+            ghidra.program.model.listing.Instruction i = ins.get(k);
+            String m = i.getMnemonicString();
+            if (m.equals("MOV")) {
+                // Only the 2-word `MOV loc16,#16bit` form renders a separate loc operand; the
+                // 1-word short form bakes it in and is not an address materialization anyway.
+                long s = firstScalar(i);
+                String o0 = i.getNumOperands() > 1 ? i.getDefaultOperandRepresentation(0) : null;
+                if (s >= 0 && o0 != null) {
+                    if (o0.equals("@AL")) lastAl = s;
+                    else if (o0.equals("@AH")) lastAh = s;
+                }
+            } else if (m.equals("MOVL")) {
+                long sv = firstScalar(i);
+                if (sv >= 0) {
+                    long v = sv;
+                    long callAfter = -1;
+                    for (int j = k + 1; j < Math.min(k + 3, ins.size()); j++)
+                        if (ins.get(j).getMnemonicString().equals("LCR")) { callAfter = flowWord(ins.get(j)); break; }
+                    if (callAfter >= 0) { ctPtr = v; ctWalker = callAfter; }   // copy-table init call
+                    else if (v >= lo && v <= hi) cinitBase = v;                // feeds the PREAD loop
+                }
+            } else if (m.equals("LCR")) {
+                long t = flowWord(i);
+                if (t < 0) continue;
+                if (join >= 0 && i.getAddress().getOffset() / 2 == join) {
+                    argsMain = t;
+                    if (k + 1 < ins.size() && ins.get(k + 1).getMnemonicString().equals("LCR"))
+                        exitFn = flowWord(ins.get(k + 1));
+                    break;                                     // past this is the next function
+                }
+                if (preInit < 0 && k + 2 < ins.size()
+                        && ins.get(k + 1).getMnemonicString().equals("CMPB")
+                        && ins.get(k + 2).getMnemonicString().equals("SB")) {
+                    preInit = t;
+                    join = flowWord(ins.get(k + 2));
+                } else if (lastAl >= 0 && lastAh >= 0 && (((lastAh << 16) | lastAl) == t)) {
+                    autoInit = t;                              // const == target => the weak call
+                }
+            }
+        }
+
+        // main() is _args_main's only call: it tests the 0xffffffff "no args" sentinel, sets
+        // argc/argv, then tail-calls main. If the shape isn't a single call, say nothing.
+        long mainFn = -1;
+        if (argsMain >= lo && argsMain <= hi) {
+            long only = -1; int n = 0;
+            for (ghidra.program.model.listing.Instruction i : crtWalk(argsMain, 40))
+                if (i.getMnemonicString().equals("LCR")) { only = flowWord(i); n++; }
+            if (n == 1) mainFn = only;
+        }
+
+        nameCrtFn(preInit,  "_system_pre_init", "TI C-runtime: returns non-zero to allow C initialization.");
+        nameCrtFn(autoInit, "__TI_auto_init",   "TI C-runtime autoinitialization (SPRU513Z 3.3.1 steps 3-4): processes the .cinit table to autoinitialize globals (--rom_model / EABI ROM model, tables located by __TI_CINIT_Base) and runs the global object constructors in .init_array (EABI) or .pinit (COFF). Weak-guarded call from _c_int00 -- its address is materialized and null-tested at the call site.");
+        nameCrtFn(argsMain, "_args_main",       "TI C-runtime: sets up argc/argv from the linker args block, then calls main.");
+        nameCrtFn(mainFn,   "main",             "Application entry, reached as _c_int00 -> _args_main -> main.");
+        nameCrtFn(exitFn,   "exit",             "TI C-runtime: called with main's return value.");
+        nameCrtFn(ctWalker, "__TI_copy_table_init",
+            "TI C-runtime: called from _c_int00 with the copy-table pointer in XAR4.");
+
+        if (cinitBase >= lo && cinitBase <= hi) {
+            crtLabel(cinitBase, "__TI_CINIT_Base");
+            println(String.format("    __TI_CINIT_Base = %05x (inlined .cinit walk in _c_int00)", cinitBase));
+        }
+        if (ctPtr >= 0) {
+            boolean absent = (ctPtr == 0x3fffff || ctPtr > hi || ctPtr < lo);
+            if (!absent) {
+                crtLabel(ctPtr, "__TI_COPY_TABLE");
+                println(String.format("    __TI_COPY_TABLE = %05x (MaterializeCopyTable will use this)", ctPtr));
+            } else {
+                println(String.format("    copy-table pointer is ABSENT (0x%x = linker sentinel) -- this image "
+                    + "initializes data through the inlined .cinit walk, not a copy table", ctPtr));
+            }
+        }
+    }
+
+    // Linear walk of the instructions at `startWord` (the startup code is laid out linearly, so
+    // this deliberately sweeps ADDRESS order rather than following branches). Read-only.
+    java.util.ArrayList<ghidra.program.model.listing.Instruction> crtWalk(long startWord, int cap) {
+        java.util.ArrayList<ghidra.program.model.listing.Instruction> out = new java.util.ArrayList<>();
+        long p = startWord;
+        for (int n = 0; n < cap && p >= lo && p <= hi; n++) {
+            ghidra.program.model.listing.Instruction i;
+            try { i = pdis.disassemble(addr(p)); } catch (Exception e) { break; }
+            if (i == null) break;
+            out.add(i);
+            String m = i.getMnemonicString();
+            if (m.equals("LRETR") || m.equals("LRET") || m.equals("IRET")) break;
+            p += i.getLength() / 2;
+        }
+        return out;
+    }
+
+    // First scalar operand of `i`, or -1. Scans EVERY operand rather than assuming an index:
+    // constructors that bake the register into the display (`MOVL XAR7,#imm22`) expose a single
+    // operand holding the immediate, while `MOV @AL,#imm16` exposes two with the immediate second.
+    long firstScalar(ghidra.program.model.listing.Instruction i) {
+        for (int k = 0; k < i.getNumOperands(); k++) {
+            ghidra.program.model.scalar.Scalar s = i.getScalar(k);
+            if (s != null) return s.getUnsignedValue();
+        }
+        return -1;
+    }
+
+    // First flow target of `i` as a WORD address, or -1.
+    long flowWord(ghidra.program.model.listing.Instruction i) {
+        Address[] f = i.getFlows();
+        if (f == null || f.length == 0) return -1;
+        return f[0].getOffset() / 2;
+    }
+
+    // Bind + name one C-runtime function, creating it if the seed scan missed it. Additive:
+    // a name the operator set is reported and kept, never overwritten.
+    void nameCrtFn(long word, String name, String why) {
+        if (word < lo || word > hi) return;
+        Address a = addr(word);
+        var fm = currentProgram.getFunctionManager();
+        Function f = fm.getFunctionAt(a);
+        if (f == null) {
+            if (fm.getFunctionContaining(a) != null) return;      // owned from elsewhere; leave it
+            if (currentProgram.getListing().getInstructionAt(a) == null)
+                new DisassembleCommand(a, null, true).applyTo(currentProgram, monitor);
+            new CreateFunctionCmd(a).applyTo(currentProgram, monitor);
+            f = fm.getFunctionAt(a);
+            if (f == null) return;
+        }
+        if (f.getSymbol() != null
+                && f.getSymbol().getSource() != ghidra.program.model.symbol.SourceType.DEFAULT) {
+            println(String.format("    %-22s @%05x -- already named %s, kept", name, word, f.getName()));
+            return;
+        }
+        try {
+            f.setName(name, ghidra.program.model.symbol.SourceType.ANALYSIS);
+            if (getPlateComment(a) == null) setPlateComment(a, why);
+            println(String.format("    %-22s @%05x", name, word));
+        } catch (Exception e) {
+            println("    naming " + name + " @" + Long.toHexString(word) + " failed: " + e);
+        }
+    }
+
+    // Label a startup DATA table, unless something is already labeled there.
+    void crtLabel(long word, String name) {
+        Address a = addr(word);
+        try {
+            for (var s : currentProgram.getSymbolTable().getSymbols(a))
+                if (s.getSource() != ghidra.program.model.symbol.SourceType.DEFAULT) return;
+            currentProgram.getSymbolTable().createLabel(a, name,
+                ghidra.program.model.symbol.SourceType.ANALYSIS);
+        } catch (Exception e) { println("    label " + name + " failed: " + e); }
+    }
+
+    // --- Signal D: walk an anchor back to the first instruction of the C-runtime entry --------
+    // The anchor (MOV @SP,#16bit) sits a few instructions INTO _c_int00, so it cannot be seeded
+    // directly -- that is the same off-by-one section B documents, and here it would also point
+    // the program's entry point at the middle of a function.
+    //
+    // Backward linear-sweep resynchronization, as in the boundary gate: decode forward from each
+    // of the preceding `backoff` words and keep only the streams that land EXACTLY on the anchor
+    // (a stream that steps over it was misaligned, so it abstains). Within each surviving stream,
+    // the entry is the instruction following the last flow TERMINATOR before the anchor: functions
+    // are emitted back-to-back, so the word after the previous function's LRETR is this one's
+    // first instruction. Streams vote and the majority wins; measured over the corpus in the
+    // header, every real entry was unanimous across 20-24 back-offs. Falls back to the anchor
+    // itself when no terminator is in range -- never guesses EARLIER than it can show.
+    long crtEntryOf(long anchorWord, int backoff) {
+        Map<Long,Integer> votes = new HashMap<>();
+        for (int k = 1; k <= backoff; k++) {
+            long s = anchorWord - k;
+            if (s < lo) break;
+            java.util.ArrayList<Long> bounds = new java.util.ArrayList<>();
+            long p = s;
+            boolean ok = true;
+            while (p < anchorWord) {
+                int len = pdWordLen(p);
+                if (len <= 0) { ok = false; break; }     // undecodable -> abstain
+                bounds.add(p);
+                p += len;
+            }
+            if (!ok || p != anchorWord) continue;        // stepped over the anchor -> abstain
+            for (int i = bounds.size() - 1; i >= 0; i--) {
+                long b = bounds.get(i);
+                if (isFlowTerminator(b)) { votes.merge(b + pdWordLen(b), 1, Integer::sum); break; }
+            }
+        }
+        long best = anchorWord;
+        int bestVotes = 0;
+        for (Map.Entry<Long,Integer> e : votes.entrySet())
+            if (e.getValue() > bestVotes) { bestVotes = e.getValue(); best = e.getKey(); }
+        return best;
+    }
+
+    // Does the instruction at `word` END a function body? A return, or anything with no
+    // fall-through (an unconditional branch). Read-only (PseudoDisassembler) and cached, like
+    // pdWordLen -- the vote above revisits the same addresses from many back-offs.
+    boolean isFlowTerminator(long word) {
+        Boolean c = termCache.get(word);
+        if (c != null) return c;
+        boolean t = false;
+        try {
+            ghidra.program.model.listing.Instruction ins = pdis.disassemble(addr(word));
+            if (ins != null) {
+                String m = ins.getMnemonicString();
+                t = m.equals("LRETR") || m.equals("LRET") || m.equals("IRET")
+                    || ins.getFallThrough() == null;
+            }
+        } catch (Exception e) { t = false; }
+        termCache.put(word, t);
+        return t;
     }
 
     // --- Signal C guard: does [entry .. ] disassemble cleanly through to its OWN return? -----
