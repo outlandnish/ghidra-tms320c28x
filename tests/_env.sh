@@ -96,5 +96,12 @@ _c28x_install_module() {
   mkdir -p "$target/data/languages" "$target/lib"
   cp "$lang"/* "$target/data/languages/"
   cp "$manifest" "$target/Module.manifest"
+  # Device profiles are module DATA, not language files, so they sit alongside
+  # data/languages. MarkComponentRegistry finds them through
+  # Application.getModuleDataFile, which only sees what has been installed.
+  if [ -d "$module/data/device_profiles" ]; then
+    mkdir -p "$target/data/device_profiles"
+    cp -r "$module/data/device_profiles"/* "$target/data/device_profiles/"
+  fi
   printf '%s\n' "$target/lib"
 }

@@ -1,0 +1,1148 @@
+{
+  "schema": "c28x-pie-profile/1",
+  "profileName": "F2837xD",
+  "provenance": {
+    "generatedBy": "tools/generate_pie_profile.py",
+    "sourceHeader": "F2837xD_pievect.h",
+    "sourceSha256": "1587ef81b7cdf9f99e7d634569ccdfa3610c6e65c452784726b5fd0e22048aec",
+    "license": "TI C2000Ware device header, BSD-3-Clause (see NOTICE)"
+  },
+  "vectorCount": 227,
+  "vectors": [
+    {
+      "slot": 0,
+      "name": "PIE1_RESERVED_INT",
+      "description": "Reserved"
+    },
+    {
+      "slot": 1,
+      "name": "PIE2_RESERVED_INT",
+      "description": "Reserved"
+    },
+    {
+      "slot": 2,
+      "name": "PIE3_RESERVED_INT",
+      "description": "Reserved"
+    },
+    {
+      "slot": 3,
+      "name": "PIE4_RESERVED_INT",
+      "description": "Reserved"
+    },
+    {
+      "slot": 4,
+      "name": "PIE5_RESERVED_INT",
+      "description": "Reserved"
+    },
+    {
+      "slot": 5,
+      "name": "PIE6_RESERVED_INT",
+      "description": "Reserved"
+    },
+    {
+      "slot": 6,
+      "name": "PIE7_RESERVED_INT",
+      "description": "Reserved"
+    },
+    {
+      "slot": 7,
+      "name": "PIE8_RESERVED_INT",
+      "description": "Reserved"
+    },
+    {
+      "slot": 8,
+      "name": "PIE9_RESERVED_INT",
+      "description": "Reserved"
+    },
+    {
+      "slot": 9,
+      "name": "PIE10_RESERVED_INT",
+      "description": "Reserved"
+    },
+    {
+      "slot": 10,
+      "name": "PIE11_RESERVED_INT",
+      "description": "Reserved"
+    },
+    {
+      "slot": 11,
+      "name": "PIE12_RESERVED_INT",
+      "description": "Reserved"
+    },
+    {
+      "slot": 12,
+      "name": "PIE13_RESERVED_INT",
+      "description": "Reserved"
+    },
+    {
+      "slot": 13,
+      "name": "TIMER1_INT",
+      "description": "CPU Timer 1 Interrupt"
+    },
+    {
+      "slot": 14,
+      "name": "TIMER2_INT",
+      "description": "CPU Timer 2 Interrupt"
+    },
+    {
+      "slot": 15,
+      "name": "DATALOG_INT",
+      "description": "Datalogging Interrupt"
+    },
+    {
+      "slot": 16,
+      "name": "RTOS_INT",
+      "description": "RTOS Interrupt"
+    },
+    {
+      "slot": 17,
+      "name": "EMU_INT",
+      "description": "Emulation Interrupt"
+    },
+    {
+      "slot": 18,
+      "name": "NMI_INT",
+      "description": "Non-Maskable Interrupt"
+    },
+    {
+      "slot": 19,
+      "name": "ILLEGAL_INT",
+      "description": "Illegal Operation Trap"
+    },
+    {
+      "slot": 20,
+      "name": "USER1_INT",
+      "description": "User Defined Trap 1"
+    },
+    {
+      "slot": 21,
+      "name": "USER2_INT",
+      "description": "User Defined Trap 2"
+    },
+    {
+      "slot": 22,
+      "name": "USER3_INT",
+      "description": "User Defined Trap 3"
+    },
+    {
+      "slot": 23,
+      "name": "USER4_INT",
+      "description": "User Defined Trap 4"
+    },
+    {
+      "slot": 24,
+      "name": "USER5_INT",
+      "description": "User Defined Trap 5"
+    },
+    {
+      "slot": 25,
+      "name": "USER6_INT",
+      "description": "User Defined Trap 6"
+    },
+    {
+      "slot": 26,
+      "name": "USER7_INT",
+      "description": "User Defined Trap 7"
+    },
+    {
+      "slot": 27,
+      "name": "USER8_INT",
+      "description": "User Defined Trap 8"
+    },
+    {
+      "slot": 28,
+      "name": "USER9_INT",
+      "description": "User Defined Trap 9"
+    },
+    {
+      "slot": 29,
+      "name": "USER10_INT",
+      "description": "User Defined Trap 10"
+    },
+    {
+      "slot": 30,
+      "name": "USER11_INT",
+      "description": "User Defined Trap 11"
+    },
+    {
+      "slot": 31,
+      "name": "USER12_INT",
+      "description": "User Defined Trap 12"
+    },
+    {
+      "slot": 32,
+      "name": "ADCA1_INT",
+      "description": "1.1 - ADCA Interrupt 1"
+    },
+    {
+      "slot": 33,
+      "name": "ADCB1_INT",
+      "description": "1.2 - ADCB Interrupt 1"
+    },
+    {
+      "slot": 34,
+      "name": "ADCC1_INT",
+      "description": "1.3 - ADCC Interrupt 1"
+    },
+    {
+      "slot": 35,
+      "name": "XINT1_INT",
+      "description": "1.4 - XINT1 Interrupt"
+    },
+    {
+      "slot": 36,
+      "name": "XINT2_INT",
+      "description": "1.5 - XINT2 Interrupt"
+    },
+    {
+      "slot": 37,
+      "name": "ADCD1_INT",
+      "description": "1.6 - ADCD Interrupt 1"
+    },
+    {
+      "slot": 38,
+      "name": "TIMER0_INT",
+      "description": "1.7 - Timer 0 Interrupt"
+    },
+    {
+      "slot": 39,
+      "name": "WAKE_INT",
+      "description": "1.8 - Standby and Halt Wakeup Interrupt"
+    },
+    {
+      "slot": 40,
+      "name": "EPWM1_TZ_INT",
+      "description": "2.1 - ePWM1 Trip Zone Interrupt"
+    },
+    {
+      "slot": 41,
+      "name": "EPWM2_TZ_INT",
+      "description": "2.2 - ePWM2 Trip Zone Interrupt"
+    },
+    {
+      "slot": 42,
+      "name": "EPWM3_TZ_INT",
+      "description": "2.3 - ePWM3 Trip Zone Interrupt"
+    },
+    {
+      "slot": 43,
+      "name": "EPWM4_TZ_INT",
+      "description": "2.4 - ePWM4 Trip Zone Interrupt"
+    },
+    {
+      "slot": 44,
+      "name": "EPWM5_TZ_INT",
+      "description": "2.5 - ePWM5 Trip Zone Interrupt"
+    },
+    {
+      "slot": 45,
+      "name": "EPWM6_TZ_INT",
+      "description": "2.6 - ePWM6 Trip Zone Interrupt"
+    },
+    {
+      "slot": 46,
+      "name": "EPWM7_TZ_INT",
+      "description": "2.7 - ePWM7 Trip Zone Interrupt"
+    },
+    {
+      "slot": 47,
+      "name": "EPWM8_TZ_INT",
+      "description": "2.8 - ePWM8 Trip Zone Interrupt"
+    },
+    {
+      "slot": 48,
+      "name": "EPWM1_INT",
+      "description": "3.1 - ePWM1 Interrupt"
+    },
+    {
+      "slot": 49,
+      "name": "EPWM2_INT",
+      "description": "3.2 - ePWM2 Interrupt"
+    },
+    {
+      "slot": 50,
+      "name": "EPWM3_INT",
+      "description": "3.3 - ePWM3 Interrupt"
+    },
+    {
+      "slot": 51,
+      "name": "EPWM4_INT",
+      "description": "3.4 - ePWM4 Interrupt"
+    },
+    {
+      "slot": 52,
+      "name": "EPWM5_INT",
+      "description": "3.5 - ePWM5 Interrupt"
+    },
+    {
+      "slot": 53,
+      "name": "EPWM6_INT",
+      "description": "3.6 - ePWM6 Interrupt"
+    },
+    {
+      "slot": 54,
+      "name": "EPWM7_INT",
+      "description": "3.7 - ePWM7 Interrupt"
+    },
+    {
+      "slot": 55,
+      "name": "EPWM8_INT",
+      "description": "3.8 - ePWM8 Interrupt"
+    },
+    {
+      "slot": 56,
+      "name": "ECAP1_INT",
+      "description": "4.1 - eCAP1 Interrupt"
+    },
+    {
+      "slot": 57,
+      "name": "ECAP2_INT",
+      "description": "4.2 - eCAP2 Interrupt"
+    },
+    {
+      "slot": 58,
+      "name": "ECAP3_INT",
+      "description": "4.3 - eCAP3 Interrupt"
+    },
+    {
+      "slot": 59,
+      "name": "ECAP4_INT",
+      "description": "4.4 - eCAP4 Interrupt"
+    },
+    {
+      "slot": 60,
+      "name": "ECAP5_INT",
+      "description": "4.5 - eCAP5 Interrupt"
+    },
+    {
+      "slot": 61,
+      "name": "ECAP6_INT",
+      "description": "4.6 - eCAP6 Interrupt"
+    },
+    {
+      "slot": 62,
+      "name": "PIE14_RESERVED_INT",
+      "description": "4.7 - Reserved"
+    },
+    {
+      "slot": 63,
+      "name": "PIE15_RESERVED_INT",
+      "description": "4.8 - Reserved"
+    },
+    {
+      "slot": 64,
+      "name": "EQEP1_INT",
+      "description": "5.1 - eQEP1 Interrupt"
+    },
+    {
+      "slot": 65,
+      "name": "EQEP2_INT",
+      "description": "5.2 - eQEP2 Interrupt"
+    },
+    {
+      "slot": 66,
+      "name": "EQEP3_INT",
+      "description": "5.3 - eQEP3 Interrupt"
+    },
+    {
+      "slot": 67,
+      "name": "PIE16_RESERVED_INT",
+      "description": "5.4 - Reserved"
+    },
+    {
+      "slot": 68,
+      "name": "PIE17_RESERVED_INT",
+      "description": "5.5 - Reserved"
+    },
+    {
+      "slot": 69,
+      "name": "PIE18_RESERVED_INT",
+      "description": "5.6 - Reserved"
+    },
+    {
+      "slot": 70,
+      "name": "PIE19_RESERVED_INT",
+      "description": "5.7 - Reserved"
+    },
+    {
+      "slot": 71,
+      "name": "PIE20_RESERVED_INT",
+      "description": "5.8 - Reserved"
+    },
+    {
+      "slot": 72,
+      "name": "SPIA_RX_INT",
+      "description": "6.1 - SPIA Receive Interrupt"
+    },
+    {
+      "slot": 73,
+      "name": "SPIA_TX_INT",
+      "description": "6.2 - SPIA Transmit Interrupt"
+    },
+    {
+      "slot": 74,
+      "name": "SPIB_RX_INT",
+      "description": "6.3 - SPIB Receive Interrupt"
+    },
+    {
+      "slot": 75,
+      "name": "SPIB_TX_INT",
+      "description": "6.4 - SPIB Transmit Interrupt"
+    },
+    {
+      "slot": 76,
+      "name": "MCBSPA_RX_INT",
+      "description": "6.5 - McBSPA Receive Interrupt"
+    },
+    {
+      "slot": 77,
+      "name": "MCBSPA_TX_INT",
+      "description": "6.6 - McBSPA Transmit Interrupt"
+    },
+    {
+      "slot": 78,
+      "name": "MCBSPB_RX_INT",
+      "description": "6.7 - McBSPB Receive Interrupt"
+    },
+    {
+      "slot": 79,
+      "name": "MCBSPB_TX_INT",
+      "description": "6.8 - McBSPB Transmit Interrupt"
+    },
+    {
+      "slot": 80,
+      "name": "DMA_CH1_INT",
+      "description": "7.1 - DMA Channel 1 Interrupt"
+    },
+    {
+      "slot": 81,
+      "name": "DMA_CH2_INT",
+      "description": "7.2 - DMA Channel 2 Interrupt"
+    },
+    {
+      "slot": 82,
+      "name": "DMA_CH3_INT",
+      "description": "7.3 - DMA Channel 3 Interrupt"
+    },
+    {
+      "slot": 83,
+      "name": "DMA_CH4_INT",
+      "description": "7.4 - DMA Channel 4 Interrupt"
+    },
+    {
+      "slot": 84,
+      "name": "DMA_CH5_INT",
+      "description": "7.5 - DMA Channel 5 Interrupt"
+    },
+    {
+      "slot": 85,
+      "name": "DMA_CH6_INT",
+      "description": "7.6 - DMA Channel 6 Interrupt"
+    },
+    {
+      "slot": 86,
+      "name": "PIE21_RESERVED_INT",
+      "description": "7.7 - Reserved"
+    },
+    {
+      "slot": 87,
+      "name": "PIE22_RESERVED_INT",
+      "description": "7.8 - Reserved"
+    },
+    {
+      "slot": 88,
+      "name": "I2CA_INT",
+      "description": "8.1 - I2CA Interrupt 1"
+    },
+    {
+      "slot": 89,
+      "name": "I2CA_FIFO_INT",
+      "description": "8.2 - I2CA Interrupt 2"
+    },
+    {
+      "slot": 90,
+      "name": "I2CB_INT",
+      "description": "8.3 - I2CB Interrupt 1"
+    },
+    {
+      "slot": 91,
+      "name": "I2CB_FIFO_INT",
+      "description": "8.4 - I2CB Interrupt 2"
+    },
+    {
+      "slot": 92,
+      "name": "SCIC_RX_INT",
+      "description": "8.5 - SCIC Receive Interrupt"
+    },
+    {
+      "slot": 93,
+      "name": "SCIC_TX_INT",
+      "description": "8.6 - SCIC Transmit Interrupt"
+    },
+    {
+      "slot": 94,
+      "name": "SCID_RX_INT",
+      "description": "8.7 - SCID Receive Interrupt"
+    },
+    {
+      "slot": 95,
+      "name": "SCID_TX_INT",
+      "description": "8.8 - SCID Transmit Interrupt"
+    },
+    {
+      "slot": 96,
+      "name": "SCIA_RX_INT",
+      "description": "9.1 - SCIA Receive Interrupt"
+    },
+    {
+      "slot": 97,
+      "name": "SCIA_TX_INT",
+      "description": "9.2 - SCIA Transmit Interrupt"
+    },
+    {
+      "slot": 98,
+      "name": "SCIB_RX_INT",
+      "description": "9.3 - SCIB Receive Interrupt"
+    },
+    {
+      "slot": 99,
+      "name": "SCIB_TX_INT",
+      "description": "9.4 - SCIB Transmit Interrupt"
+    },
+    {
+      "slot": 100,
+      "name": "CANA0_INT",
+      "description": "9.5 - CANA Interrupt 0"
+    },
+    {
+      "slot": 101,
+      "name": "CANA1_INT",
+      "description": "9.6 - CANA Interrupt 1"
+    },
+    {
+      "slot": 102,
+      "name": "CANB0_INT",
+      "description": "9.7 - CANB Interrupt 0"
+    },
+    {
+      "slot": 103,
+      "name": "CANB1_INT",
+      "description": "9.8 - CANB Interrupt 1"
+    },
+    {
+      "slot": 104,
+      "name": "ADCA_EVT_INT",
+      "description": "10.1 - ADCA Event Interrupt"
+    },
+    {
+      "slot": 105,
+      "name": "ADCA2_INT",
+      "description": "10.2 - ADCA Interrupt 2"
+    },
+    {
+      "slot": 106,
+      "name": "ADCA3_INT",
+      "description": "10.3 - ADCA Interrupt 3"
+    },
+    {
+      "slot": 107,
+      "name": "ADCA4_INT",
+      "description": "10.4 - ADCA Interrupt 4"
+    },
+    {
+      "slot": 108,
+      "name": "ADCB_EVT_INT",
+      "description": "10.5 - ADCB Event Interrupt"
+    },
+    {
+      "slot": 109,
+      "name": "ADCB2_INT",
+      "description": "10.6 - ADCB Interrupt 2"
+    },
+    {
+      "slot": 110,
+      "name": "ADCB3_INT",
+      "description": "10.7 - ADCB Interrupt 3"
+    },
+    {
+      "slot": 111,
+      "name": "ADCB4_INT",
+      "description": "10.8 - ADCB Interrupt 4"
+    },
+    {
+      "slot": 112,
+      "name": "CLA1_1_INT",
+      "description": "11.1 - CLA1 Interrupt 1"
+    },
+    {
+      "slot": 113,
+      "name": "CLA1_2_INT",
+      "description": "11.2 - CLA1 Interrupt 2"
+    },
+    {
+      "slot": 114,
+      "name": "CLA1_3_INT",
+      "description": "11.3 - CLA1 Interrupt 3"
+    },
+    {
+      "slot": 115,
+      "name": "CLA1_4_INT",
+      "description": "11.4 - CLA1 Interrupt 4"
+    },
+    {
+      "slot": 116,
+      "name": "CLA1_5_INT",
+      "description": "11.5 - CLA1 Interrupt 5"
+    },
+    {
+      "slot": 117,
+      "name": "CLA1_6_INT",
+      "description": "11.6 - CLA1 Interrupt 6"
+    },
+    {
+      "slot": 118,
+      "name": "CLA1_7_INT",
+      "description": "11.7 - CLA1 Interrupt 7"
+    },
+    {
+      "slot": 119,
+      "name": "CLA1_8_INT",
+      "description": "11.8 - CLA1 Interrupt 8"
+    },
+    {
+      "slot": 120,
+      "name": "XINT3_INT",
+      "description": "12.1 - XINT3 Interrupt"
+    },
+    {
+      "slot": 121,
+      "name": "XINT4_INT",
+      "description": "12.2 - XINT4 Interrupt"
+    },
+    {
+      "slot": 122,
+      "name": "XINT5_INT",
+      "description": "12.3 - XINT5 Interrupt"
+    },
+    {
+      "slot": 123,
+      "name": "PIE23_RESERVED_INT",
+      "description": "12.4 - Reserved"
+    },
+    {
+      "slot": 124,
+      "name": "PIE24_RESERVED_INT",
+      "description": "12.5 - Reserved"
+    },
+    {
+      "slot": 125,
+      "name": "VCU_INT",
+      "description": "12.6 - VCU Interrupt"
+    },
+    {
+      "slot": 126,
+      "name": "FPU_OVERFLOW_INT",
+      "description": "12.7 - FPU Overflow Interrupt"
+    },
+    {
+      "slot": 127,
+      "name": "FPU_UNDERFLOW_INT",
+      "description": "12.8 - FPU Underflow Interrupt"
+    },
+    {
+      "slot": 128,
+      "name": "PIE25_RESERVED_INT",
+      "description": "1.9 - Reserved"
+    },
+    {
+      "slot": 129,
+      "name": "PIE26_RESERVED_INT",
+      "description": "1.10 - Reserved"
+    },
+    {
+      "slot": 130,
+      "name": "PIE27_RESERVED_INT",
+      "description": "1.11 - Reserved"
+    },
+    {
+      "slot": 131,
+      "name": "PIE28_RESERVED_INT",
+      "description": "1.12 - Reserved"
+    },
+    {
+      "slot": 132,
+      "name": "IPC0_INT",
+      "description": "1.13 - IPC Interrupt 0"
+    },
+    {
+      "slot": 133,
+      "name": "IPC1_INT",
+      "description": "1.14 - IPC Interrupt 1"
+    },
+    {
+      "slot": 134,
+      "name": "IPC2_INT",
+      "description": "1.15 - IPC Interrupt 2"
+    },
+    {
+      "slot": 135,
+      "name": "IPC3_INT",
+      "description": "1.16 - IPC Interrupt 3"
+    },
+    {
+      "slot": 136,
+      "name": "EPWM9_TZ_INT",
+      "description": "2.9 - ePWM9 Trip Zone Interrupt"
+    },
+    {
+      "slot": 137,
+      "name": "EPWM10_TZ_INT",
+      "description": "2.10 - ePWM10 Trip Zone Interrupt"
+    },
+    {
+      "slot": 138,
+      "name": "EPWM11_TZ_INT",
+      "description": "2.11 - ePWM11 Trip Zone Interrupt"
+    },
+    {
+      "slot": 139,
+      "name": "EPWM12_TZ_INT",
+      "description": "2.12 - ePWM12 Trip Zone Interrupt"
+    },
+    {
+      "slot": 140,
+      "name": "PIE29_RESERVED_INT",
+      "description": "2.13 - Reserved"
+    },
+    {
+      "slot": 141,
+      "name": "PIE30_RESERVED_INT",
+      "description": "2.14 - Reserved"
+    },
+    {
+      "slot": 142,
+      "name": "PIE31_RESERVED_INT",
+      "description": "2.15 - Reserved"
+    },
+    {
+      "slot": 143,
+      "name": "PIE32_RESERVED_INT",
+      "description": "2.16 - Reserved"
+    },
+    {
+      "slot": 144,
+      "name": "EPWM9_INT",
+      "description": "3.9 - ePWM9 Interrupt"
+    },
+    {
+      "slot": 145,
+      "name": "EPWM10_INT",
+      "description": "3.10 - ePWM10 Interrupt"
+    },
+    {
+      "slot": 146,
+      "name": "EPWM11_INT",
+      "description": "3.11 - ePWM11 Interrupt"
+    },
+    {
+      "slot": 147,
+      "name": "EPWM12_INT",
+      "description": "3.12 - ePWM12 Interrupt"
+    },
+    {
+      "slot": 148,
+      "name": "PIE33_RESERVED_INT",
+      "description": "3.13 - Reserved"
+    },
+    {
+      "slot": 149,
+      "name": "PIE34_RESERVED_INT",
+      "description": "3.14 - Reserved"
+    },
+    {
+      "slot": 150,
+      "name": "PIE35_RESERVED_INT",
+      "description": "3.15 - Reserved"
+    },
+    {
+      "slot": 151,
+      "name": "PIE36_RESERVED_INT",
+      "description": "3.16 - Reserved"
+    },
+    {
+      "slot": 152,
+      "name": "PIE37_RESERVED_INT",
+      "description": "4.9 - Reserved"
+    },
+    {
+      "slot": 153,
+      "name": "PIE38_RESERVED_INT",
+      "description": "4.10 - Reserved"
+    },
+    {
+      "slot": 154,
+      "name": "PIE39_RESERVED_INT",
+      "description": "4.11 - Reserved"
+    },
+    {
+      "slot": 155,
+      "name": "PIE40_RESERVED_INT",
+      "description": "4.12 - Reserved"
+    },
+    {
+      "slot": 156,
+      "name": "PIE41_RESERVED_INT",
+      "description": "4.13 - Reserved"
+    },
+    {
+      "slot": 157,
+      "name": "PIE42_RESERVED_INT",
+      "description": "4.14 - Reserved"
+    },
+    {
+      "slot": 158,
+      "name": "PIE43_RESERVED_INT",
+      "description": "4.15 - Reserved"
+    },
+    {
+      "slot": 159,
+      "name": "PIE44_RESERVED_INT",
+      "description": "4.16 - Reserved"
+    },
+    {
+      "slot": 160,
+      "name": "SD1_INT",
+      "description": "5.9 - SD1 Interrupt"
+    },
+    {
+      "slot": 161,
+      "name": "SD2_INT",
+      "description": "5.10 - SD2 Interrupt"
+    },
+    {
+      "slot": 162,
+      "name": "PIE45_RESERVED_INT",
+      "description": "5.11 - Reserved"
+    },
+    {
+      "slot": 163,
+      "name": "PIE46_RESERVED_INT",
+      "description": "5.12 - Reserved"
+    },
+    {
+      "slot": 164,
+      "name": "PIE47_RESERVED_INT",
+      "description": "5.13 - Reserved"
+    },
+    {
+      "slot": 165,
+      "name": "PIE48_RESERVED_INT",
+      "description": "5.14 - Reserved"
+    },
+    {
+      "slot": 166,
+      "name": "PIE49_RESERVED_INT",
+      "description": "5.15 - Reserved"
+    },
+    {
+      "slot": 167,
+      "name": "PIE50_RESERVED_INT",
+      "description": "5.16 - Reserved"
+    },
+    {
+      "slot": 168,
+      "name": "SPIC_RX_INT",
+      "description": "6.9 - SPIC Receive Interrupt"
+    },
+    {
+      "slot": 169,
+      "name": "SPIC_TX_INT",
+      "description": "6.10 - SPIC Transmit Interrupt"
+    },
+    {
+      "slot": 170,
+      "name": "PIE51_RESERVED_INT",
+      "description": "6.11 - Reserved"
+    },
+    {
+      "slot": 171,
+      "name": "PIE52_RESERVED_INT",
+      "description": "6.12 - Reserved"
+    },
+    {
+      "slot": 172,
+      "name": "PIE53_RESERVED_INT",
+      "description": "6.13 - Reserved"
+    },
+    {
+      "slot": 173,
+      "name": "PIE54_RESERVED_INT",
+      "description": "6.14 - Reserved"
+    },
+    {
+      "slot": 174,
+      "name": "PIE55_RESERVED_INT",
+      "description": "6.15 - Reserved"
+    },
+    {
+      "slot": 175,
+      "name": "PIE56_RESERVED_INT",
+      "description": "6.16 - Reserved"
+    },
+    {
+      "slot": 176,
+      "name": "PIE57_RESERVED_INT",
+      "description": "7.9 - Reserved"
+    },
+    {
+      "slot": 177,
+      "name": "PIE58_RESERVED_INT",
+      "description": "7.10 - Reserved"
+    },
+    {
+      "slot": 178,
+      "name": "PIE59_RESERVED_INT",
+      "description": "7.11 - Reserved"
+    },
+    {
+      "slot": 179,
+      "name": "PIE60_RESERVED_INT",
+      "description": "7.12 - Reserved"
+    },
+    {
+      "slot": 180,
+      "name": "PIE61_RESERVED_INT",
+      "description": "7.13 - Reserved"
+    },
+    {
+      "slot": 181,
+      "name": "PIE62_RESERVED_INT",
+      "description": "7.14 - Reserved"
+    },
+    {
+      "slot": 182,
+      "name": "PIE63_RESERVED_INT",
+      "description": "7.15 - Reserved"
+    },
+    {
+      "slot": 183,
+      "name": "PIE64_RESERVED_INT",
+      "description": "7.16 - Reserved"
+    },
+    {
+      "slot": 184,
+      "name": "PIE65_RESERVED_INT",
+      "description": "8.9 - Reserved"
+    },
+    {
+      "slot": 185,
+      "name": "PIE66_RESERVED_INT",
+      "description": "8.10 - Reserved"
+    },
+    {
+      "slot": 186,
+      "name": "PIE67_RESERVED_INT",
+      "description": "8.11 - Reserved"
+    },
+    {
+      "slot": 187,
+      "name": "PIE68_RESERVED_INT",
+      "description": "8.12 - Reserved"
+    },
+    {
+      "slot": 188,
+      "name": "PIE69_RESERVED_INT",
+      "description": "8.13 - Reserved"
+    },
+    {
+      "slot": 189,
+      "name": "PIE70_RESERVED_INT",
+      "description": "8.14 - Reserved"
+    },
+    {
+      "slot": 190,
+      "name": "UPPA_INT",
+      "description": "8.15 - uPPA Interrupt"
+    },
+    {
+      "slot": 191,
+      "name": "PIE72_RESERVED_INT",
+      "description": "8.16 - Reserved"
+    },
+    {
+      "slot": 192,
+      "name": "PIE71_RESERVED_INT",
+      "description": "8.15 - Reserved"
+    },
+    {
+      "slot": 193,
+      "name": "PIE72_RESERVED_INT",
+      "description": "8.16 - Reserved"
+    },
+    {
+      "slot": 194,
+      "name": "PIE73_RESERVED_INT",
+      "description": "9.9 - Reserved"
+    },
+    {
+      "slot": 195,
+      "name": "PIE74_RESERVED_INT",
+      "description": "9.10 - Reserved"
+    },
+    {
+      "slot": 196,
+      "name": "PIE75_RESERVED_INT",
+      "description": "9.11 - Reserved"
+    },
+    {
+      "slot": 197,
+      "name": "PIE76_RESERVED_INT",
+      "description": "9.12 - Reserved"
+    },
+    {
+      "slot": 198,
+      "name": "PIE77_RESERVED_INT",
+      "description": "9.13 - Reserved"
+    },
+    {
+      "slot": 199,
+      "name": "PIE78_RESERVED_INT",
+      "description": "9.14 - Reserved"
+    },
+    {
+      "slot": 200,
+      "name": "USBA_INT",
+      "description": "9.15 - USBA Interrupt"
+    },
+    {
+      "slot": 201,
+      "name": "PIE79_RESERVED_INT",
+      "description": "9.15 - Reserved"
+    },
+    {
+      "slot": 202,
+      "name": "PIE80_RESERVED_INT",
+      "description": "9.16 - Reserved"
+    },
+    {
+      "slot": 203,
+      "name": "ADCC_EVT_INT",
+      "description": "10.9 - ADCC Event Interrupt"
+    },
+    {
+      "slot": 204,
+      "name": "ADCC2_INT",
+      "description": "10.10 - ADCC Interrupt 2"
+    },
+    {
+      "slot": 205,
+      "name": "ADCC3_INT",
+      "description": "10.11 - ADCC Interrupt 3"
+    },
+    {
+      "slot": 206,
+      "name": "ADCC4_INT",
+      "description": "10.12 - ADCC Interrupt 4"
+    },
+    {
+      "slot": 207,
+      "name": "ADCD_EVT_INT",
+      "description": "10.13 - ADCD Event Interrupt"
+    },
+    {
+      "slot": 208,
+      "name": "ADCD2_INT",
+      "description": "10.14 - ADCD Interrupt 2"
+    },
+    {
+      "slot": 209,
+      "name": "ADCD3_INT",
+      "description": "10.15 - ADCD Interrupt 3"
+    },
+    {
+      "slot": 210,
+      "name": "ADCD4_INT",
+      "description": "10.16 - ADCD Interrupt 4"
+    },
+    {
+      "slot": 211,
+      "name": "PIE81_RESERVED_INT",
+      "description": "11.9 - Reserved"
+    },
+    {
+      "slot": 212,
+      "name": "PIE82_RESERVED_INT",
+      "description": "11.10 - Reserved"
+    },
+    {
+      "slot": 213,
+      "name": "PIE83_RESERVED_INT",
+      "description": "11.11 - Reserved"
+    },
+    {
+      "slot": 214,
+      "name": "PIE84_RESERVED_INT",
+      "description": "11.12 - Reserved"
+    },
+    {
+      "slot": 215,
+      "name": "PIE85_RESERVED_INT",
+      "description": "11.13 - Reserved"
+    },
+    {
+      "slot": 216,
+      "name": "PIE86_RESERVED_INT",
+      "description": "11.14 - Reserved"
+    },
+    {
+      "slot": 217,
+      "name": "PIE87_RESERVED_INT",
+      "description": "11.15 - Reserved"
+    },
+    {
+      "slot": 218,
+      "name": "PIE88_RESERVED_INT",
+      "description": "11.16 - Reserved"
+    },
+    {
+      "slot": 219,
+      "name": "EMIF_ERROR_INT",
+      "description": "12.9 - EMIF Error Interrupt"
+    },
+    {
+      "slot": 220,
+      "name": "RAM_CORRECTABLE_ERROR_INT",
+      "description": "12.10 - RAM Correctable Error Interrupt"
+    },
+    {
+      "slot": 221,
+      "name": "FLASH_CORRECTABLE_ERROR_INT",
+      "description": "12.11 - Flash Correctable Error Interrupt"
+    },
+    {
+      "slot": 222,
+      "name": "RAM_ACCESS_VIOLATION_INT",
+      "description": "12.12 - RAM Access Violation Interrupt"
+    },
+    {
+      "slot": 223,
+      "name": "SYS_PLL_SLIP_INT",
+      "description": "12.13 - System PLL Slip Interrupt"
+    },
+    {
+      "slot": 224,
+      "name": "AUX_PLL_SLIP_INT",
+      "description": "12.14 - Auxiliary PLL Slip Interrupt"
+    },
+    {
+      "slot": 225,
+      "name": "CLA_OVERFLOW_INT",
+      "description": "12.15 - CLA Overflow Interrupt"
+    },
+    {
+      "slot": 226,
+      "name": "CLA_UNDERFLOW_INT",
+      "description": "12.16 - CLA Underflow Interrupt"
+    }
+  ]
+}
