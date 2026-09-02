@@ -82,6 +82,8 @@
 //   c28x.reg.noSeedDispatchers (bool)         don't recover a dispatch site's enclosing function
 //   c28x.reg.maxBack     (int,  default 512)  instructions to walk back looking for that entry
 //   c28x.reg.noHooks     (bool)               skip the single-slot RAM hook pass
+//   c28x.reg.noPie       (bool)               skip the PIE vector-table initializer pass
+//   c28x.reg.minPieEntries (int, default 64)  shortest code-pointer run treated as a vector table
 //   c28x.reg.noRootDispatched (bool)          don't register runtime-dispatched functions as roots
 //   c28x.reg.noLabels    (bool)               don't label descriptors
 //   c28x.reg.dryRun      (bool)               report only, change nothing
@@ -327,7 +329,16 @@ public class MarkComponentRegistry extends GhidraScript {
         if (!Boolean.getBoolean("c28x.reg.noHooks")) hooks = resolveRamHooks(window);
         println(String.format("RAM single-slot hooks resolved: %d", hooks));
 
-        // ---- 5b. roots for what the runtime dispatches and nothing calls -----------------------
+        // ---- 5b. interrupt handlers, from the PIE vector table's flash initializer --------------
+        // Run this BEFORE the inference pass below: a handler rooted from the vector table is
+        // rooted on evidence, and rooting it here means the heuristic never has to guess at it.
+        int pie = 0;
+        if (!Boolean.getBoolean("c28x.reg.noPie")) {
+            println("");
+            pie = markPieVectors(Integer.getInteger("c28x.reg.minPieEntries", 64), createFns);
+        }
+
+        // ---- 5c. roots for what the runtime dispatches and nothing calls -----------------------
         int rooted = 0;
         if (!Boolean.getBoolean("c28x.reg.noRootDispatched")) {
             println("");
@@ -592,6 +603,111 @@ public class MarkComponentRegistry extends GhidraScript {
         if (dry) return true;
         try { createLabel(wa(w), name, true, SourceType.ANALYSIS); return true; }
         catch (Exception e) { return false; }
+    }
+
+    /**
+     * The PIE vector table's FLASH initializer -- the best roots in the image, because they are
+     * evidence rather than inference.
+     *
+     * On C28x the PIE vector table itself is RAM (F28377D: 0x000D00-0x000DFF, 128 vectors x 2
+     * words), written at runtime by TI's InitPieVectTable, which copies a const table out of flash.
+     * A static image therefore has an EMPTY vector table and a fully populated initializer sitting
+     * in flash with nothing pointing into it.
+     *
+     * The signature is unusually strong, so this needs no per-image tuning:
+     *   * a long run of consecutive 32-bit words that are all plausible code addresses, and
+     *   * one value repeated across most of the run -- the default/unused-interrupt handler that
+     *     TI fills every unused slot with (209 of 224 entries on the image tested), and
+     *   * entry 0 is the reset vector, i.e. exactly the _c_int00 signal D already recovered.
+     *
+     * Each distinct target is an interrupt handler: it runs, and nothing calls it. Create it,
+     * reference it from its slot, and register it as an entry point. Targets may live in RAM
+     * (time-critical ISRs are ramfuncs), which only resolve if a materialize step has run -- those
+     * are reported and skipped rather than guessed at.
+     */
+    int markPieVectors(int minEntries, boolean createFns) {
+        long cint = -1;
+        for (Function f : fm.getFunctions(true))
+            if (f.getName().toLowerCase().contains("c_int00")) { cint = f.getEntryPoint().getOffset() / 2; break; }
+        if (cint < 0) { println("  no _c_int00 -- run SeedFunctions signal D first; skipping PIE scan"); return 0; }
+
+        long bestBase = -1; int bestLen = 0;
+        for (MemoryBlock b : mem.getBlocks()) {
+            if (!b.isInitialized()) continue;
+            long s = b.getStart().getOffset() / 2, e = b.getEnd().getOffset() / 2;
+            if (s < 0x80000L) continue;                       // the initializer lives in flash
+            for (long w = s; w + 1 <= e; w++) {
+                if (word32(w) != cint) continue;              // anchor: entry 0 = the reset vector
+                int len = 0;
+                for (long k = w; k + 1 <= e; k += 2) {
+                    long v = word32(k);
+                    if (!isCodeAddr(v)) break;
+                    len++;
+                }
+                if (len >= minEntries && len > bestLen) { bestLen = len; bestBase = w; }
+            }
+        }
+        if (bestBase < 0) { println("  no PIE initializer found (no long code-pointer run starting at _c_int00)"); return 0; }
+
+        // corroborate: an unused-vector fill should dominate
+        HashMap<Long,Integer> histo = new HashMap<>();
+        for (int i = 0; i < bestLen; i++) histo.merge(word32(bestBase + i * 2), 1, Integer::sum);
+        long dflt = -1; int best = 0;
+        for (Map.Entry<Long,Integer> e : histo.entrySet()) if (e.getValue() > best) { best = e.getValue(); dflt = e.getKey(); }
+        println(String.format("  PIE initializer @%05x: %d entries, %d distinct, default handler %05x x%d (%.0f%%)",
+            bestBase, bestLen, histo.size(), dflt, best, 100.0 * best / bestLen));
+        if (best * 2 < bestLen) {
+            println("  ...but no value dominates the run, so this is probably NOT a vector table -- skipping");
+            return 0;
+        }
+        if (!dry) labelIfUnnamed(bestBase, "PieVectTableInit");
+
+        int rooted = 0, made = 0, unresolved = 0;
+        LinkedHashSet<Long> targets = new LinkedHashSet<>();
+        for (int i = 0; i < bestLen; i++) {
+            long v = word32(bestBase + i * 2);
+            targets.add(v);
+            if (!dry) addRef(wa(bestBase + i * 2), wa(v), RefType.DATA);
+        }
+        for (long v : targets) {
+            if (v == cint) continue;                          // already the program entry
+            Function f = fm.getFunctionAt(wa(v));
+            if (f == null) {
+                MemoryBlock b = mem.getBlock(wa(v));
+                if (b == null || !b.isInitialized()) {
+                    println(String.format("  vector target %05x is not in initialized memory "
+                        + "(a RAM-resident ISR? run a materialize step first) -- skipped", v));
+                    unresolved++;
+                    continue;
+                }
+                if (!createFns || !makeFunction(v)) { unresolved++; continue; }
+                made++;
+                f = fm.getFunctionAt(wa(v));
+                if (f == null) continue;
+            }
+            if (currentProgram.getSymbolTable().isExternalEntryPoint(f.getEntryPoint())) continue;
+            rooted++;
+            println(String.format("  ISR %05x %-22s %s", v, f.getName(),
+                v == dflt ? "(default/unused-interrupt handler)" : ""));
+            if (dry) continue;
+            currentProgram.getSymbolTable().addExternalEntryPoint(f.getEntryPoint());
+            if (getPlateComment(f.getEntryPoint()) == null)
+                setPlateComment(f.getEntryPoint(),
+                    "Interrupt handler, from the PIE vector table's flash initializer.\n"
+                    + "The PIE vector table itself is RAM written at runtime by InitPieVectTable, so in a "
+                    + "static image it is empty and this handler has no caller. Registered as an entry point.");
+        }
+        println(String.format("  PIE: %d handlers rooted, %d functions created, %d targets unresolved",
+            rooted, made, unresolved));
+        return rooted;
+    }
+
+    /** Flash, or an initialized executable RAM block (ramfunc ISRs live there). */
+    boolean isCodeAddr(long w) {
+        if (w <= 0) return false;
+        if (inFlash(w)) return true;
+        MemoryBlock b = mem.getBlock(wa(w));
+        return b != null && b.isExecute();
     }
 
     /**

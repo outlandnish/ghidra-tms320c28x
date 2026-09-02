@@ -425,6 +425,21 @@ simply **uninitialized**, because the application writes it at runtime and
 Step 4c stops at the handoff into `main`. So the chain terminates in a vector
 table that has never been filled in.
 
+**You do not have to emulate that far to recover it, though.** TI's
+`InitPieVectTable` copies a *const initializer* out of flash, and that
+initializer is fully populated in the image. Step 4d finds it structurally, with
+a signature strong enough to need no tuning: a long run of consecutive 32-bit
+code addresses, dominated by one repeated value (the default unused-interrupt
+handler TI fills every spare slot with — 209 of 224 entries on the image tested,
+93%), whose **entry 0 is the reset vector**, i.e. the `_c_int00` that signal D
+already recovered. That last test is what makes it unambiguous.
+
+Every distinct target is an interrupt handler: it runs, and nothing calls it. So
+the table's slots get data references to their targets, the targets get
+functions, and each is registered as an entry point. Handlers that live in RAM
+(time-critical ISRs are ramfuncs) only resolve once a materialize step has
+populated D0/D1 — those are reported and skipped rather than guessed at.
+
 Step 4d therefore does what this pipeline already does for ISRs: a flash
 function whose address `.cinit` planted in RAM, and which nothing calls, is
 **runtime-dispatched** — an entry point in every sense except that its vector is
@@ -433,16 +448,21 @@ exactly on a function entry in flash, and the function must have no incoming
 call/jump reference at all, so nothing the edge passes just connected is
 affected.
 
-With that, the same image goes to **1070 / 2191 reachable (48.8%)** from 31
-registered entry points, NO-REFS-AT-ALL falling 493 → 389. Confirmed
-independently beforehand by rooting the dispatchers by hand
-(`-Dc28x.reach.roots=…` gave 1096 / 2174, 50.4%), so the automatic result is
-within noise of the hand-derived one.
+With both passes the same image reaches **1084 / 2195 (49.4%)** — 31 inferred
+runtime-dispatched roots plus 5 handlers rooted from the vector table —
+with NO-REFS-AT-ALL falling 493 → 389. Confirmed independently beforehand by
+rooting the dispatchers by hand (`-Dc28x.reach.roots=…` gave 1096 / 2174,
+50.4%), so the automatic result lands within noise of the hand-derived one
+rather than inventing reachability.
 
-The honest remaining lever is emulating **past** the handoff so the PIE table is
-actually populated, which would turn those 31 assumed roots into real ISR
-edges — at the cost of running application init against peripherals the
-emulator does not model.
+Note the two passes are complementary, not redundant: the OS tick walker is
+**not** in the PIE table, so it is only ever rooted by inference, while the
+interrupt handlers are rooted on evidence. Run the vector pass first so the
+inference pass never has to guess at anything the table already proves.
+
+The remaining lever is emulating **past** the handoff, which would let the RAM
+vector table and the D0/D1 ramfunc ISRs resolve directly — at the cost of
+running application init against peripherals the emulator does not model.
 
 ## Per-CPU notes (F28377D)
 
