@@ -58,10 +58,28 @@ import ghidra.program.model.pcode.Varnode;
  * unsigned divide and {@code RPT || VCRCxx} block CRC emulating. The RPTB half of the old
  * callback is gone for good; SLEIGH handles it.
  *
- * <p>The two mechanisms do not fight: because the wrapper never fires at {@code inst_next}
- * under emulation, the callback is the only thing driving the RPT loop there, while under
- * disassembly the callback does not run at all and the wrapper is the only thing modelling
- * it. Verified by the RPT and RPTB cases of {@code ghidra_scripts/EmuRptTest.java}.
+ * <p><b>The wrapper does fire under emulation — measured 2026-09.</b> The trace above says the
+ * base constructor wins at {@code inst_next}; that is no longer what happens on Ghidra 12.1.2.
+ * Emulating {@code RPT #2 || ADDB ACC,#1} and reading {@code RPTC} after every step gives
+ * {@code RPTC} 2 → 1 → 0, and the ONLY thing that decrements {@code RPTC} is the wrapper's own
+ * p-code. So the wrapper matches from the first decode of the repeated address and drives the
+ * loop, while this callback re-issues the same address in parallel. They agree rather than
+ * compound, because the wrapper's loop-back is an external {@code goto inst_start} — the very
+ * address the re-issue was going to set — so exactly one execution happens per step either way
+ * ({@code ADDB} ran 3 times for {@code RPT #2}, which is correct). Whether the re-issue is now
+ * redundant is a separate question; it is not answered here, and removing it needs its own
+ * evidence.
+ *
+ * <p><b>Where they DO compound: the repeated program transfers.</b> The specialised PREAD /
+ * PWRITE / XPREAD / XPWRITE constructors in {@code tms320c28x_rpt.sinc} loop INTERNALLY on
+ * {@code RPTC} — the whole repeat runs inside one instruction — so the re-issue above adds a
+ * further pass on top of a repeat that already completed. Measured as a 3-word block copy
+ * advancing its destination pointer 5 times. {@link #rptCallback} therefore zeroes
+ * {@code RPTC} when it arms one of those opcodes, collapsing each issue to exactly one transfer
+ * and leaving this callback the single driver (it also still supplies the {@code *XAR7} shadow,
+ * which one transfer per issue cannot). Under disassembly the callback does not run at all and
+ * SLEIGH is the only model. Verified by the RPT and RPTB cases of
+ * {@code ghidra_scripts/EmuRptTest.java} and by {@code EmuPreadRepeatTest.java}.
  *
  * <p>What remains in this class:
  * <ul>
@@ -111,6 +129,14 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 	private boolean xar7Shadowed = false;
 	private long xar7Saved;    // architectural XAR7, restored when the repeat finishes
 	private long xar7Step;     // repetitions issued so far (the shadow's offset from xar7Saved)
+
+	// The program transfers whose REPEATED form has a specialised SLEIGH constructor that loops
+	// internally on RPTC (tms320c28x_rpt.sinc), instead of deferring to the generic
+	// :^instruction wrapper's external `goto inst_start`. See the class comment: this callback
+	// zeroes RPTC when it arms one, so each issue performs exactly one transfer.
+	private static final int OP_XPREAD_OPHI8 = 0xAC;  // XPREAD loc16,*(pma)   (2-word)
+	private static final int OP_XPREAD_AL = 0x563C;   // XPREAD loc16,*AL      (2-word, C2xLP)
+	private static final int OP_XPWRITE_AL = 0x563D;  // XPWRITE *A,loc16      (2-word, C2xLP)
 
 	// Single-word return opcodes that restore RPC from the hardware nested-call stack.
 	private static final int OP_LRETR = 0x0006;
@@ -225,6 +251,17 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 	}
 
 	/**
+	 * True for the program transfers whose repeated form is modelled by a SLEIGH constructor
+	 * with an internal RPTC loop. Both single-word (opcode in the high byte) and two-word
+	 * (whole first word is the opcode) forms.
+	 */
+	private static boolean isInternallyLoopedTransfer(int w) {
+		int hi = w >>> 8;
+		return hi == OP_PREAD_OPHI8 || hi == OP_PWRITE_OPHI8 || hi == OP_XPREAD_OPHI8
+			|| w == OP_XPREAD_AL || w == OP_XPWRITE_AL;
+	}
+
+	/**
 	 * Drive the RPT single-instruction repeat under emulation, which the SLEIGH wrapper
 	 * cannot do (see the class comment: {@code globalset(inst_next, ...)} lands one
 	 * instruction late in the emulator). After each instruction, arm on an RPT opcode and
@@ -273,6 +310,17 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 			if (xar7Shadowed) {
 				xar7Saved = mem.getValue("XAR7") & 0xFFFFFFFFL;
 				xar7Step = 0;
+			}
+
+			// Hand the iteration count to exactly one driver. The specialised repeated
+			// program-transfer constructors DO match under emulation (see the class comment) and
+			// loop INTERNALLY on RPTC, so the first issue alone completes the whole repeat --
+			// and then the re-issue below runs it again. Zeroing RPTC collapses each issue to a
+			// single transfer, which is what lets this callback keep driving the count and
+			// stepping the *XAR7 shadow. The full loop stays in the .sla, where the DECOMPILER
+			// reads it. Nothing else consumes RPTC, and hardware leaves it at 0 anyway.
+			if (rptActive && isInternallyLoopedTransfer(repeatedW)) {
+				mem.setValue("RPTC", 0);
 			}
 			return;
 		}

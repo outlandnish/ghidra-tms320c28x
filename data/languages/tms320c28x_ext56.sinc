@@ -1,5 +1,11 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Nishanth Samala
+# Copyright the mwdmwd/ghidra-c28x contributors (https://github.com/mwdmwd/ghidra-c28x)
+#
+# Portions adapted from mwdmwd/ghidra-c28x (Apache-2.0): the switch_canonical
+# constructor variants of MOV/ADD ACC,loc16<<#shft, and the @AH / @AL destination
+# split on XPREAD *AL that gives SPRU430F's exact N/Z rule. See THIRD-PARTY.md.
+#
 # C28x 0x56-prefix 2-word "extended" instruction family.
 # Included by tms320c28x.sinc. Encodings from docs/c28x/ch6_instruction_detail.txt.
 #
@@ -272,6 +278,12 @@
 # =============================================================================
 # C2xLP program read/write + branches (decode-only -- rare, exotic).
 # =============================================================================
+# XPREAD carries the same destination-conditioned N/Z as PREAD (SPRU430F: flags only when the
+# destination is an accumulator half), hence the @AH / @AL split. `pma` is read from AL before the
+# destination is written, so the @AL form is not self-clobbering. Repeated forms (which shadow the
+# program-side pointer while leaving AL alone) live in tms320c28x_rpt.sinc.
+:XPREAD "@AH", "*AL"   is rpt_phase=1 & ctx_AMODE=0 & op16=0x563c ; loc_full8=0b10101000  { local pma:4 = zext(AL); AH = *[ram]:2 pma; setNZ16(AH); }
+:XPREAD "@AL", "*AL"   is rpt_phase=1 & ctx_AMODE=0 & op16=0x563c ; loc_full8=0b10101001  { local pma:4 = zext(AL); AL = *[ram]:2 pma; setNZ16(AL); }
 :XPREAD loc16, "*AL"   is rpt_phase=1 & op16=0x563c ; loc16  { local pma:4 = zext(AL); loc16 = *[ram]:2 pma; }
 :XPWRITE "*A", loc16   is rpt_phase=1 & op16=0x563d ; loc16  { local pma:4 = zext(AL); *[ram]:2 pma = loc16; }
 :XB "*AL"              is rpt_phase=1 & op16=0x5614 { local tgt:4 = zext(AL); goto [tgt]; }

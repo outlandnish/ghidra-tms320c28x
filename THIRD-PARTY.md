@@ -242,16 +242,54 @@ Files adapted so far:
   image over `0x82000+0x8000`: 57 extra UNDEFs and 3 extra length-skews versus
   `main`, 42 of them exactly two words after an RPT opcode.
 
-  **Emulator cannot arm `inst_next`.** Ghidra's emulator applies a `globalset`
-  context commit one instruction too late — the value written for the target
-  address only becomes visible after that instruction has already been decoded
-  and executed. RPTB is unaffected because its target is the block-end address,
-  several instructions ahead. RPT targets `inst_next`, so under emulation the
-  base constructor always wins and the wrapper's p-code never runs (`RPTC` is
-  never decremented). The RPT arm / re-issue logic therefore stays in
-  `postExecuteCallback`; the SLEIGH wrapper remains the decompiler model.
-  Disassembly is unaffected — firmware decode parity against TI `dis2000` is
-  identical to `main`. See `docs/EMULATION.md` for the measured context dump.
+  **Emulator cannot arm `inst_next`** — *superseded, see the correction in
+  `docs/EMULATION.md`.* The original finding was that Ghidra's emulator applies a
+  `globalset` context commit one instruction too late, so under emulation the base
+  constructor always won and the wrapper's p-code never ran. Re-measured on Ghidra
+  12.1.2 (2026-09), the wrapper **does** fire at the repeated address: `RPT #2 ‖
+  ADDB ACC,#1` steps with `RPTC` 2 → 1 → 0, and only the wrapper decrements `RPTC`.
+  The `postExecuteCallback` re-issue runs alongside it without compounding, because
+  the wrapper's loop-back is an external `goto inst_start` — the same address the
+  re-issue sets. Whether the re-issue is now redundant is untested and tracked, not
+  assumed. Disassembly is unaffected either way — firmware decode parity against TI
+  `dis2000` is identical to `main`.
+- **`data/languages/tms320c28x_rpt.sinc`** (partial, the repeated program
+  transfers) — adapted from upstream's "Model repeated program-transfer shadows":
+  specialised `rpt_phase=0 & rpt_active=1` constructors for PREAD / PWRITE /
+  XPREAD / XPWRITE that hold the shadowed program pointer in a SLEIGH unique and
+  loop over `RPTC` explicitly, so a repeated transfer reads as the block copy it is
+  (SPRU430F: the program-side pointer post-increments on an internal shadow while
+  the architectural pointer is left untouched). Replaces an emulator-only model in
+  the Java state modifier that covered `PREAD` alone. Upstream's `@AH` / `@AL`
+  split is adopted for both the repeated and un-repeated forms, in
+  `tms320c28x_more.sinc` and `tms320c28x_ext56.sinc`, which retires a deliberate
+  approximation: N/Z were set for every `loc16` destination, where SPRU430F
+  conditions them on the destination being an accumulator half.
+
+  Local changes: our token names (`op_hi8` / `op16` / `loc_full8` + the `loc16`
+  sub-table, vs upstream `op8_8` / `op0_16` / `op4_4` / `regax`); each form also
+  carries `rptb_flag=0`, the mutual-exclusion bit our wrappers need (see the
+  phase-bit divergence above), which makes its pattern a strict subset of the RPT
+  wrapper's and lets sleigh resolve it ahead of the wrapper rather than colliding
+  with it. Upstream's `0x3f0000 | pma` program-page base on the C2xLP `X*` forms is
+  **not** adopted here: this module's un-repeated `XPREAD` / `XPWRITE` / `XB` /
+  `XCALL` all form a plain 16-bit address, and whether that whole family is missing
+  the page is a separate question from the repeat shadow. Tracked, not decided.
+
+  **The internal loop needs the state modifier to stand down.** Upstream loops
+  inside the instruction; combined with our `postExecuteCallback` re-issue that
+  runs the repeat twice (measured: a 3-word block copy advancing its destination
+  pointer 5 times). The modifier now zeroes `RPTC` when it arms one of these
+  opcodes, collapsing each issue to a single transfer so it keeps driving the count
+  and stepping the `*XAR7` shadow, while the loop in the `.sla` is what the
+  decompiler reads. See #59.
+
+  **Parity harness gap found while validating this.** `tests/run_fw_parity.{ps1,sh}`
+  parsed TI `dis2000` output with a pattern that rejected its `||` prefix — the
+  marker `dis2000` puts on an instruction running under a repeat. Every repeated
+  instruction was therefore absent from the TI side, and parity had never checked
+  one. Fixed (first occurrence at an address wins, which keeps the primary half of a
+  parallel pair while admitting a repeated instruction at its own address).
 - **`data/languages/tms320c28x_ext56.sinc`** (partial, `CSB ACC` body) —
   pure-SLEIGH port of upstream's `csb` at `tms320c28.sinc:2314` using SLEIGH's
   built-in `lzcount`: for non-negative ACC, `lzcount(ACC)` gives the leading

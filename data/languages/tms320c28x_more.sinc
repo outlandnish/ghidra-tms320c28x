@@ -6,7 +6,8 @@
 # macros (packst0/unpackst0/packst1/unpackst1) and their wiring on PUSH|POP ST0|ST1,
 # the per-flag SETC|CLRC #imm8 bodies, the decoded-signed PM convention used by SPM,
 # and the three-variant LB *XAR7 split dispatched by the ffc_return /
-# switch_canonical context bits. See THIRD-PARTY.md.
+# switch_canonical context bits; and the @AH / @AL destination split on PREAD and
+# XPREAD that gives SPRU430F's exact N/Z rule. See THIRD-PARTY.md.
 #
 # Additional C28x instructions seen in the real firmware (DIR/PM) but not in the
 # core families. Encodings verified against docs/c28x/ch6_instruction_detail.txt.
@@ -286,36 +287,42 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 # MOV IER, loc16   0010 0011 LLLL LLLL
 :MOV "IER", loc16  is rpt_phase=1 & op_hi8=0x23 & loc16  { IER = loc16; }
 # PREAD loc16,*XAR7   0010 0100 LLLL LLLL  (read program memory @XAR7 -> loc16)
-# N/Z set per SPRU430F, and the firmware proves it: TI's inlined .cinit walk in _c_int00 reads a
-# record's count with `PREAD @AL,*XAR7` and immediately does `SB skip,GEQ` -- a SIGNED test on the
-# word just loaded, where a negative count means "this record has a 32-bit destination". With no
-# N update the branch read a stale flag, the sign test inverted, and the walk took the count
+#
+# N/Z are conditioned on the DESTINATION, which is how SPRU430F states the rule: "If (loc16 = @AX)
+# and bit 15 of AX is 1, then N is set" -- a memory destination leaves both flags alone. So @AH and
+# @AL are their own constructors below and the generic loc16 form writes no flags. This replaces a
+# deliberate approximation (N/Z on every destination) that also wrote flags for block-copy forms
+# such as `PREAD *XAR6++,*XAR7`, where hardware writes none. The @AX split is adapted from
+# mwdmwd/ghidra-c28x; see THIRD-PARTY.md.
+#
+# The @AX half is load-bearing, and the firmware proves it: TI's inlined .cinit walk in _c_int00
+# reads a record's count with `PREAD @AL,*XAR7` and immediately does `SB skip,GEQ` -- a SIGNED test
+# on the word just loaded, where a negative count means "this record has a 32-bit destination". With
+# no N update the branch read a stale flag, the sign test inverted, and the walk took the count
 # 0xffff literally: it copied 65535 words to a destination truncated to 16 bits instead of 1 word
 # to the real 32-bit one, scribbling 85k words across M0/LS/GS RAM. Disassembly parity cannot
 # see this -- the mnemonic and operand are correct either way. Found by EmulateStartup replaying a
-# real F28377D application image; guarded by EmuPreadFlagsTest.
+# real F28377D application image.
 #
-# APPROXIMATION, deliberate: SPRU430F conditions both flags on the DESTINATION being an
-# accumulator half -- "If (loc16 = @AX) and bit 15 of AX is 1, then N is set". We set them for
-# every loc16, matching what the other loc16 writers in this file already do (MOV loc16,*(0:imm16),
-# AND loc16,AX). The cost is that a memory-destination form such as the block-copy
-# `PREAD *XAR6++,*XAR7` also writes N/Z where hardware would leave them alone. Narrowing it needs
-# separate @AL/@AH constructors, which collide with the generic loc16 pattern; revisit if a flag
-# consumer is ever found downstream of a memory-destination PREAD.
+# EmuPreadFlagsTest guards it, and now guards constructor PRECEDENCE with it: the test assembles
+# 0x24A9 (`PREAD @AL,*XAR7`), so it fails outright if the flagless generic form ever wins the
+# pattern match against the @AL specialisation.
 #
-# NOT MODELLED -- the repeat shadow. SPRU430F: "When repeated, the *XAR7 program-memory address is
-# copied to an internal SHADOW register and the address is post-incremented by 1 during each
-# repetition." The architectural XAR7 is therefore UNCHANGED by `RPT || PREAD`, which is why the
-# .cinit walk advances it by hand afterwards (XAR7 += AR1+1) -- and why the source must still walk
-# forward across repetitions. We read *XAR7 every iteration, so a repeated PREAD re-reads one word
-# instead of copying a block: the walk lands `34cc34cc` where the table says `000134cc`. Fixing it
-# means giving the emulator the shadow (RPT re-issue lives in the Java state modifier, see
-# tms320c28x_rpt.sinc), not a change here.
+# The REPEAT SHADOW (`RPT || PREAD`) is modelled in tms320c28x_rpt.sinc.
+:PREAD "@AH", "*XAR7"  is rpt_phase=1 & op_hi8=0x24 & ctx_AMODE=0 & loc_full8=0b10101000  {
+    AH = *[ram]:2 XAR7;
+    setNZ16(AH);
+}
+:PREAD "@AL", "*XAR7"  is rpt_phase=1 & op_hi8=0x24 & ctx_AMODE=0 & loc_full8=0b10101001  {
+    AL = *[ram]:2 XAR7;
+    setNZ16(AL);
+}
 :PREAD loc16, "*XAR7"  is rpt_phase=1 & op_hi8=0x24 & loc16  {
     loc16 = *[ram]:2 XAR7;
-    setNZ16(loc16);
 }
 # PWRITE *XAR7,loc16  0010 0110 LLLL LLLL  (write loc16 -> program memory @XAR7)
+# No flags: the destination is program memory, never an accumulator half. Repeated form (which
+# shadows the *XAR7 destination the same way PREAD shadows its source) in tms320c28x_rpt.sinc.
 :PWRITE "*XAR7", loc16  is rpt_phase=1 & op_hi8=0x26 & loc16  {
     *[ram]:2 XAR7 = loc16;
 }
@@ -337,6 +344,18 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 # XOR loc16,#16bit   0001 1100 LLLL LLLL : iiii
 :XOR loc16, "#"imm16  is rpt_phase=1 & op_hi8=0x1C & loc16 ; imm16  { loc16 = loc16 ^ imm16:2; }
 # XPREAD loc16,*(pma)  1010 1100 MMMM MMMM : pma  (program-mem read, single-word form)
+# Destination-conditioned N/Z, same SPRU430F rule as PREAD above: flags only when the destination
+# is an accumulator half, hence the @AH / @AL split. Repeated forms in tms320c28x_rpt.sinc.
+:XPREAD "@AH", "*(pma)"  is rpt_phase=1 & op_hi8=0xAC & ctx_AMODE=0 & loc_full8=0b10101000 ; imm16  {
+    local pma:4 = zext(imm16:2);
+    AH = *[ram]:2 pma;
+    setNZ16(AH);
+}
+:XPREAD "@AL", "*(pma)"  is rpt_phase=1 & op_hi8=0xAC & ctx_AMODE=0 & loc_full8=0b10101001 ; imm16  {
+    local pma:4 = zext(imm16:2);
+    AL = *[ram]:2 pma;
+    setNZ16(AL);
+}
 :XPREAD loc16, "*(pma)"  is rpt_phase=1 & op_hi8=0xAC & loc16 ; imm16  {
     local pma:4 = zext(imm16:2);
     loc16 = *[ram]:2 pma;

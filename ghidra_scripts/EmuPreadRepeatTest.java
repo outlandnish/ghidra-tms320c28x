@@ -16,14 +16,26 @@
 //      `XAR7 += AR1+1`, so a model that also advanced XAR7 would double-count and desynchronise
 //      the walk from the second record onward.
 //
-// SLEIGH reads *XAR7 every iteration and has no shadow, so this is modelled in
-// TMS320C28xEmulateInstructionStateModifier, where the RPT re-issue already lives. Symptom when
-// it is missing, seen on a real application image: the .cinit walk wrote each 32-bit value with its
-// low word correct and the high word a duplicate of that low word -- a copy degenerating into a
-// fill, because every iteration re-read the same *XAR7 instead of the next one.
+// Symptom when the shadow is missing, seen on a real application image: the .cinit walk wrote each
+// 32-bit value with its low word correct and the high word a duplicate of that low word -- a copy
+// degenerating into a fill, because every iteration re-read the same *XAR7 instead of the next one.
 //
-// This is a matched-pair test: it exercises the JAR, not the .sla. If it fails after a spec-only
-// rebuild, check that the modifier jar was rebuilt too (see CLAUDE.md).
+// TWO models meet here, and this test is what keeps them from compounding:
+//
+//   * SLEIGH (tms320c28x_rpt.sinc) has specialised repeated PREAD/PWRITE/XPREAD/XPWRITE
+//     constructors that hold the shadow in a unique varnode and loop INTERNALLY on RPTC. That is
+//     the model the decompiler reads.
+//   * TMS320C28xEmulateInstructionStateModifier re-issues the repeated instruction once per
+//     repetition and steps the *XAR7 shadow between issues.
+//
+// Both are live under emulation, so the internal loop would complete the whole repeat on the first
+// issue and then be re-issued on top of that. The modifier therefore zeroes RPTC when it arms one
+// of these opcodes: each issue performs exactly one transfer. Check (2) below is what catches a
+// regression in that handshake -- when the two compound, the words still land correctly and only
+// the DESTINATION pointer betrays it (0xc305 instead of 0xc303 for a 3-word copy).
+//
+// So this is a matched-pair test across BOTH halves: a spec-only or jar-only rebuild can fail it.
+// If it fails, check that the modifier jar was rebuilt too (see CLAUDE.md).
 //
 // Run headless (any TMS320C28x program works; the test drives memory itself):
 //   analyzeHeadless <proj> t -import tests/fpu_flags.bin \

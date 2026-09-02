@@ -81,3 +81,203 @@
   <done>
     RB_RA = 0;
 }
+
+# =============================================================================
+# REPEATED PROGRAM TRANSFERS -- the program-pointer shadow
+# =============================================================================
+# Adapted from mwdmwd/ghidra-c28x (Apache-2.0), "Model repeated program-transfer
+# shadows". See THIRD-PARTY.md.
+#
+# SPRU430F, PREAD loc16,*XAR7, Repeat: "When repeated, the *XAR7 program-memory
+# address is copied to an internal shadow register and the address is post-
+# incremented by 1 during each repetition." Two consequences, and a block copy
+# needs BOTH:
+#
+#   1. the program-side pointer WALKS FORWARD across repetitions -- otherwise
+#      `RPT || PREAD` degenerates from a copy into a fill, writing the first word
+#      N times;
+#   2. the ARCHITECTURAL pointer is UNCHANGED when the repeat ends -- the
+#      increment happened on the shadow. TI's .cinit walk depends on this: it
+#      advances XAR7 by hand afterwards (`XAR7 += AR1+1`), so a model that also
+#      advanced XAR7 would double-count and desynchronise the walk from the
+#      second record onward.
+#
+# The generic RPT wrapper above cannot express either one. It re-executes the
+# whole instruction from inst_start, and every re-execution re-reads XAR7 (or the
+# pma immediate, or AL) from scratch. These forms therefore replace the wrapper
+# for the repeated program transfers: they hold the shadow in a SLEIGH unique and
+# run the repeat themselves, `build`ing the loc16 operand once per transfer so its
+# pre/post update still fires per iteration -- which is what makes the DATA side
+# of `PREAD *XAR6++,*XAR7` walk while the PROGRAM side walks independently.
+#
+# Iteration count matches the wrapper (and the hardware): the body runs once, then
+# RPTC more times, so `RPT #N` transfers N+1 words and leaves RPTC at 0.
+#
+# PATTERN PRECEDENCE. Each form carries the wrapper's full context constraint
+# (rpt_phase=0 & rpt_active=1 & rptb_flag=0) PLUS its opcode, so its pattern is a
+# strict subset of the wrapper's `instruction` union and sleigh resolves it ahead
+# of the wrapper instead of colliding with it. The wrapper's `[ rpt_phase=1; ]`
+# action is deliberately NOT copied: nothing here re-parses a whole instruction,
+# and the loc16 sub-table is gated on ctx_AMODE, not on the phase bit.
+#
+# N/Z follow the same destination-conditioned rule as the un-repeated forms
+# (SPRU430F: flags only when the destination is an accumulator half), which is why
+# @AH / @AL are separate constructors here too. On a repeat they are refreshed
+# after every transfer, so what survives the repeat is the flag state of the LAST
+# word -- and TI's .cinit walk reads exactly that.
+#
+# The C2xLP `X*` forms below deliberately keep the un-repeated constructors' own
+# 16-bit program-address formation (`zext`, no 0x3F0000 page). Upstream forms that
+# address as `0x3f0000 | pma`; whether this module's whole C2xLP family is missing
+# that page is a separate question from the repeat shadow, and is not decided here.
+#
+# EMULATION -- these DO run there, and that needed handling. Contrary to the note
+# above (measured 2026-09 on Ghidra 12.1.2), the armed context IS in effect at the
+# repeated address under emulation: `RPT #2 || ADDB ACC,#1` steps with RPTC going
+# 2 -> 1 -> 0, and only the wrapper's p-code decrements RPTC. That is harmless for
+# the wrapper, whose loop-back is an external `goto inst_start` -- the same address
+# the state modifier re-issues, so one execution happens per step either way. It is
+# NOT harmless for the INTERNAL loop below, which completes the entire repeat inside
+# one instruction and then gets re-issued on top: measured as a 3-word block copy
+# advancing its destination pointer 5 times. TMS320C28xEmulateInstructionStateModifier
+# resolves it by zeroing RPTC when it arms one of these opcodes, collapsing each issue
+# to a single transfer so the modifier keeps driving the count and stepping the *XAR7
+# shadow. The loop written here is what the DECOMPILER reads. EmuPreadRepeatTest pins
+# the emulator half; on the disassembly side a `RPT #2 || PREAD *XAR6++,*XAR7` yields
+# p-code that copies the shadow out of XAR7, rebuilds `*XAR6++` per iteration, and
+# never writes XAR7.
+
+# --- PREAD loc16,*XAR7  (0x24) : shadow the *XAR7 SOURCE -----------------------
+:PREAD "@AH", "*XAR7"  is rpt_phase=0 & rpt_active=1 & rptb_flag=0 & op_hi8=0x24 & ctx_AMODE=0 & loc_full8=0b10101000  {
+    local shadow:4 = XAR7;
+  <pread_ah>
+    AH = *[ram]:2 shadow;
+    setNZ16(AH);
+    shadow = shadow + 1;
+    if (RPTC == 0) goto <pread_ah_done>;
+    RPTC = RPTC - 1;
+    goto <pread_ah>;
+  <pread_ah_done>
+}
+:PREAD "@AL", "*XAR7"  is rpt_phase=0 & rpt_active=1 & rptb_flag=0 & op_hi8=0x24 & ctx_AMODE=0 & loc_full8=0b10101001  {
+    local shadow:4 = XAR7;
+  <pread_al>
+    AL = *[ram]:2 shadow;
+    setNZ16(AL);
+    shadow = shadow + 1;
+    if (RPTC == 0) goto <pread_al_done>;
+    RPTC = RPTC - 1;
+    goto <pread_al>;
+  <pread_al_done>
+}
+:PREAD loc16, "*XAR7"  is rpt_phase=0 & rpt_active=1 & rptb_flag=0 & op_hi8=0x24 & loc16  {
+    local shadow:4 = XAR7;
+  <pread_loc>
+    build loc16;
+    local v:2 = *[ram]:2 shadow;
+    loc16 = v;
+    shadow = shadow + 1;
+    if (RPTC == 0) goto <pread_loc_done>;
+    RPTC = RPTC - 1;
+    goto <pread_loc>;
+  <pread_loc_done>
+}
+
+# --- PWRITE *XAR7,loc16  (0x26) : shadow the *XAR7 DESTINATION -----------------
+:PWRITE "*XAR7", loc16  is rpt_phase=0 & rpt_active=1 & rptb_flag=0 & op_hi8=0x26 & loc16  {
+    local shadow:4 = XAR7;
+  <pwrite_loc>
+    build loc16;
+    local v:2 = loc16;
+    *[ram]:2 shadow = v;
+    shadow = shadow + 1;
+    if (RPTC == 0) goto <pwrite_loc_done>;
+    RPTC = RPTC - 1;
+    goto <pwrite_loc>;
+  <pwrite_loc_done>
+}
+
+# --- XPREAD loc16,*(pma)  (0xAC) : shadow the pma IMMEDIATE --------------------
+:XPREAD "@AH", "*(pma)"  is rpt_phase=0 & rpt_active=1 & rptb_flag=0 & op_hi8=0xAC & ctx_AMODE=0 & loc_full8=0b10101000 ; imm16  {
+    local shadow:4 = zext(imm16:2);
+  <xpread_imm_ah>
+    AH = *[ram]:2 shadow;
+    setNZ16(AH);
+    shadow = shadow + 1;
+    if (RPTC == 0) goto <xpread_imm_ah_done>;
+    RPTC = RPTC - 1;
+    goto <xpread_imm_ah>;
+  <xpread_imm_ah_done>
+}
+:XPREAD "@AL", "*(pma)"  is rpt_phase=0 & rpt_active=1 & rptb_flag=0 & op_hi8=0xAC & ctx_AMODE=0 & loc_full8=0b10101001 ; imm16  {
+    local shadow:4 = zext(imm16:2);
+  <xpread_imm_al>
+    AL = *[ram]:2 shadow;
+    setNZ16(AL);
+    shadow = shadow + 1;
+    if (RPTC == 0) goto <xpread_imm_al_done>;
+    RPTC = RPTC - 1;
+    goto <xpread_imm_al>;
+  <xpread_imm_al_done>
+}
+:XPREAD loc16, "*(pma)"  is rpt_phase=0 & rpt_active=1 & rptb_flag=0 & op_hi8=0xAC & loc16 ; imm16  {
+    local shadow:4 = zext(imm16:2);
+  <xpread_imm_loc>
+    build loc16;
+    local v:2 = *[ram]:2 shadow;
+    loc16 = v;
+    shadow = shadow + 1;
+    if (RPTC == 0) goto <xpread_imm_loc_done>;
+    RPTC = RPTC - 1;
+    goto <xpread_imm_loc>;
+  <xpread_imm_loc_done>
+}
+
+# --- XPREAD loc16,*AL / XPWRITE *A,loc16  (0x563c / 0x563d) --------------------
+# The shadow starts at AL and steps; AL itself is untouched by the progression.
+:XPREAD "@AH", "*AL"  is rpt_phase=0 & rpt_active=1 & rptb_flag=0 & ctx_AMODE=0 & op16=0x563c ; loc_full8=0b10101000  {
+    local shadow:4 = zext(AL);
+  <xpread_al_ah>
+    AH = *[ram]:2 shadow;
+    setNZ16(AH);
+    shadow = shadow + 1;
+    if (RPTC == 0) goto <xpread_al_ah_done>;
+    RPTC = RPTC - 1;
+    goto <xpread_al_ah>;
+  <xpread_al_ah_done>
+}
+:XPREAD "@AL", "*AL"  is rpt_phase=0 & rpt_active=1 & rptb_flag=0 & ctx_AMODE=0 & op16=0x563c ; loc_full8=0b10101001  {
+    local shadow:4 = zext(AL);
+  <xpread_al_al>
+    AL = *[ram]:2 shadow;
+    setNZ16(AL);
+    shadow = shadow + 1;
+    if (RPTC == 0) goto <xpread_al_al_done>;
+    RPTC = RPTC - 1;
+    goto <xpread_al_al>;
+  <xpread_al_al_done>
+}
+:XPREAD loc16, "*AL"  is rpt_phase=0 & rpt_active=1 & rptb_flag=0 & op16=0x563c ; loc16  {
+    local shadow:4 = zext(AL);
+  <xpread_al_loc>
+    build loc16;
+    local v:2 = *[ram]:2 shadow;
+    loc16 = v;
+    shadow = shadow + 1;
+    if (RPTC == 0) goto <xpread_al_loc_done>;
+    RPTC = RPTC - 1;
+    goto <xpread_al_loc>;
+  <xpread_al_loc_done>
+}
+:XPWRITE "*A", loc16  is rpt_phase=0 & rpt_active=1 & rptb_flag=0 & op16=0x563d ; loc16  {
+    local shadow:4 = zext(AL);
+  <xpwrite_al_loc>
+    build loc16;
+    local v:2 = loc16;
+    *[ram]:2 shadow = v;
+    shadow = shadow + 1;
+    if (RPTC == 0) goto <xpwrite_al_loc_done>;
+    RPTC = RPTC - 1;
+    goto <xpwrite_al_loc>;
+  <xpwrite_al_loc_done>
+}
