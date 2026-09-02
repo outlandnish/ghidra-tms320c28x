@@ -288,6 +288,42 @@ Files adapted so far:
   ones. Retires the `countSignBits` CALLOTHER from the Java state modifier.
   See #19.
 
+- **`data/languages/tms320c28x.cspec`** (partial, `<output>` hidden-return rules)
+  — the idea of naming `union` / `array` / oversized `float` alongside `struct`
+  comes from mwdmwd's `0ebb33e`. The *bounds* are this module's own: `cl2000`
+  returns a one-word aggregate in `AL` and everything wider through the XAR6
+  hidden pointer, so the aggregate rules are `minsize="3"` rather than mwdmwd's
+  `minsize="5"` (which misplaces a two-word struct) and rather than this
+  module's previous unbounded `struct` rule (which misplaced a one-word one).
+  The float rule keeps `minsize="5"`, since a 4-byte float really does return in
+  R0H. Four probes in `tests/abi_probe.expected.txt` pin both sides of the step.
+  See #63.
+
+Evaluated and **not** adopted (recorded so the next reader does not re-derive it):
+
+- **mwdmwd's `storage="class4"` + `<rule><join storage="class4"/></rule>` input
+  model** (`0ebb33e`). It exists to let `AL`, `AH`, and the containing `ACC` be
+  allocated without tripping Ghidra's physical-overlap check. This module already
+  solves that with explicit `<addr space="join" piece1="AH" piece2="AL"/>`
+  pentries, arrived at independently. Both work; swapping would churn every ABI
+  baseline for no measured gain.
+- **`5583c4e` "Restore TI EABI general argument fallbacks"** — the XAR4 / XAR5
+  general-purpose fallback pentries it adds are already present here.
+- **`438993e` "Separate outgoing stack arguments from inputs"** — the cspec half
+  is a single offset in mwdmwd's reverse-allocation stack encoding
+  (`0x1fffffe0a` → `0x1fffffe0c`), which has no counterpart in this module's
+  `offset="2"` forward frame model. The underlying defect is real here too and is
+  filed separately; see the stack note in `tests/abi_probe.NOTES.md`.
+- **`TMS320C28ScalarAbiAnalyzer`** (441 lines, `0ebb33e`) — functionally
+  equivalent to this module's `TMS320C28xAbiAnalyzer` + `TMS320C28xAbiAllocator`
+  pair, which predates it and was written independently. Both pre-scan the
+  parameter list, reserve ACC / ACC:P / XAR4-5 / R0H-3H by type priority, and
+  fill the 16-bit pool from what survives. Compared rule by rule, the two agree
+  on every signature in the probe corpus. mwdmwd's delegates stack placement back
+  to the `PrototypeModel` after synthetically consuming the register pools, which
+  is the more portable trick across their three conventions; this module has one
+  convention and hardcodes the offset, so there is nothing to gain by switching.
+
 Deferred (tracked as a follow-up):
 
 - **VCRC8L / VCRC16P1L / VCRC32L** are not ported. mwdmwd/ghidra-c28x

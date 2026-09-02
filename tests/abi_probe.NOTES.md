@@ -1,9 +1,9 @@
 # ABI probe — known cspec limitations
 
-The 19-line `abi_probe.expected.txt` records what
+The 25-line `abi_probe.expected.txt` records what
 `PrototypeModel.getStorageLocations()` produces for a set of C signatures
-under the current `tms320c28x.cspec`. **17 of 19 lines are correct** per
-SPRU514 §7.3 / SPRAC71 EABI. The 2 that differ from SPRU-truth are recorded
+under the current `tms320c28x.cspec`. **22 of 25 lines are correct** per
+SPRU514 §7.3 / SPRAC71 EABI. The 3 that differ from SPRU-truth are recorded
 as-is to serve as a regression floor; they represent Ghidra cspec-model
 limitations, not bugs we can fix by editing the cspec.
 
@@ -21,11 +21,16 @@ installs SPRU storage via `Function.updateFunction(..., CUSTOM_STORAGE,
 (hidden struct return) is now fixed at the cspec level** by removing the
 inherited `strategy="register"` attribute (which forced the register-only
 output allocator that skips hidden-ret logic) and adding a
-`<rule><datatype name="struct"/><hidden_return/></rule>` in `<output>`.
+`<rule><datatype name="struct" .../><hidden_return/></rule>` in `<output>`.
 No analyzer synthesis needed — Ghidra's stock `ParamListStandardOut`
-auto-injects the XAR6 auto-parameter now that the rule fires.
+auto-injects the XAR6 auto-parameter now that the rule fires. Section 5
+covers the other metatypes that need the same rule, and how the size bound
+on it was set.
 
-## The four "wrong but recorded" cases
+Sections 1-4 below are the original four cases; 5 and the stack note were added
+with #63.
+
+## The "wrong but recorded" cases
 
 ### 1. `abi_int_int_long(int, int, long)` — fixed by analyzer
 - SPRU-truth (from `cl2000 -k` DWARF):     `[AR4, AR5, AH:AL]`
@@ -104,6 +109,59 @@ The applied-signature probe (`abi_applied.expected.txt`) reads
 convention for "the caller reads the returned struct-pointer back through
 XAR4 after the callee has written into the caller-allocated buffer via the
 XAR6 hidden pointer." That matches SPRU §7.3.2.
+
+## 5. Aggregate and 64-bit-float returns — fixed at the cspec level (#63)
+
+The `<output>` section used to carry one rule, `<datatype name="struct"/>`. Every
+other oversized return class fell through it and got spanned across the output
+pentries instead. Measured against `cl2000 -v28 --abi=eabi --float_support=fpu32`:
+
+| return type            | size | `cl2000` does            | cspec used to say | now       |
+|------------------------|------|--------------------------|-------------------|-----------|
+| `struct S1 { int; }`   | 2    | `MOVB AL,#1` — in AL     | `AUTO(XAR6)`      | `AL`      |
+| `struct S2 { int,int; }`| 4   | `MOVL XAR4,XAR6`         | `AUTO(XAR6)`      | `AUTO(XAR6)` |
+| `union U3`             | 6    | `MOVL XAR4,XAR6`         | `AUTO(XAR4)`      | `AUTO(XAR6)` |
+| `int[3]` (wrapped)     | 6    | `MOVL XAR4,XAR6`         | `AUTO(XAR4)`      | `AUTO(XAR6)` |
+| `double`               | 8    | `MOVL *+XAR6[0],XAR7`    | `ACC:P`           | `AUTO(XAR6)` |
+
+Two distinct defects. The unions and arrays *did* reach a hidden-return path, but
+because no rule named their metatype Ghidra allocated the hidden pointer from the
+ordinary input pool — landing it in **XAR4**, which also shifts every real
+argument along. The `double` never reached that path at all: the unbounded
+`minsize="8"` ACC:P join in `<output>` caught it, so an 8-byte float looked like
+a `long long`. It is not one — TI writes it through the caller's buffer.
+
+The third row is the interesting one. Bounding the aggregate rules at
+`minsize="5"` (as mwdmwd's `0ebb33e` does) leaves the **4-byte** struct/union
+spanned into a register, and leaving `struct` unbounded (as this file did) forces
+the **2-byte** one to a hidden pointer it never uses. The step is at one word, so
+the rules are bound at `minsize="3"`. `abi_ret_struct1` / `abi_ret_struct2` sit
+either side of it, so an off-by-one-word bound cannot pass both.
+
+## Known-wrong: stack argument order and base offset
+
+`abi_stack_heavy(int a..int f)` is recorded as a regression floor, not as
+correct output:
+
+```
+cspec:     params=[AL, AH, AR4, AR5, Stack[+500]:2, Stack[+498]:2]
+analyzer:  params=[AL, AH, AR4, AR5, Stack[+2]:2,   Stack[+4]:2]
+```
+
+Compiler truth, from the `-k` listing of both sides of the call: the caller does
+`ADDB SP,#2` then `MOVB *-SP[1],#5` / `MOVB *-SP[2],#6`, and the callee reads `e`
+from `*-SP[5]` and `f` from `*-SP[6]` (`*-SP[3]` / `*-SP[4]` relative to entry
+SP, before its own two-word save). So `e` is nearer SP than `f`, and the
+analyzer's ascending `+2, +4` has the right order.
+
+The cspec's is reversed *and* based at the far end of the pentry's 500-byte
+range, because Ghidra allocates a positive-growth stack pentry downward from the
+top of its range. `TMS320C28xAbiAnalyzer` overrides this for every function with
+an imported or user-supplied signature, which is why `abi_applied.expected.txt`
+is correct end-to-end and this is not urgent. It is still wrong for anything that
+reads the prototype model directly. Fixing it means changing how the stack pentry
+range is expressed, which touches every stack line in every baseline — deliberately
+left to its own change.
 
 ## Regenerating the expected file
 

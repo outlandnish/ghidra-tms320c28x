@@ -39,6 +39,16 @@ public class DumpProtos extends GhidraScript {
     // path per the cspec.
     private DataType s3;
 
+    // The other aggregate returns of the same 6-byte width, plus the 8-byte
+    // float. All three are oversized for any single return register, so each
+    // one either reaches the hidden-return path or gets spanned across the
+    // output pentries -- which is exactly what these probes measure.
+    private DataType u3, a3, f64;
+
+    // One word and two words: the sizes that straddle the register/hidden-pointer
+    // step for aggregate returns.
+    private DataType s1, s2;
+
     @Override
     protected void run() throws Exception {
         DataTypeManager dtm = currentProgram.getDataTypeManager();
@@ -60,6 +70,23 @@ public class DumpProtos extends GhidraScript {
         s.add(i16, "b", null);
         s.add(i16, "c", null);
         s3 = s;
+
+        // Same 6-byte width as S3, so any difference in placement is down to
+        // the datatype's metatype alone, not its size.
+        UnionDataType u = new UnionDataType(CategoryPath.ROOT, "U3", dtm);
+        u.add(i16, "a", null);
+        u.add(s3, "s", null);
+        u3 = u;
+        a3 = new ArrayDataType(i16, 3, i16.getLength(), dtm);
+        f64 = AbstractFloatDataType.getFloatDataType(8, dtm);
+
+        StructureDataType one = new StructureDataType("S1", 0, dtm);
+        one.add(i16, "a", null);
+        s1 = one;
+        StructureDataType two = new StructureDataType("S2", 0, dtm);
+        two.add(i16, "a", null);
+        two.add(i16, "b", null);
+        s2 = two;
 
         println("=== DUMPPROTOS ===");
         // Emit each probe result as its OWN println so Ghidra's headless output
@@ -94,6 +121,28 @@ public class DumpProtos extends GhidraScript {
         probe(model, "abi_ret_ptr",      ptr, new DataType[]{});
         probe(model, "abi_ret_float",    f32, new DataType[]{});
         probe(model, "abi_ret_struct",   s3,  new DataType[]{});
+
+        // Aggregate / oversized return classes the fixture never covered. The
+        // <output> rule only names `struct`, so a union or an array return has
+        // always fallen through to pentry spanning; these probes record which.
+        probe(model, "abi_ret_union",    u3,  new DataType[]{});
+        probe(model, "abi_ret_array",    a3,  new DataType[]{});
+        probe(model, "abi_ret_double",   f64, new DataType[]{});
+
+        // The aggregate size boundary, from cl2000: a ONE-WORD struct or union
+        // comes back in AL, and everything wider goes through the XAR6 hidden
+        // pointer. These two probes sit either side of that step, so a rule
+        // bound that is off by one word cannot pass both.
+        probe(model, "abi_ret_struct1",  s1,  new DataType[]{});
+        probe(model, "abi_ret_struct2",  s2,  new DataType[]{});
+
+        // Stack-heavy call: six 16-bit args exhaust the four register slots
+        // (AL, AH, AR4, AR5) and spill the last two. Pins the stack pentry's
+        // first-slot offset and its per-argument stride, which no existing
+        // probe constrains -- the only stack line in the baseline comes from
+        // the pathological abi_spec_example.
+        probe(model, "abi_stack_heavy",  i16,
+            new DataType[]{i16, i16, i16, i16, i16, i16});
 
         println("=== END ===");
     }

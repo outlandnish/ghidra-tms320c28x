@@ -208,13 +208,41 @@
           <addr space="join" piece1="ACC" piece2="P"/>
         </pentry>
 
-        <!-- Route ALL struct returns through the hiddenret pentry (XAR6) per
-             SPRU514 §7.3.2. Without this <rule>, Ghidra spans the pentries
-             above to fit small structs into a register join (e.g. 6-byte struct
-             into AL:PH:PL) and never triggers hiddenret. Stock Ghidra cspecs
-             like Sparc's use exactly this construct. -->
+        <!-- Route oversized returns through the hiddenret pentry (XAR6) per
+             SPRU514 §7.3.2. Without a <rule>, Ghidra spans the pentries above
+             to fit the value into a register join (e.g. 6-byte struct into
+             AL:PH:PL) and never triggers hiddenret. Stock Ghidra cspecs like
+             Sparc's use exactly this construct.
+
+             The bounds are cl2000 EABI truth, not a guess (each case is a
+             probe in tests/abi_probe.expected.txt):
+
+               struct/union/array of ONE word -> returned in AL, no hidden
+                 pointer, so minsize=3 keeps the rule off them;
+               struct/union/array of TWO words or more -> `MOVL XAR4,XAR6`,
+                 i.e. the caller-allocated buffer, so the rule must cover 4
+                 bytes as well as 6;
+               float of 4 bytes -> R0H (the pentry above), but a 64-bit double
+                 is written through XAR6 exactly like an aggregate, hence the
+                 separate minsize=5 bound on the float rule.
+
+             Every one of these is a metatype Ghidra would otherwise span into
+             registers, and an aggregate rule bound at 5 (or an unbounded
+             struct rule) gets one of the four cases wrong. -->
         <rule>
-          <datatype name="struct"/>
+          <datatype name="struct" minsize="3"/>
+          <hidden_return/>
+        </rule>
+        <rule>
+          <datatype name="union" minsize="3"/>
+          <hidden_return/>
+        </rule>
+        <rule>
+          <datatype name="array" minsize="3"/>
+          <hidden_return/>
+        </rule>
+        <rule>
+          <datatype name="float" minsize="5"/>
           <hidden_return/>
         </rule>
       </output>
