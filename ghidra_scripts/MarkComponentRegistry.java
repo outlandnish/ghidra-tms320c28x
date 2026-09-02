@@ -84,6 +84,8 @@
 //   c28x.reg.noHooks     (bool)               skip the single-slot RAM hook pass
 //   c28x.reg.noPie       (bool)               skip the PIE vector-table initializer pass
 //   c28x.reg.minPieEntries (int, default 64)  shortest code-pointer run treated as a vector table
+//   c28x.reg.pieProfile  (path)               PIE vector-identity JSON; defaults to the one in
+//                                             data/device_profiles matching the language variant
 //   c28x.reg.noRootDispatched (bool)          don't register runtime-dispatched functions as roots
 //   c28x.reg.noLabels    (bool)               don't label descriptors
 //   c28x.reg.dryRun      (bool)               report only, change nothing
@@ -205,6 +207,15 @@ public class MarkComponentRegistry extends GhidraScript {
             println("probably not materialized yet -- run EmulateStartup (Step 4c) or a Materialize*");
             println("script first, then re-run. A registry that has never been written reads as all");
             println("zeros, and zeros are not pointers.");
+            // The PIE pass does NOT depend on the registry. Its evidence is the vector
+            // table's initializer, which sits in flash and is present in every static
+            // image -- returning here used to throw away interrupt rooting on exactly
+            // the images that need it most, the ones nothing else has resolved.
+            if (!Boolean.getBoolean("c28x.reg.noPie")) {
+                println("");
+                markPieVectors(Integer.getInteger("c28x.reg.minPieEntries", 64),
+                    !Boolean.getBoolean("c28x.reg.noCreateFns"));
+            }
             return;
         }
 
@@ -302,12 +313,15 @@ public class MarkComponentRegistry extends GhidraScript {
         // Union of the profiled offsets and the ones the dispatchers actually use: the profile
         // finds fields that are widely populated, attribution finds fields that are actually
         // called. Neither is a superset of the other.
-        int slotRefs = 0, fieldRefs = 0, labels = 0;
+        int slotRefs = 0, fieldRefs = 0, labels = 0, typed = 0;
         for (Table t : tables) {
             for (int i = 0; i < t.slots; i++) {
                 long slot = t.base + i * 2, val = t.ptrs.get(i);
                 if (!inFlash(val)) continue;
                 if (addRef(wa(slot), wa(val), RefType.DATA)) slotRefs++;
+                // A registry slot holding a function is a function-pointer global. Typing
+                // it is what lets the store-tracking analyzer see writes to it (#61).
+                if (!inFlash(slot) && fnAt(val) != null && typeFunctionPointer(slot)) typed++;
                 if (t.descriptor && !Boolean.getBoolean("c28x.reg.noLabels")
                         && labelIfUnnamed(val, String.format("compdesc_%05x", val))) labels++;
             }
@@ -321,8 +335,10 @@ public class MarkComponentRegistry extends GhidraScript {
                 }
         }
         println("");
-        println(String.format("data refs: %d slot->descriptor, %d descriptor-field->handler, %d descriptor labels",
-            slotRefs, fieldRefs, labels));
+        println(String.format(
+            "data refs: %d slot->descriptor, %d descriptor-field->handler, %d descriptor labels, "
+            + "%d RAM slots typed as function pointers",
+            slotRefs, fieldRefs, labels, typed));
 
         // ---- 5. single-slot RAM hooks --------------------------------------------------------
         int hooks = 0;
@@ -558,6 +574,9 @@ public class MarkComponentRegistry extends GhidraScript {
                     if (already) continue;              // registry pass (or Ghidra) already resolved it
                 }
                 Set<Long> cands = new LinkedHashSet<>();
+                // The RAM slots the candidates were read out of, kept so a proven hook
+                // can have its slot typed as a function pointer (#61).
+                Set<Long> hookSlots = new LinkedHashSet<>();
                 Instruction p = in;
                 for (int k = 0; k < window; k++) {
                     p = p.getPrevious();
@@ -570,13 +589,16 @@ public class MarkComponentRegistry extends GhidraScript {
                         MemoryBlock b = mem.getBlock(r.getToAddress());
                         if (b == null || !b.isInitialized()) continue;
                         long v = word32(slot);
-                        if (fnAt(v) != null) cands.add(v);
+                        if (fnAt(v) != null) { cands.add(v); hookSlots.add(slot); }
                     }
                 }
                 if (cands.size() != 1) continue;                            // ambiguous -> leave alone
                 long tgt = cands.iterator().next();
                 if (addRef(in.getAddress(), wa(tgt), RefType.COMPUTED_CALL)) {
                     done++;
+                    // Same reasoning as the registry slots: the hook slot is a RAM
+                    // function-pointer global, so type it for the store-tracking pass.
+                    for (long slot : hookSlots) typeFunctionPointer(slot);
                     println(String.format("  hook %05x in %-20s -> %s",
                         in.getAddress().getOffset() / 2, f.getName(), fnAt(tgt).getName()));
                 }
@@ -588,6 +610,50 @@ public class MarkComponentRegistry extends GhidraScript {
     // ---------------------------------------------------------------------------------------
     // mutation helpers (all no-ops under dryRun) + measurement
     // ---------------------------------------------------------------------------------------
+
+    /**
+     * Type a proven RAM function-pointer slot as {@code pointer to FunctionDefinition}.
+     *
+     * <p>This is what makes the slot visible to TMS320C28xCodePointerAnalyzer, whose
+     * only trigger is a store into data already typed that way. Without it that
+     * analyzer has nothing to fire on and silently recovers nothing (#61).
+     *
+     * <p>Only RAM slots are typed. A flash slot is a constant, never a store
+     * destination, so typing one buys nothing; the RAM slots ARE the globals that
+     * code writes at runtime, which is exactly the set the store-tracking analyzer
+     * exists to follow.
+     *
+     * <p>Applying a pointer type here is safe despite the wordsize=2 space: Ghidra
+     * resolves the stored value through the space's addressable-unit size, so a
+     * stored WORD address lands on the right word. Measured on a production image --
+     * all 344 pointer-typed slots resolved to value*2, none to value-as-bytes. (The
+     * older warning in MarkCodePointers.java's header says otherwise; it does not
+     * hold on Ghidra 12.x.)
+     */
+    boolean typeFunctionPointer(long slotWord) {
+        if (dry) return false;
+        Address at = wa(slotWord);
+        try {
+            ghidra.program.model.data.DataTypeManager dtm = currentProgram.getDataTypeManager();
+            if (fnPtrType == null) {
+                ghidra.program.model.data.FunctionDefinitionDataType def =
+                    new ghidra.program.model.data.FunctionDefinitionDataType(
+                        new ghidra.program.model.data.CategoryPath("/C28x"), "code_ptr_target", dtm);
+                fnPtrType = new ghidra.program.model.data.PointerDataType(def, 4, dtm);
+                fnPtrType = dtm.resolve(fnPtrType, null);
+            }
+            Data existing = currentProgram.getListing().getDefinedDataAt(at);
+            if (existing != null && fnPtrType.isEquivalent(existing.getDataType())) return false;
+            currentProgram.getListing().clearCodeUnits(at, at.add(3), false);
+            currentProgram.getListing().createData(at, fnPtrType);
+            return true;
+        }
+        catch (Exception e) {
+            return false;
+        }
+    }
+
+    ghidra.program.model.data.DataType fnPtrType;
 
     boolean addRef(Address from, Address to, RefType type) {
         for (Reference r : rm.getReferencesFrom(from))
@@ -662,13 +728,22 @@ public class MarkComponentRegistry extends GhidraScript {
         }
         if (!dry) labelIfUnnamed(bestBase, "PieVectTableInit");
 
-        int rooted = 0, made = 0, unresolved = 0;
+        int rooted = 0, made = 0, unresolved = 0, named = 0;
+        // Slot -> target AND target -> slots. The rooting loop below walks distinct
+        // targets, which on its own throws away the slot index -- and the slot index
+        // is the entire naming signal, since it is the slot that says which peripheral
+        // raises the interrupt. Keeping both directions also makes the shared-default
+        // case detectable: a target sitting in many slots has no single identity.
+        PieProfile profile = loadPieProfile();
+        Map<Long, List<Integer>> slotsByTarget = new LinkedHashMap<>();
         LinkedHashSet<Long> targets = new LinkedHashSet<>();
         for (int i = 0; i < bestLen; i++) {
             long v = word32(bestBase + i * 2);
             targets.add(v);
+            slotsByTarget.computeIfAbsent(v, k -> new ArrayList<>()).add(i);
             if (!dry) addRef(wa(bestBase + i * 2), wa(v), RefType.DATA);
         }
+        if (profile != null) profile = validateAlignment(profile, slotsByTarget, dflt);
         for (long v : targets) {
             if (v == cint) continue;                          // already the program entry
             Function f = fm.getFunctionAt(wa(v));
@@ -687,19 +762,173 @@ public class MarkComponentRegistry extends GhidraScript {
             }
             if (currentProgram.getSymbolTable().isExternalEntryPoint(f.getEntryPoint())) continue;
             rooted++;
-            println(String.format("  ISR %05x %-22s %s", v, f.getName(),
-                v == dflt ? "(default/unused-interrupt handler)" : ""));
+
+            // Name it after its vector, when the vector identifies it unambiguously.
+            // A target occupying more than one slot is the unused-interrupt handler
+            // (or some other shared stub) and naming it after whichever slot came
+            // first would be a plain lie, so those keep their FUN_ name.
+            List<Integer> slots = slotsByTarget.get(v);
+            String vectorName = null;
+            if (profile != null && slots != null && slots.size() == 1) {
+                vectorName = profile.name(slots.get(0));
+            }
+            if (vectorName != null && labelIfUnnamed(v, vectorName)) named++;
+
+            println(String.format("  ISR %05x %-22s %s", v,
+                vectorName != null ? vectorName : f.getName(),
+                v == dflt ? "(default/unused-interrupt handler)"
+                          : slots != null && slots.size() > 1
+                            ? String.format("(shared by %d vectors)", slots.size())
+                            : ""));
             if (dry) continue;
             currentProgram.getSymbolTable().addExternalEntryPoint(f.getEntryPoint());
-            if (getPlateComment(f.getEntryPoint()) == null)
+            if (getPlateComment(f.getEntryPoint()) == null) {
+                String vectorNote = "";
+                if (profile != null && slots != null) {
+                    StringBuilder note = new StringBuilder();
+                    for (int slot : slots) {
+                        String id = profile.name(slot);
+                        if (id == null) continue;
+                        String description = profile.description(slot);
+                        note.append("\nVector ").append(slot).append(": ").append(id);
+                        if (description != null && !description.isEmpty()) {
+                            note.append("  -- ").append(description);
+                        }
+                    }
+                    vectorNote = note.toString();
+                }
                 setPlateComment(f.getEntryPoint(),
                     "Interrupt handler, from the PIE vector table's flash initializer.\n"
                     + "The PIE vector table itself is RAM written at runtime by InitPieVectTable, so in a "
-                    + "static image it is empty and this handler has no caller. Registered as an entry point.");
+                    + "static image it is empty and this handler has no caller. Registered as an entry point."
+                    + vectorNote);
+            }
         }
-        println(String.format("  PIE: %d handlers rooted, %d functions created, %d targets unresolved",
-            rooted, made, unresolved));
+        println(String.format(
+            "  PIE: %d handlers rooted, %d named from %s, %d functions created, %d targets unresolved",
+            rooted, named, profile == null ? "(no profile)" : profile.profileName, made, unresolved));
         return rooted;
+    }
+
+    /**
+     * Refuse to name anything unless the table lines up with the profile.
+     *
+     * Every name here rests on one unchecked assumption: that table entry N is
+     * profile slot N. When that is off by even one, every name is confidently
+     * wrong -- which is strictly worse for a reverse-engineering tool than no name
+     * at all, because a wrong peripheral name gets believed and acted on.
+     *
+     * The check exploits the fact that most of the table is reserved: a slot TI
+     * marks RESERVED should never carry a real handler, so a live handler landing
+     * on one means the alignment is wrong (or this run is not a PIE table). Entry 0
+     * is exempt -- the boot ROM keeps boot variables in the first slots, and images
+     * are observed putting the entry point there.
+     *
+     * This is a sanity check, not a proof: an alignment can be wrong and still put
+     * every handler on a non-reserved slot. It is cheap and it catches the common
+     * off-by-a-few case, and when it fires the pass still roots the handlers -- it
+     * just leaves them under their FUN_ names.
+     */
+    PieProfile validateAlignment(PieProfile profile, Map<Long, List<Integer>> slotsByTarget,
+            long dflt) {
+        List<String> mismatched = new ArrayList<>();
+        for (Map.Entry<Long, List<Integer>> e : slotsByTarget.entrySet()) {
+            if (e.getKey() == dflt) continue;                  // the unused-interrupt fill
+            for (int slot : e.getValue()) {
+                if (slot == 0) continue;                       // boot-variable slot
+                String name = profile.name(slot);
+                if (name != null && name.contains("_RESERVED_")) {
+                    mismatched.add(String.format("slot %d (%s) <- %05x", slot, name, e.getKey()));
+                }
+            }
+        }
+        if (mismatched.isEmpty()) return profile;
+        println("  PIE profile does NOT line up with this table -- not naming anything:");
+        for (String m : mismatched) println("    live handler on a reserved " + m);
+        println("    (a handler on a reserved vector means entry N is not slot N here;"
+            + " re-check the table base, or the device profile is for the wrong part)");
+        return null;
+    }
+
+    /**
+     * PIE vector identities for one device: slot index -> TI's vector name.
+     *
+     * The slot order is a hardware fact published as the member order of
+     * `struct PIE_VECT_TABLE` in TI's `<device>_pievect.h`; `tools/generate_pie_profile.py`
+     * turns that into the JSON read here, so nothing is hand-transcribed. The names
+     * and descriptions stay TI-derived (BSD-3-Clause) -- see THIRD-PARTY.md.
+     */
+    static final class PieProfile {
+        String profileName;
+        final Map<Integer, String> names = new HashMap<>();
+        final Map<Integer, String> descriptions = new HashMap<>();
+
+        String name(int slot) { return names.get(slot); }
+        String description(int slot) { return descriptions.get(slot); }
+    }
+
+    /**
+     * Load the vector profile for this program's language, or null when there is none.
+     *
+     * Absent or unreadable profile is not an error: the pass then behaves exactly as it
+     * did before profiles existed, rooting handlers under their FUN_ names. A device
+     * this module has no profile for is the normal case, not a broken setup.
+     */
+    PieProfile loadPieProfile() {
+        // Profiles are keyed by language variant, the same way the Setup scripts are.
+        String id = currentProgram.getLanguageID().getIdAsString();
+        String name = (id.endsWith(":f2812") ? "f2812" : "f2837xd") + ".json";
+
+        List<java.io.File> candidates = new ArrayList<>();
+        String override = System.getProperty("c28x.reg.pieProfile");
+        if (override != null) candidates.add(new java.io.File(override));
+        try {
+            // The idiomatic location once the module is installed as an extension.
+            candidates.add(ghidra.framework.Application.getModuleDataFile(
+                "ghidra-tms320c28x", "device_profiles/" + name).getFile(false));
+        }
+        catch (Exception ignored) {
+            // Not installed as a module, or no such data file -- the paths below cover
+            // running straight out of a checkout and out of a flat script directory.
+        }
+        java.io.File scriptDir = getSourceFile().getParentFile().getFile(false);
+        if (scriptDir != null) {
+            candidates.add(new java.io.File(scriptDir.getParentFile(),
+                "data/device_profiles/" + name));
+            candidates.add(new java.io.File(scriptDir, "device_profiles/" + name));
+        }
+
+        java.io.File file = null;
+        for (java.io.File candidate : candidates) {
+            if (candidate != null && candidate.isFile()) { file = candidate; break; }
+        }
+        if (file == null) {
+            println("  no PIE profile for " + name + " on any known path"
+                + " -- handlers keep their FUN_ names");
+            return null;
+        }
+        try (java.io.Reader reader = new java.io.InputStreamReader(
+                new java.io.FileInputStream(file), java.nio.charset.StandardCharsets.UTF_8)) {
+            com.google.gson.JsonObject root =
+                com.google.gson.JsonParser.parseReader(reader).getAsJsonObject();
+            PieProfile profile = new PieProfile();
+            profile.profileName = root.get("profileName").getAsString();
+            for (com.google.gson.JsonElement element : root.getAsJsonArray("vectors")) {
+                com.google.gson.JsonObject vector = element.getAsJsonObject();
+                int slot = vector.get("slot").getAsInt();
+                profile.names.put(slot, vector.get("name").getAsString());
+                if (vector.has("description")) {
+                    profile.descriptions.put(slot, vector.get("description").getAsString());
+                }
+            }
+            println(String.format("  PIE profile %s: %d vectors (%s)",
+                profile.profileName, profile.names.size(), file.getName()));
+            return profile;
+        }
+        catch (Exception e) {
+            println("  PIE profile unreadable (" + e + ") -- handlers keep their FUN_ names");
+            return null;
+        }
     }
 
     /** Flash, or an initialized executable RAM block (ramfunc ISRs live there). */

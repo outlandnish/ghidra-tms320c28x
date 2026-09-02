@@ -56,6 +56,13 @@ public class DumpAbiAnalyzer extends GhidraScript {
         // The two SPRU cross-class-reservation cases this analyzer exists to fix.
         probe("abi_int_int_long", new DataType[]{i16, i16, i32});
 
+        // Six 16-bit args: four fill AL/AH/AR4/AR5 and the last two spill.
+        // cl2000 puts them at *-SP[3] and *-SP[4] IN THAT ORDER, so the fifth
+        // argument must land at the lower stack offset. The cspec's own
+        // allocator reverses them (see abi_probe.expected.txt); this records
+        // that the allocator does not.
+        probe("abi_stack_heavy",  new DataType[]{i16, i16, i16, i16, i16, i16});
+
         println("=== END ===");
     }
 

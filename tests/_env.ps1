@@ -85,6 +85,7 @@ function Install-C28xModule {
     New-Item -ItemType Directory -Force -Path $inst,$lib | Out-Null
     Copy-Item "$lang\*" $inst -Force
     Copy-Item $manifest (Join-Path $extDir "Module.manifest") -Force
+    Copy-C28xDeviceProfiles -Module $Module -DataDir (Join-Path $extDir "data")
     Write-Host "installed to extension: $extDir"
     return $lib
   }
@@ -95,6 +96,22 @@ function Install-C28xModule {
   New-Item -ItemType Directory -Force -Path $inst,$lib | Out-Null
   Copy-Item "$lang\*" $inst -Force
   Copy-Item $manifest "$modroot\Module.manifest" -Force
+  Copy-C28xDeviceProfiles -Module $Module -DataDir "$modroot\data"
   Write-Host "installed to drop-in: $modroot"
   return $lib
+}
+
+# Device profiles are module DATA, not language files, so they install alongside
+# data/languages rather than into it. MarkComponentRegistry finds them through
+# Application.getModuleDataFile, which only sees what has been installed.
+function Copy-C28xDeviceProfiles {
+  param(
+    [Parameter(Mandatory)][string]$Module,
+    [Parameter(Mandatory)][string]$DataDir
+  )
+  $src = Join-Path $Module "data\device_profiles"
+  if (-not (Test-Path $src)) { return }
+  $dst = Join-Path $DataDir "device_profiles"
+  New-Item -ItemType Directory -Force -Path $dst | Out-Null
+  Copy-Item "$src\*" $dst -Force -Recurse
 }
