@@ -26,7 +26,6 @@ import ghidra.app.util.importer.MessageLog;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.AddressSetView;
-import ghidra.program.model.lang.OperandType;
 import ghidra.program.model.lang.Processor;
 import ghidra.program.model.lang.Register;
 import ghidra.program.model.listing.ContextChangeException;
@@ -354,8 +353,7 @@ public class TMS320C28xSwitchAnalyzer extends AbstractAnalyzer {
 	}
 
 	/**
-	 * Recover the finite zero-based AR6 schedule observed at firmware
-	 * 0x90615-0x90621:
+	 * Recover the finite zero-based AR6 schedule, as observed in shipped firmware:
 	 *
 	 * <pre>
 	 * MOVZ AR6,mem16
@@ -838,13 +836,18 @@ public class TMS320C28xSwitchAnalyzer extends AbstractAnalyzer {
 			instruction.getFlowType().isJump() && instruction.getFlowType().isComputed();
 	}
 
+	/**
+	 * {@code MOVL XAR7,*+XAR7[0]} -- the table entry load.
+	 *
+	 * <p>Matched on the printed fields: this module bakes the destination into the
+	 * display section, so the instruction reports ONE operand (the {@code *+XAR7[0]}
+	 * source) and the destination is not at operand 0 at all.
+	 */
 	private static boolean isNativeLongwordLoad(Instruction instruction) {
-		if (!isMnemonic(instruction, "movl") || !isRegisterOperand(instruction, 0, "XAR7") ||
-			instruction.getNumOperands() != 2 ||
-			!OperandType.isDynamic(instruction.getOperandType(1))) {
+		if (!isMnemonic(instruction, "movl") || !isPrintedRegister(instruction, 0, "XAR7")) {
 			return false;
 		}
-		Object[] objects = instruction.getOpObjects(1);
+		Object[] objects = instruction.getOpObjects(instruction.getNumOperands() - 1);
 		if (objects.length != 2 || !(objects[0] instanceof Register register) ||
 			!(objects[1] instanceof Scalar offset)) {
 			return false;
@@ -852,11 +855,16 @@ public class TMS320C28xSwitchAnalyzer extends AbstractAnalyzer {
 		return register.getName().equalsIgnoreCase("XAR7") && offset.getSignedValue() == 0;
 	}
 
+	/**
+	 * {@code MOVL XAR7,#table} -- the table base load. Printed-field matched for
+	 * the same reason as {@link #isNativeLongwordLoad}: only the immediate is a
+	 * real operand, so the base is not at operand 1.
+	 */
 	private static Scalar immediateTableBase(Instruction instruction) {
-		if (!isMnemonic(instruction, "movl") || !isRegisterOperand(instruction, 0, "XAR7")) {
+		if (!isMnemonic(instruction, "movl") || !isPrintedRegister(instruction, 0, "XAR7")) {
 			return null;
 		}
-		return scalarOperand(instruction, 1);
+		return onlyScalarOperand(instruction);
 	}
 
 	private static Address tableAddress(Instruction tableInstruction, Scalar scalar) {
@@ -933,27 +941,44 @@ public class TMS320C28xSwitchAnalyzer extends AbstractAnalyzer {
 		return null;
 	}
 
+	/**
+	 * {@code MOVZ AR6,<memory>} -- the zero-extending selector load that proves the
+	 * index is nonnegative. Printed-field matched: the destination is baked into
+	 * the display section, so {@code MOVZ AR6,*-SP[22]} reports one operand.
+	 *
+	 * <p>The source must be memory, not a register. A register source is a
+	 * different schedule -- the ADDU family re-reads the already-scaled selector
+	 * out of AL -- and admitting it here would mis-scale the case table.
+	 */
 	private static boolean isMovzMemoryToAr6(Instruction instruction) {
-		if (!isMnemonic(instruction, "movz") ||
-			!isRegisterOperand(instruction, 0, "AR6") ||
-			instruction.getNumOperands() != 2) {
+		if (!isMnemonic(instruction, "movz") || !isPrintedRegister(instruction, 0, "AR6")) {
 			return false;
 		}
-		int type = instruction.getOperandType(1);
-		return !OperandType.isRegister(type) &&
-			(OperandType.isAddress(type) || OperandType.isIndirect(type) ||
-				OperandType.isDynamic(type));
+		String source = printedField(instruction, 1);
+		return !source.isEmpty() &&
+			instruction.getProgram().getLanguage().getRegister(source) == null;
 	}
 
 	// Anchors the ADD's extension mode. TI cl2000 emits SETC SXM for this schedule,
-	// but shipped firmware (e.g. @0x19a76) emits the zero-extending
-	// CLRC SXM for the unsigned switch selector. MOVZ + the unsigned guard prove the
+	// but shipped firmware has been observed emitting the zero-extending CLRC SXM
+	// for the unsigned switch selector. MOVZ + the unsigned guard prove the
 	// selector is nonnegative, so SETC and CLRC SXM extend it identically and the
 	// switch_canonical ADD constructor already zero-extends -- accept either mode.
+	//
+	// Two renderings have to be accepted as well. The generic mode-bit constructor
+	// takes an 8-bit mask operand, in which SXM is bit 0; the dedicated per-flag
+	// constructors print the flag name as a display literal and expose NO operand
+	// at all, so `CLRC SXM` arrives here with getNumOperands() == 0. Requiring the
+	// mask form alone is what kept this predicate from ever matching real code.
 	private static boolean isSxmModeSelect(Instruction instruction) {
+		if (!isMnemonic(instruction, "setc") && !isMnemonic(instruction, "clrc")) {
+			return false;
+		}
+		if (instruction.getNumOperands() == 0) {
+			return isPrintedRegister(instruction, 0, "SXM");
+		}
 		Scalar mask = scalarOperand(instruction, 0);
-		return (isMnemonic(instruction, "setc") || isMnemonic(instruction, "clrc")) &&
-			instruction.getNumOperands() == 1 && mask != null && mask.getUnsignedValue() == 1;
+		return instruction.getNumOperands() == 1 && mask != null && mask.getUnsignedValue() == 1;
 	}
 
 	private static boolean isAr6ScaledAdd(Instruction instruction) {
@@ -1056,12 +1081,18 @@ public class TMS320C28xSwitchAnalyzer extends AbstractAnalyzer {
 				return true;
 			}
 		}
-		// This module's SLEIGH renders "*XAR7"-style indirect operands with the
-		// register baked into the print form rather than exposed as an operand
-		// object; fall back to matching the rendered operand text so callers that
-		// upstream matched via getRegister continue to work here.
-		return instruction.getDefaultOperandRepresentation(operand)
-			.equalsIgnoreCase("*" + registerName);
+		// This module's SLEIGH renders some registers into the print form rather
+		// than exposing them as operand objects, so an operand can be present but
+		// carry nothing to match against: `MOVL ACC,@XAR7` reports two operands
+		// with an EMPTY object list on operand 0. Fall back to the rendered text,
+		// accepting the "@" register-direct and "*" indirect markers this module
+		// prints, so callers that matched via getRegister continue to work here.
+		String text = instruction.getDefaultOperandRepresentation(operand);
+		if (text == null) {
+			return false;
+		}
+		String bare = text.startsWith("@") || text.startsWith("*") ? text.substring(1) : text;
+		return bare.equalsIgnoreCase(registerName);
 	}
 
 	private static Scalar scalarOperand(Instruction instruction, int operand) {
@@ -1092,6 +1123,81 @@ public class TMS320C28xSwitchAnalyzer extends AbstractAnalyzer {
 		return instruction == null || operand >= instruction.getNumOperands()
 				? ""
 				: instruction.getDefaultOperandRepresentation(operand);
+	}
+
+	/**
+	 * The comma-separated fields of an instruction as printed, mnemonic removed.
+	 *
+	 * <p>Ghidra's operand numbering and the TI listing text only agree when every
+	 * printed field is backed by an operand. On this module they routinely do not,
+	 * because several constructors bake a register into their display section:
+	 * {@code MOVL XAR7,#0x8159a} prints two fields but exposes ONE operand (the
+	 * immediate), and {@code MOVL XAR7,*+XAR7[0]} prints two but exposes one (the
+	 * source). Predicates written against the schedules in the doc comments above
+	 * -- which are listing text -- have to index the text, not the operand array,
+	 * or they silently read the wrong field and never match.
+	 *
+	 * <p>Splitting on commas is safe for the operand forms admitted here; the only
+	 * multi-part field is a shift ({@code @AR6<<#0x1}), which carries no comma.
+	 */
+	private static String[] printedFields(Instruction instruction) {
+		if (instruction == null) {
+			return new String[0];
+		}
+		String text = instruction.toString();
+		String mnemonic = instruction.getMnemonicString();
+		if (text.regionMatches(true, 0, mnemonic, 0, mnemonic.length())) {
+			text = text.substring(mnemonic.length());
+		}
+		text = text.trim();
+		if (text.isEmpty()) {
+			return new String[0];
+		}
+		String[] fields = text.split(",");
+		for (int i = 0; i < fields.length; i++) {
+			fields[i] = fields[i].trim();
+		}
+		return fields;
+	}
+
+	/**
+	 * One printed field, with this module's {@code @} register-direct marker
+	 * stripped so {@code @XAR7} and {@code XAR7} compare equal.
+	 */
+	private static String printedField(Instruction instruction, int index) {
+		String[] fields = printedFields(instruction);
+		if (index < 0 || index >= fields.length) {
+			return "";
+		}
+		String field = fields[index];
+		return field.startsWith("@") ? field.substring(1) : field;
+	}
+
+	private static boolean isPrintedRegister(Instruction instruction, int index, String name) {
+		return printedField(instruction, index).equalsIgnoreCase(name);
+	}
+
+	/**
+	 * The sole scalar among an instruction's operands, or null when there is not
+	 * exactly one. Used where the printed field carrying the immediate is not at a
+	 * stable operand index because an earlier field is a display literal.
+	 */
+	private static Scalar onlyScalarOperand(Instruction instruction) {
+		if (instruction == null) {
+			return null;
+		}
+		Scalar found = null;
+		for (int i = 0; i < instruction.getNumOperands(); i++) {
+			Scalar scalar = instruction.getScalar(i);
+			if (scalar == null) {
+				continue;
+			}
+			if (found != null) {
+				return null;
+			}
+			found = scalar;
+		}
+		return found;
 	}
 
 	private static boolean flowsTo(Instruction instruction, Address destination) {

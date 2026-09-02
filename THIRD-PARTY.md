@@ -175,7 +175,19 @@ Files adapted so far:
   the mnemonic literal (zero operands), so the terminal branch is matched by
   mnemonic + operand-count + `*XAR7` print form + `isJump && isComputed` flow.
   `isRegisterOperand` also grew an operand-representation fallback for indirect
-  `*XAR7` operands (e.g. `MOVL XAR7,*+XAR7[0]`). See #18. Complements — does not
+  `*XAR7` operands (e.g. `MOVL XAR7,*+XAR7[0]`). See #18.
+
+  That first adaptation turned out to be one instance of a general problem, and
+  #62 finished it. mwdmwd's matchers index Ghidra's operand array; this module's
+  SLEIGH bakes registers into constructors' display sections, so the two
+  numberings disagree on most of the dispatch schedule. `MOVL ACC,@XAR7` reports
+  operand 0 with an *empty* object list, `MOVL XAR7,#table` reports one operand
+  (the immediate, not at index 1), and `CLRC SXM` reports none at all. Every
+  predicate that read those positions silently returned false, so the ported
+  matchers recognized **nothing** on real firmware while passing every synthetic
+  test. The predicates now match the printed fields — which is what their own
+  doc-comment schedules always described — via `printedFields` /
+  `printedField` / `isPrintedRegister`. Complements — does not
   replace — [`ghidra_scripts/MarkJumpTables.java`](ghidra_scripts/MarkJumpTables.java),
   which is the structured-data marker for the pointer table itself (an original
   entropy-gated pattern detector, with no counterpart in mwdmwd).
@@ -300,6 +312,15 @@ Files adapted so far:
   See #63.
 
 Evaluated and **not** adopted (recorded so the next reader does not re-derive it):
+
+- **mwdmwd's three newer switch variants** (`6d6c48c`, `a290d6a`):
+  `NATIVE_SAVED_LONG_SUBB`, `NATIVE_AR6_SAVED_GLOBAL`, `NATIVE_AR6_SAVED_STACK`.
+  Measured against every computed `LB *XAR7` in a production image: none of them
+  matches any dispatch there. The image's dispatches are one AR6-indexed
+  native-load (which the *existing* ported matcher handles, once it can see the
+  operands — see #62) and three of an ADDU-accumulate family that neither module
+  recognizes. Porting the three variants would have added code that never fires
+  here. `a290d6a`'s namespace-lifecycle fix is orthogonal and still open.
 
 - **mwdmwd's `storage="class4"` + `<rule><join storage="class4"/></rule>` input
   model** (`0ebb33e`). It exists to let `AL`, `AH`, and the containing `ACC` be
