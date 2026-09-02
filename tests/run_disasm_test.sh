@@ -23,6 +23,13 @@
 #                   thing that decodes plausibly while naming the wrong register.
 #                   Assembled by asm2000 from the TI mnemonics, so the expected
 #                   registers are TI's, not ours.
+#   c2xlp        -- the whole C2xLP source-compatible family (XPREAD / XPWRITE / XMAC /
+#                   XMACD / XB / XCALL / XBANZ / XRETC, 28 forms). Assembled by asm2000 from
+#                   TI mnemonics, so the encodings are TI's, not ours -- which matters here
+#                   because the family spans three opcode groups (0x56xx, 0x3Exx, and the
+#                   0x84/0xA4/0xAC high-byte forms) and several encodings differ by one bit.
+#                   This is also the only fixture with real control flow, which is why
+#                   DumpDisasm sweeps the block linearly instead of following flow.
 #   fpu_flags    -- SETFLG / SAVE / RESTORE. Their 11-bit FLAG mask is split across
 #                   both words with the HIGH 6 bits in the LSW and the low 5 in the
 #                   MSW -- the opposite order from the #16FHi immediates, and getting
@@ -61,7 +68,7 @@ lang="$module/data/languages"
 tmp=$(mktemp -d -t c28x-test-XXXXXX)
 trap 'rm -rf "$tmp"' EXIT
 
-CASES="addr_modes fpu_display fpu_parallel fpu_flags"
+CASES="addr_modes fpu_display fpu_parallel fpu_flags c2xlp"
 
 # 1. compile the .sla
 (cd "$lang" && "$GHIDRA_INSTALL_DIR/support/sleigh" tms320c28x.slaspec)

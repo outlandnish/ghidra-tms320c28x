@@ -9,8 +9,10 @@ handles the few compute pcodeops that would be prohibitively verbose in SLEIGH:
 | Feature | Where | Notes |
 | --- | --- | --- |
 | **RPT** | SLEIGH (`tms320c28x_rpt.sinc` + `tms320c28x_more.sinc`); Java re-issue alongside it under emulation | Zero-overhead single-instruction repeat. The `:^instruction` prefix wrapper matches when `rpt_active=1` (set by the RPT body via `globalset(inst_next, …)`) and re-executes the wrapped instruction while `RPTC > 0` — this is what makes the repeat visible in the **decompiler**. It also fires under **emulation** (measured; see [Why RPT still needs the modifier](#why-rpt-still-needs-the-modifier)), where `postExecuteCallback` re-issues the same address in parallel without compounding. `RPT #15 ‖ SUBCU` (16-bit unsigned divide) and `RPT ‖ VCRCxx` (block CRC) emulate correctly. |
-| **RPT ‖ PREAD / PWRITE / XPREAD / XPWRITE** | SLEIGH (`tms320c28x_rpt.sinc`) + Java shadow | The repeated program transfers shadow their program-side pointer (SPRU430F): the source/destination walks forward while the architectural pointer is left where it started. Specialised constructors model this with the shadow in a unique varnode and an **internal** `RPTC` loop, so the decompiler sees a block copy rather than a fill. Because that loop is internal, `postExecuteCallback` zeroes `RPTC` when it arms one — otherwise its own re-issue would run the repeat a second time. It still supplies the `*XAR7` shadow under emulation. |
+| **RPT ‖ PREAD / PWRITE / XPREAD / XPWRITE** | SLEIGH (`tms320c28x_rpt.sinc`) + Java shadow | The repeated program transfers shadow their program-side pointer (SPRU430F), so the source walks forward while the architectural pointer stays put — a block copy, not a fill. The SLEIGH loop is **internal** to the instruction, so `postExecuteCallback` zeroes `RPTC` when it arms one; otherwise its re-issue runs the repeat twice. It still supplies the `*XAR7` shadow. |
 | **RPTB** | Pure SLEIGH (`tms320c28x_rpt.sinc` + `tms320c28x_fpu.sinc`) | Zero-overhead block repeat. The `rptb_end` sub-table computes the block-end address and `globalset`s `rptb_flag` there; the wrapper fires on the block-end instruction and jumps to `RB_RSTART` while `RB_RC > 0`. |
+| **XCALL / XRETC** | Pure SLEIGH (`tms320c28x_ext56.sinc`) | The C2xLP call/return pair uses the **software stack**, not `RPC`. Removed from the modifier's `isRpcCall`, which was pushing a second 2-word frame on top of the SLEIGH one (`SP` moved 3 words per call). Guarded by `EmuC2xlpTest`. |
+| **C2xLP `0x3F` program page** | Pure SLEIGH (`tms320c28x_flow.sinc` sub-tables) | Every `X*` instruction forces the upper 6 bits of the program address to `0x3F`; the non-X forms force `0x00`. Mnemonic-level checks cannot see this, so `EmuC2xlpTest` is the only guard — it pins both halves. |
 | **CSB ACC** | Pure SLEIGH (`tms320c28x_ext56.sinc`) | Leading sign bits − 1 → `T`. Built on SLEIGH's `lzcount`: `lzcount(ACC)` for non-negative, `lzcount(~ACC)` for negative. |
 | **VCRC8L / VCRC16P1L / VCRC32L** | Java pcodeop | VCU-II CRC accumulate (polys `0x07` / `0x8005` / `0x04C11DB7`, MSB-first, low byte). Kept as an intrinsic so the decompiler renders `VCRC = VCRC8L(VCRC, src)` — the direct signal for CAN CRC compute/check code. |
 | **FPU non-IEEE conditioning + LU/LV flags** | Java pcodeops (`TMU_COND_OPERAND`, `FPU_MINMAX_FLUSH`, `FPU_UNDERFLOW`, `FPU_OVERFLOW`) | Denormal/NaN canonicalisation per SPRUHS1C §7.3, §7.5.2, and the exact-in-double underflow/overflow verdicts. |
@@ -131,35 +133,21 @@ decoded and executed.
 
 So `postExecuteCallback` retains the RPT arm / re-issue logic, and only that.
 
-> **Correction, measured 2026-09 on Ghidra 12.1.2.** The paragraph above used to
-> continue "the wrapper never fires at `inst_next`, so the callback is the sole
-> driver". That is no longer true. Emulating `RPT #2 ‖ ADDB ACC,#1` and reading
-> `RPTC` after each step gives:
+> **Correction, measured 2026-09 on Ghidra 12.1.2.** This section used to conclude
+> "the wrapper never fires at `inst_next`, so the callback is the sole driver". Not
+> true any more — emulating `RPT #2 ‖ ADDB ACC,#1` steps `RPTC` 2 → 1 → 0, and nothing
+> but the wrapper decrements `RPTC`. It matches from the first decode and drives the
+> loop, with the callback re-issuing the same address alongside it. They agree rather
+> than compound: the wrapper's loop-back is an external `goto inst_start`, the same
+> address the re-issue sets, so one execution happens per step either way.
 >
-> ```
-> step 0  PC=0xc101  ACC=0  RPTC=2      <- RPT armed
-> step 1  PC=0xc101  ACC=1  RPTC=1      <- RPTC decremented: the wrapper's p-code ran
-> step 2  PC=0xc101  ACC=2  RPTC=0
-> step 3  PC=0xc102  ACC=3  RPTC=0      <- 3 executions for RPT #2, correct
-> ```
+> So the callback's RPT re-issue may now be redundant. Untested — proving it needs the
+> callback disabled and the RPT cases re-run. Tracked on the RPT/RPTB issue.
 >
-> Nothing but the wrapper decrements `RPTC`, so it **does** match from the first
-> decode of the repeated address and drives the loop, with the callback re-issuing
-> the same address alongside it. They agree rather than compound, because the
-> wrapper's loop-back is an external `goto inst_start` — the same address the
-> re-issue sets — so exactly one execution happens per step either way.
->
-> This means the callback's RPT re-issue may now be redundant. That is **not**
-> established here: proving it needs the callback disabled and the RPT cases re-run,
-> and it is tracked on the RPT/RPTB issue rather than assumed.
->
-> Where the two genuinely do compound is the specialised repeated program transfers
-> (PREAD / PWRITE / XPREAD / XPWRITE), whose SLEIGH loop is **internal** to one
-> instruction: the first issue completes the whole repeat, and the callback then
-> re-issues it. Measured as a 3-word block copy advancing its destination pointer 5
-> times. The callback zeroes `RPTC` when it arms one of those opcodes, collapsing
-> each issue to a single transfer so it stays the driver and can step the `*XAR7`
-> shadow. Pinned by `EmuPreadRepeatTest`.
+> The two *do* compound for the repeated program transfers, whose SLEIGH loop is
+> internal to one instruction: the first issue completes the repeat and the callback
+> re-issues it anyway (a 3-word copy advanced its destination 5 times). The callback
+> zeroes `RPTC` when it arms those. Pinned by `EmuPreadRepeatTest`.
 
 Under disassembly the callback does not run at all, so SLEIGH is the sole model.
 **Disassembly is unaffected either way** — firmware decode parity against TI

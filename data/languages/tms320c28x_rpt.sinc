@@ -126,10 +126,10 @@
 # after every transfer, so what survives the repeat is the flag state of the LAST
 # word -- and TI's .cinit walk reads exactly that.
 #
-# The C2xLP `X*` forms below deliberately keep the un-repeated constructors' own
-# 16-bit program-address formation (`zext`, no 0x3F0000 page). Upstream forms that
-# address as `0x3f0000 | pma`; whether this module's whole C2xLP family is missing
-# that page is a separate question from the repeat shadow, and is not decided here.
+# The C2xLP `X*` forms below apply the 0x3F program page, like the un-repeated
+# constructors they mirror -- SPRU430F forces the upper 6 bits of the 22-bit program
+# address for the whole family. See the xpma* sub-tables in tms320c28x_flow.sinc,
+# and note the NON-X counterparts force 0x00 instead.
 #
 # EMULATION -- these DO run there, and that needed handling. Contrary to the note
 # above (measured 2026-09 on Ghidra 12.1.2), the armed context IS in effect at the
@@ -198,8 +198,8 @@
 }
 
 # --- XPREAD loc16,*(pma)  (0xAC) : shadow the pma IMMEDIATE --------------------
-:XPREAD "@AH", "*(pma)"  is rpt_phase=0 & rpt_active=1 & rptb_flag=0 & op_hi8=0xAC & ctx_AMODE=0 & loc_full8=0b10101000 ; imm16  {
-    local shadow:4 = zext(imm16:2);
+:XPREAD "@AH", "*("xpmaaddr")"  is rpt_phase=0 & rpt_active=1 & rptb_flag=0 & op_hi8=0xAC & ctx_AMODE=0 & loc_full8=0b10101000 ; imm16 & xpmaaddr  {
+    local shadow:4 = xpmaaddr;
   <xpread_imm_ah>
     AH = *[ram]:2 shadow;
     setNZ16(AH);
@@ -209,8 +209,8 @@
     goto <xpread_imm_ah>;
   <xpread_imm_ah_done>
 }
-:XPREAD "@AL", "*(pma)"  is rpt_phase=0 & rpt_active=1 & rptb_flag=0 & op_hi8=0xAC & ctx_AMODE=0 & loc_full8=0b10101001 ; imm16  {
-    local shadow:4 = zext(imm16:2);
+:XPREAD "@AL", "*("xpmaaddr")"  is rpt_phase=0 & rpt_active=1 & rptb_flag=0 & op_hi8=0xAC & ctx_AMODE=0 & loc_full8=0b10101001 ; imm16 & xpmaaddr  {
+    local shadow:4 = xpmaaddr;
   <xpread_imm_al>
     AL = *[ram]:2 shadow;
     setNZ16(AL);
@@ -220,8 +220,8 @@
     goto <xpread_imm_al>;
   <xpread_imm_al_done>
 }
-:XPREAD loc16, "*(pma)"  is rpt_phase=0 & rpt_active=1 & rptb_flag=0 & op_hi8=0xAC & loc16 ; imm16  {
-    local shadow:4 = zext(imm16:2);
+:XPREAD loc16, "*("xpmaaddr")"  is rpt_phase=0 & rpt_active=1 & rptb_flag=0 & op_hi8=0xAC & loc16 ; imm16 & xpmaaddr  {
+    local shadow:4 = xpmaaddr;
   <xpread_imm_loc>
     build loc16;
     local v:2 = *[ram]:2 shadow;
@@ -236,7 +236,7 @@
 # --- XPREAD loc16,*AL / XPWRITE *A,loc16  (0x563c / 0x563d) --------------------
 # The shadow starts at AL and steps; AL itself is untouched by the progression.
 :XPREAD "@AH", "*AL"  is rpt_phase=0 & rpt_active=1 & rptb_flag=0 & ctx_AMODE=0 & op16=0x563c ; loc_full8=0b10101000  {
-    local shadow:4 = zext(AL);
+    local shadow:4 = 0x3f0000 | zext(AL);
   <xpread_al_ah>
     AH = *[ram]:2 shadow;
     setNZ16(AH);
@@ -247,7 +247,7 @@
   <xpread_al_ah_done>
 }
 :XPREAD "@AL", "*AL"  is rpt_phase=0 & rpt_active=1 & rptb_flag=0 & ctx_AMODE=0 & op16=0x563c ; loc_full8=0b10101001  {
-    local shadow:4 = zext(AL);
+    local shadow:4 = 0x3f0000 | zext(AL);
   <xpread_al_al>
     AL = *[ram]:2 shadow;
     setNZ16(AL);
@@ -258,7 +258,7 @@
   <xpread_al_al_done>
 }
 :XPREAD loc16, "*AL"  is rpt_phase=0 & rpt_active=1 & rptb_flag=0 & op16=0x563c ; loc16  {
-    local shadow:4 = zext(AL);
+    local shadow:4 = 0x3f0000 | zext(AL);
   <xpread_al_loc>
     build loc16;
     local v:2 = *[ram]:2 shadow;
@@ -270,7 +270,7 @@
   <xpread_al_loc_done>
 }
 :XPWRITE "*A", loc16  is rpt_phase=0 & rpt_active=1 & rptb_flag=0 & op16=0x563d ; loc16  {
-    local shadow:4 = zext(AL);
+    local shadow:4 = 0x3f0000 | zext(AL);
   <xpwrite_al_loc>
     build loc16;
     local v:2 = loc16;

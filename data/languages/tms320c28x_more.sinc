@@ -6,8 +6,9 @@
 # macros (packst0/unpackst0/packst1/unpackst1) and their wiring on PUSH|POP ST0|ST1,
 # the per-flag SETC|CLRC #imm8 bodies, the decoded-signed PM convention used by SPM,
 # and the three-variant LB *XAR7 split dispatched by the ffc_return /
-# switch_canonical context bits; and the @AH / @AL destination split on PREAD and
-# XPREAD that gives SPRU430F's exact N/Z rule. See THIRD-PARTY.md.
+# switch_canonical context bits; the @AH / @AL destination split on PREAD and XPREAD
+# that gives SPRU430F's exact N/Z rule; and the 0x3F program page on XPREAD / XMAC /
+# XMACD. See THIRD-PARTY.md.
 #
 # Additional C28x instructions seen in the real firmware (DIR/PM) but not in the
 # core families. Encodings verified against docs/c28x/ch6_instruction_detail.txt.
@@ -215,10 +216,9 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
     local a:4 = sext(T); local b:4 = zext(loc16); P = a * b;
 }
 # XMACD P,loc16,*pma  1010 0100 LLLL LLLL : pma   (mac with data move) decode-only-ish
-:XMACD Preg, loc16, "*"imm16  is rpt_phase=1 & op_hi8=0xA4 & Preg & loc16 ; imm16 {
+:XMACD Preg, loc16, "*("xpmaval")"  is rpt_phase=1 & op_hi8=0xA4 & Preg & loc16 ; imm16 & xpmaval {
     ACC = ACC + P;
-    local pma:4 = zext(imm16:2);
-    local pv:2 = *[ram]:2 pma;
+    local pv:2 = xpmaval;
     local a:4 = sext(loc16); local b:4 = sext(pv);
     P = a * b;
 }
@@ -258,10 +258,9 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 :MOV ACCreg, loc16^"<<#0"  is rpt_phase=1 & op_hi8=0x85 & ACCreg & loc16 {
     ACC = sext(loc16);
 }
-:XMAC Preg, loc16, "*pma"  is rpt_phase=1 & op_hi8=0x84 & Preg & loc16 ; imm16 {
+:XMAC Preg, loc16, "*("xpmaval")"  is rpt_phase=1 & op_hi8=0x84 & Preg & loc16 ; imm16 & xpmaval {
     ACC = ACC + P;
-    local pma:4 = zext(imm16:2);
-    local pv:2 = *[ram]:2 pma;
+    local pv:2 = xpmaval;
     local a:4 = sext(loc16); local b:4 = sext(pv);
     P = a * b;
 }
@@ -346,19 +345,20 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 # XPREAD loc16,*(pma)  1010 1100 MMMM MMMM : pma  (program-mem read, single-word form)
 # Destination-conditioned N/Z, same SPRU430F rule as PREAD above: flags only when the destination
 # is an accumulator half, hence the @AH / @AL split. Repeated forms in tms320c28x_rpt.sinc.
-:XPREAD "@AH", "*(pma)"  is rpt_phase=1 & op_hi8=0xAC & ctx_AMODE=0 & loc_full8=0b10101000 ; imm16  {
-    local pma:4 = zext(imm16:2);
-    AH = *[ram]:2 pma;
+#
+# `pma` is page-forced to 0x3F -- see the xpmaval sub-table in tms320c28x_flow.sinc. This also
+# fixes the rendering: the operand used to be the LITERAL TEXT "*(pma)" (the letters p-m-a), so
+# the listing never showed which address was read.
+:XPREAD "@AH", "*("xpmaval")"  is rpt_phase=1 & op_hi8=0xAC & ctx_AMODE=0 & loc_full8=0b10101000 ; imm16 & xpmaval  {
+    AH = xpmaval;
     setNZ16(AH);
 }
-:XPREAD "@AL", "*(pma)"  is rpt_phase=1 & op_hi8=0xAC & ctx_AMODE=0 & loc_full8=0b10101001 ; imm16  {
-    local pma:4 = zext(imm16:2);
-    AL = *[ram]:2 pma;
+:XPREAD "@AL", "*("xpmaval")"  is rpt_phase=1 & op_hi8=0xAC & ctx_AMODE=0 & loc_full8=0b10101001 ; imm16 & xpmaval  {
+    AL = xpmaval;
     setNZ16(AL);
 }
-:XPREAD loc16, "*(pma)"  is rpt_phase=1 & op_hi8=0xAC & loc16 ; imm16  {
-    local pma:4 = zext(imm16:2);
-    loc16 = *[ram]:2 pma;
+:XPREAD loc16, "*("xpmaval")"  is rpt_phase=1 & op_hi8=0xAC & loc16 ; imm16 & xpmaval  {
+    loc16 = xpmaval;
 }
 
 # =============================================================================

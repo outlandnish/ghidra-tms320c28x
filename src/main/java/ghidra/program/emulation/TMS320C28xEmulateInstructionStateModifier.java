@@ -138,12 +138,16 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 	private static final int OP_XPREAD_AL = 0x563C;   // XPREAD loc16,*AL      (2-word, C2xLP)
 	private static final int OP_XPWRITE_AL = 0x563D;  // XPWRITE *A,loc16      (2-word, C2xLP)
 
-	// Single-word return opcodes that restore RPC from the hardware nested-call stack.
+	// Single-word return opcode that restores RPC from the hardware nested-call stack.
 	private static final int OP_LRETR = 0x0006;
-	private static final int OP_XRET = 0x56FF;
-	// Single-word indirect calls that use RPC.
+	// Single-word indirect call that uses RPC.
 	private static final int OP_LC_XAR7 = 0x7604;
-	private static final int OP_XCALL_AL = 0x5634;
+	//
+	// XCALL *AL (0x5634) and XRETC/XRET (0x56Fx) used to be handled here as RPC calls. They are
+	// NOT: SPRU430F has XCALL push only the low 16 bits of the return address onto the SOFTWARE
+	// stack ("[SP] = temp(15:0); SP = SP + 1") and XRETC pop it back, leaving RPC untouched.
+	// SLEIGH models that directly now, so anything left here would push a SECOND, 2-word RPC
+	// frame on top of it -- measured as SP moving by 3 words across an XCALL instead of 1.
 
 	// RPC as it stood *before* the instruction that just executed. A call overwrites RPC
 	// with its own return address, so by the time postExecuteCallback runs the caller's
@@ -204,7 +208,9 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 
 	/**
 	 * Maintain the RPC nested-call chain that the hardware keeps on the stack: a call pushes
-	 * the caller's RPC and {@code LRETR}/{@code XRET} pops it back.
+	 * the caller's RPC and {@code LRETR} pops it back. The C2xLP {@code XCALL}/{@code XRETC}
+	 * family is deliberately NOT part of this chain -- it uses the software stack directly,
+	 * modelled in SLEIGH (see the opcode constants above).
 	 *
 	 * <p>This used to live in SLEIGH, but pushing RPC there wrecked decompilation. Unlike
 	 * x86's {@code CALL}, which pushes the constant {@code inst_next}, the C28x push sources a
@@ -223,7 +229,7 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 			mem.setValue(space, sp << 1, 4, prevRpc);
 			mem.setValue("SP", sp + 2);
 		}
-		else if (w0 == OP_LRETR || w0 == OP_XRET) {
+		else if (w0 == OP_LRETR) {
 			long sp = (mem.getValue("SP") & 0xFFFFFFFFL) - 2;
 			mem.setValue("SP", sp);
 			mem.setValue("RPC", mem.getValue(space, sp << 1, 4));
@@ -233,7 +239,8 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 	/**
 	 * True for the calls that route their return address through RPC. Field extents mirror
 	 * the SLEIGH tokens: {@code op_hi8}=(8,15), {@code op_lo_76}=(6,7), {@code op_lo_35}=(3,7).
-	 * FFC is excluded -- it returns via XAR7 and never touches the RPC chain.
+	 * FFC is excluded -- it returns via XAR7 and never touches the RPC chain. So is the C2xLP
+	 * XCALL family, which pushes the software stack instead (see the opcode constants above).
 	 */
 	private static boolean isRpcCall(int w0) {
 		int ophi8 = w0 >>> 8;
@@ -247,7 +254,7 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 		if (ophi8 == 0x00 && lo76 == 0x2) {                     // LC #22bit
 			return true;
 		}
-		return w0 == OP_LC_XAR7 || w0 == OP_XCALL_AL;           // LC *XAR7 / XCALL *AL
+		return w0 == OP_LC_XAR7;                                // LC *XAR7
 	}
 
 	/**
