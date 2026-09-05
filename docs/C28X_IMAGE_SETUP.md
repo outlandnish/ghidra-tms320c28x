@@ -14,7 +14,7 @@ Every step is a script in the **TMS320C28x** Script-Manager category.
 | 3 | `MarkJumpTables.java`, `MarkDataTables.java` | Mark switch/pointer tables and float-constant pools as data so they stop decoding as garbage. |
 | 4 | `MaterializeSections.java` or `MaterializeCopyTable.java` | Copy the flash **load images** into their RAM **run** addresses so the RAM-resident code/data becomes real. Which one depends on the startup copy mechanism. |
 | 4c | `EmulateStartup.java` | The general alternative to 4/4b: **run the image's own `_c_int00`** and keep the RAM it writes. Covers whatever mechanism the image uses — including the inlined `.cinit` walk that neither materializer implements. Dry run by default. |
-| 4d | `MarkComponentRegistry.java` | Turns the materialized RAM dispatch table into actual call-graph **references**. 4/4b/4c restore the bytes; without this the graph never sees the indirect edges and every handler still looks dead. Finds the table structurally, reads each dispatcher's descriptor field offset out of the code, creates functions at proven call targets, and recovers a dispatcher's own function when nothing calls it either. Sites with no table behind them go to **base resolution** — see §Step 4d. Idempotent; `-Dc28x.reg.dryRun` to preview. |
+| 4d | `MarkComponentRegistry.java` | Turns the materialized RAM dispatch table into actual call-graph **references**. 4/4b/4c restore the bytes; without this the graph never sees the indirect edges and every handler still looks dead. Finds the table structurally, reads each dispatcher's descriptor field offset out of the code, creates functions at proven call targets, and recovers a dispatcher's own function when nothing calls it either. Sites with no discovered table behind them go to **base resolution** and the **strided-table** walk — see §Step 4d. Idempotent; `-Dc28x.reg.dryRun` to preview. |
 | 5 | `FinalizeRamfuncs.java` | Post-analysis cleanup: rebuild bodies, clear stale flow bookmarks, repair conflicts. Run it **after** analysis has settled. |
 | 8 | `ReachabilityReport.java` | What is actually reachable from `_c_int00`, and *why* the rest is not. Run last — it is only as good as the reference graph. |
 | 6 | `RetypeWideMemory.java` | Retype 32/64-bit memory operands to kill `CONCAT22`/`CONCAT44` in the decompiler. |
@@ -268,12 +268,17 @@ source walks forward while the architectural `XAR7` stays put), now modelled in
 the state modifier. See `EmuAddbAccFlagsTest`, `EmuPreadFlagsTest`,
 `EmuPreadRepeatTest`.
 
-## Step 4d — base resolution (dispatch sites with no table behind them)
+## Step 4d — dispatch sites with no table behind them
 
-Discovery needs a **dense** pointer run. Some images have none: their task
-registry is a heterogeneous set of per-component RAM structs, each carrying a
-function pointer at a field offset. For those, work from the call site instead —
-walk back from `LCR *XARn` to the instruction that defines the dispatched
+Discovery needs a **dense** pointer run in RAM. Plenty of dispatch has none, so
+two passes work from the call site instead. Both read their parameters out of
+the dispatcher's own instruction stream, which is the same principle the
+descriptor-offset attribution already rests on: the immediate in the code is
+ground truth, a shape inferred from a region's bytes is not.
+
+### Base resolution — one site, one address, one target
+
+Walk back from `LCR *XARn` to the instruction that defines the dispatched
 register and resolve its source:
 
 ```
@@ -294,27 +299,71 @@ over N entries into one confidently wrong edge. So a register-derived address is
 resolved by this walk only, never from a propagated reference; the reference is
 taken only where the operand is static (`@6bit`, `*(0:addr)`).
 
-Measured (F28377D, `-Dc28x.reg.noBaseResolve` for the baseline). It runs before
-the RAM-hook pass and takes over the sites hooks used to claim, so "new" counts
-only edges neither pass had:
+### Strided tables — the sites base resolution refuses
 
-| image | sites resolved | new edges | reachable |
-|-------|----------------|-----------|-----------|
-| CPU2, dense registry | 3, + 3 reported (targets in unmaterialized D1 RAM) | 1 | 50.4% → 50.5% |
-| CPU1, sparse/inline  | 2 | 0 | 63.2% (unchanged) |
+That same `ADDL` says the dispatcher is walking a table, and every parameter of
+the walk is a literal a few instructions back:
 
-No edge landed on a non-function on either. The CPU2 gain is a flash slot,
-which the hook pass refuses by design — safe here because the base is proved
-rather than scavenged out of the window.
+```
+MOVL XAR1,#0x9b506        <- base
+MOV  ACC,@AL<<#0x2        <- index scaled by the record stride (4 words)
+ADDL @XAR1,ACC
+MOVL XAR7,*+XAR1[0x0]     <- handler field within the record
+LCR  *XAR7
+```
 
-**The CPU1 result is the informative one.** Its component structs really are a
-struct array with the handler at a field offset (strides 0x10 and 0x14), but no
+Nothing here guesses a stride from a region's shape — the code states it. Only
+the record **count** is sometimes unstated, and that is read from the table:
+walk records until one holds a word that is neither null nor code. A record
+naming an address with an instruction already decoded at it, inside no function,
+becomes a function; an address with no instruction ends the table rather than
+being disassembled into existence.
+
+**That stop rule was checked against a bound the code does state.** The table
+above is guarded by `CMPB AL,#0x12` — 18 records — and the structural walk stops
+at exactly 18: word 19 is `0x01f400fa`. Across five tables on two images it
+landed on the true last entry every time (the next word was a float constant, a
+RAM pointer, or a small integer). Two tables sharing a dispatch tail both
+resolve; a base any reaching path leaves unprovable resolves to nothing.
+
+Edges are MAY-calls, the honest shape for a loop over a table — the same thing
+the descriptor pass emits. A walk that enumerates only one record is reported
+and skipped (`-Dc28x.reg.minTargets=1` to take it): an indexed walk with a
+single visible target is an incomplete enumeration, not a single-target call.
+
+### These passes feed each other — run them to a fixpoint
+
+They are not independent: each creates *functions* the others then recognize. A
+table entry that was an unclaimed address before the vector pass ran is a
+function afterwards, so the table walk that stopped at it gets further next time.
+Step 4d therefore loops until a round adds nothing (`-Dc28x.reg.rounds`, default
+4). Everything it does only ever adds, so it settles — CPU1 takes 2 rounds, CPU2
+takes 3, and a re-run of either does nothing.
+
+Running the set only once under-reports, and by a lot: on CPU2 the second and
+third rounds alone were worth 51.6% → 56.1%.
+
+### Measured (F28377D)
+
+Baseline via `-Dc28x.reg.noBaseResolve -Dc28x.reg.noStrided`.
+
+| image | base resolution | strided tables | reachable |
+|-------|-----------------|----------------|-----------|
+| CPU1, sparse/inline | 2 sites, 0 new | 3 tables, 52 edges | 63.2% → **72.4%** |
+| CPU2, dense registry | 3 sites, 1 new | 5 tables, 75 edges | 50.5% → **56.1%** |
+
+That drains the highest-value bucket on both: DATA-REFS-ONLY 40 → 19 on CPU1 and
+117 → 57 on CPU2. No edge landed on a non-function on either image.
+
+**One CPU1 result is worth keeping.** Its component structs really are a struct
+array with the handler at a field offset (strides 0x10 and 0x14), but no
 dispatcher reaches one from a constant: `.cinit` builds them as intrusive
 doubly-linked lists whose members are linked at runtime, and the walkers take a
 node pointer as a *parameter* or index an array that is still all zeros in a
 static image. There is no base to propagate, and that is a fact about the
-firmware rather than a shortfall in the pass — rooting (Step 8) remains the
-correct recovery there.
+firmware rather than a shortfall in the pass — rooting (Step 8) is the recovery
+there. What these two passes reach on that image is the *other* dispatch
+population: flash tables indexed at runtime.
 
 ## Step 5 — FinalizeRamfuncs (run AFTER analysis settles)
 

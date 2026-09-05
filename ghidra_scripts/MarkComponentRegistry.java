@@ -88,6 +88,30 @@
 // Only a STATIC operand -- `*(0:addr)`, or `@6bit`, whose DP is the DP analyzer's job -- takes the
 // reference, because there is no register there to prove.
 //
+// STRIDED TABLES (-Dc28x.reg.noStrided to disable)
+// ------------------------------------------------
+// A site base resolution refuses is not necessarily a site with nothing behind it. That same
+// `ADDL @XARb,ACC` says the dispatcher is walking a TABLE, and every parameter of the walk is a
+// literal in its own instruction stream:
+//
+//     MOVL XAR1,#0x9b506       <- the table base
+//     MOV  ACC,@AL<<#0x2       <- the index, scaled by the record stride (4 words)
+//     ADDL @XAR1,ACC
+//     MOVL XAR7,*+XAR1[0x0]    <- the handler field within the record
+//     LCR  *XAR7
+//
+// So this is NOT the strided carve #69 rules out: nothing here guesses a stride out of a region's
+// shape, the code states it. Only the record COUNT is sometimes unstated, and that comes from the
+// table -- walk records until one holds a word that is neither null nor code. Checked against a
+// dispatcher that does state its bound (`CMPB AL,#0x12` over the table above), the structural walk
+// stops at exactly 18 records: the 19th word is 0x01f400fa, plainly not a pointer.
+//
+// A record naming an address with an instruction already decoded at it, inside no function, gets a
+// function -- a table the code provably calls through is evidence, the same rule `targetsAt`
+// applies to descriptor fields. An address with no instruction ends the table instead of being
+// disassembled into existence. Two tables sharing a dispatch tail both resolve; a base that any
+// reaching path leaves unprovable resolves to nothing.
+//
 // RAM HOOKS (-Dc28x.reg.noHooks to disable)
 // -----------------------------------------
 // The same materialization also resolves the single-slot form, `(*DAT_xxxx)()`. That one matters
@@ -119,6 +143,11 @@
 //   c28x.reg.maxBack     (int,  default 512)  instructions to walk back looking for that entry,
 //                                             and for a dispatched register's definition
 //   c28x.reg.noBaseResolve (bool)             skip the per-call-site base-resolution pass
+//   c28x.reg.noStrided   (bool)               skip the strided dispatch-table pass
+//   c28x.reg.maxTable    (int,  default 256)  most records a strided table walk will read
+//   c28x.reg.maxGap      (int,  default 16)   consecutive null records that end such a table
+//   c28x.reg.minTargets  (int,  default 2)    handlers a strided table must yield to be accepted
+//   c28x.reg.rounds      (int,  default 4)    cap on the call-site/rooting fixpoint iterations
 //   c28x.reg.noHooks     (bool)               skip the single-slot RAM hook pass
 //   c28x.reg.noPie       (bool)               skip the PIE vector-table initializer pass
 //   c28x.reg.minPieEntries (int, default 64)  shortest code-pointer run treated as a vector table
@@ -256,39 +285,12 @@ public class MarkComponentRegistry extends GhidraScript {
             println("probably not materialized -- run EmulateStartup (Step 4c) first: a registry that");
             println("has never been written reads as all zeros.");
 
-            // None of these passes consumes a discovered registry: base resolution and hooks read
-            // the code, the PIE pass reads the flash vector initializer, and rootRuntimeDispatched
-            // scans RAM for planted function-pointers with no static caller. Running them here is
-            // what makes the sparse / inline-table (CPU1) case recover instead of returning
-            // empty-handed after PIE.
-            int based0 = Boolean.getBoolean("c28x.reg.noBaseResolve") ? 0 : resolveByBase(maxBack);
-            println(String.format("computed calls resolved from a propagated base: %d", based0));
-
-            int hooks0 = Boolean.getBoolean("c28x.reg.noHooks") ? 0 : resolveRamHooks(window);
-            println(String.format("RAM single-slot hooks resolved: %d", hooks0));
-
-            // Vector pass BEFORE the inference pass, same as the main path: a handler rooted from the
-            // vector table is rooted on evidence, so the inference pass never has to guess at it.
-            if (!Boolean.getBoolean("c28x.reg.noPie")) {
-                println("");
-                markPieVectors(Integer.getInteger("c28x.reg.minPieEntries", 64),
-                    !Boolean.getBoolean("c28x.reg.noCreateFns"));
-            }
-
-            if (!Boolean.getBoolean("c28x.reg.noRootDispatched")) {
-                println("");
-                int rooted0 = rootRuntimeDispatched(!Boolean.getBoolean("c28x.reg.noCreateFns"));
-                println(String.format("runtime-dispatched entry points registered: %d", rooted0));
-            }
-
-            int liveAfter0 = closureSize();
-            int total0 = fm.getFunctionCount();
-            println("");
-            println(String.format("reachable: %d -> %d of %d  (%.1f%% -> %.1f%%, %+d)",
-                liveBefore, liveAfter0, total0,
-                100.0 * liveBefore / total0, 100.0 * liveAfter0 / total0, liveAfter0 - liveBefore));
-            if (dry) println("DRY RUN -- nothing was written (the reachability delta above is therefore 0).");
-            else println("Re-run ReachabilityReport for the full bucketed picture.");
+            // None of these passes consumes a discovered registry: base resolution, the strided
+            // walk and hooks read the code, the PIE pass reads the flash vector initializer, and
+            // rootRuntimeDispatched scans RAM for planted function-pointers with no static caller.
+            // Running them here is what makes the sparse / inline-table (CPU1) case recover instead
+            // of returning empty-handed after PIE.
+            convergePasses(maxBack, window, !Boolean.getBoolean("c28x.reg.noCreateFns"), liveBefore);
             return;
         }
 
@@ -412,40 +414,77 @@ public class MarkComponentRegistry extends GhidraScript {
             + "%d RAM slots typed as function pointers",
             slotRefs, fieldRefs, labels, typed));
 
-        // ---- 4b. computed calls whose base propagates to one address --------------------------
-        // Before hooks: this pass tracks the register the call actually dispatches through, so
-        // where both could fire it is the one with the provenance.
-        println("");
-        int based = 0;
-        if (!Boolean.getBoolean("c28x.reg.noBaseResolve")) based = resolveByBase(maxBack);
-        println(String.format("computed calls resolved from a propagated base: %d", based));
+        // ---- 4b..6. the passes that feed each other, plus what it all bought -------------------
+        convergePasses(maxBack, window, createFns, liveBefore);
+    }
 
-        // ---- 5. single-slot RAM hooks --------------------------------------------------------
-        int hooks = 0;
-        if (!Boolean.getBoolean("c28x.reg.noHooks")) hooks = resolveRamHooks(window);
-        println(String.format("RAM single-slot hooks resolved: %d", hooks));
-
-        // ---- 5b. interrupt handlers, from the PIE vector table's flash initializer --------------
-        // Run this BEFORE the inference pass below: a handler rooted from the vector table is
-        // rooted on evidence, and rooting it here means the heuristic never has to guess at it.
-        int pie = 0;
-        if (!Boolean.getBoolean("c28x.reg.noPie")) {
+    /**
+     * Run the call-site and rooting passes to a fixpoint, then report the reachability delta.
+     *
+     * These passes are not independent: each creates FUNCTIONS the others then recognize. A word in
+     * a dispatch table that was an unclaimed address before the vector pass ran is a function
+     * afterwards, so the table walk that stopped at it will get further next time round. Running
+     * the set once therefore under-reports, and by a lot — measured on a CPU2 image, a second round
+     * found 2 more tables and 53 more edges, taking reachability 51.5% -> 56.1%.
+     *
+     * Every pass here only ever ADDS references, functions and entry points, and every one skips
+     * work it has already done, so the loop is monotone and settles. It stops as soon as a round
+     * changes nothing, and `c28x.reg.rounds` caps it regardless.
+     *
+     * The PIE pass runs only on the first round: its evidence is a flash initializer that no other
+     * pass can change, so repeating it would just reprint the same table.
+     */
+    void convergePasses(int maxBack, int window, boolean createFns, int liveBefore) {
+        int maxRounds = Integer.getInteger("c28x.reg.rounds", 4);
+        int based = 0, strided = 0, hooks = 0, pie = 0, rooted = 0, rounds = 0;
+        int[] mkT = new int[1];
+        for (int round = 1; round <= maxRounds; round++) {
+            rounds = round;
+            int fnsBefore = fm.getFunctionCount();
             println("");
-            pie = markPieVectors(Integer.getInteger("c28x.reg.minPieEntries", 64), createFns);
+            if (round > 1) println("--- round " + round + " (the previous round created functions"
+                + " the passes below can now recognize) ---");
+
+            int n = 0;
+            if (!Boolean.getBoolean("c28x.reg.noBaseResolve")) {
+                int k = resolveByBase(maxBack);
+                println(String.format("computed calls resolved from a propagated base: %d", k));
+                based += k; n += k;
+            }
+            if (!Boolean.getBoolean("c28x.reg.noStrided")) {
+                int k = resolveStridedTables(maxBack, createFns, mkT);
+                println(String.format("strided-table edges: %d", k));
+                strided += k; n += k;
+            }
+            if (!Boolean.getBoolean("c28x.reg.noHooks")) {
+                int k = resolveRamHooks(window);
+                println(String.format("RAM single-slot hooks resolved: %d", k));
+                hooks += k; n += k;
+            }
+            // Vector pass BEFORE the inference pass: a handler rooted from the vector table is
+            // rooted on evidence, so the inference pass never has to guess at it.
+            if (round == 1 && !Boolean.getBoolean("c28x.reg.noPie")) {
+                println("");
+                pie = markPieVectors(Integer.getInteger("c28x.reg.minPieEntries", 64), createFns);
+            }
+            if (!Boolean.getBoolean("c28x.reg.noRootDispatched")) {
+                println("");
+                int k = rootRuntimeDispatched(createFns);
+                println(String.format("runtime-dispatched entry points registered: %d", k));
+                rooted += k; n += k;
+            }
+            // A round that added no edge, rooted nothing and created no function cannot make the
+            // next one find anything either.
+            if (n == 0 && fm.getFunctionCount() == fnsBefore) break;
+            if (dry) break;              // nothing was written, so every round would be identical
         }
 
-        // ---- 5c. roots for what the runtime dispatches and nothing calls -----------------------
-        int rooted = 0;
-        if (!Boolean.getBoolean("c28x.reg.noRootDispatched")) {
-            println("");
-            rooted = rootRuntimeDispatched(createFns);
-            println(String.format("runtime-dispatched entry points registered: %d", rooted));
-        }
-
-        // ---- 6. what it bought ---------------------------------------------------------------
         int liveAfter = closureSize();
         int total = fm.getFunctionCount();
         println("");
+        println(String.format("%d round(s): %d base, %d strided-table, %d hook edge(s); %d PIE +"
+            + " %d runtime-dispatched root(s); %d function(s) created at table entries",
+            rounds, based, strided, hooks, pie, rooted, mkT[0]));
         println(String.format("reachable: %d -> %d of %d  (%.1f%% -> %.1f%%, %+d)",
             liveBefore, liveAfter, total,
             100.0 * liveBefore / total, 100.0 * liveAfter / total, liveAfter - liveBefore));
@@ -709,11 +748,22 @@ public class MarkComponentRegistry extends GhidraScript {
         return false;
     }
 
-    /** The register `LCR *XARn` dispatches through. */
+    /** `LC *XAR7` bakes its register into the mnemonic display rather than an operand. */
+    static final java.util.regex.Pattern CALL_REG =
+        java.util.regex.Pattern.compile("\\*(XAR[0-7])(?![0-9A-Za-z])");
+
+    /**
+     * The register a computed call dispatches through.
+     *
+     * `LCR *XARn` carries it as an operand; `LC *XAR7` spells it in the display, so an
+     * operand-only reading skips those sites silently. `XCALL *AL` is deliberately not matched:
+     * its target is `0x3f0000 | AL`, not AL, so the register is not the address.
+     */
     Register callThrough(Instruction call) {
         for (int i = 0; i < call.getNumOperands(); i++)
             for (Object o : call.getOpObjects(i)) if (o instanceof Register) return (Register) o;
-        return null;
+        java.util.regex.Matcher m = CALL_REG.matcher(call.toString());
+        return m.find() ? currentProgram.getRegister(m.group(1)) : null;
     }
 
     /** True when control can arrive at `in` other than by falling through its predecessor. */
@@ -726,43 +776,49 @@ public class MarkComponentRegistry extends GhidraScript {
     }
 
     /**
-     * The single value `reg` holds at `at`, or -1.
+     * The instruction that defines `reg` at `at`, or null.
      *
-     * Straight-line only, and that is the whole safety argument: the walk stops at the first
-     * instruction another path can branch to, so the definition it finds is the one that reaches
-     * this call under every execution — no merge of two candidate values can hide behind it.
+     * Straight-line only, and that is the whole safety argument for everything built on it: the
+     * walk stops at the first instruction another path can branch to, so the definition it finds is
+     * the one that reaches `at` under every execution — no merge of two candidate values can hide
+     * behind it.
      */
-    long regValue(String reg, Instruction at, Function f, int budget, int depth) {
-        if (depth > MAX_DEPTH) return -1;
+    Instruction defOf(String reg, Instruction at, Function f, int budget) {
         Instruction cur = at;
         for (int k = 0; k < budget; k++) {
-            if (isJoin(cur)) return -1;
+            if (isJoin(cur)) return null;
             Instruction p = cur.getPrevious();
-            if (p == null || !f.getBody().contains(p.getAddress())) return -1;
+            if (p == null || !f.getBody().contains(p.getAddress())) return null;
             Address ft = p.getFallThrough();
-            if (ft == null || !ft.equals(cur.getAddress())) return -1;
-            if (writesReg(p, reg)) {
-                // Only a MOVE defines a value we can read off. Arithmetic on a pointer register is
-                // how a dispatcher indexes a table -- `MOVL XAR1,#0x9b506 ; ADDL @XAR1,ACC` walks
-                // one at runtime -- and reading the ADDL as if it were a move hands back the
-                // table's FIRST element as though it were the only target. Measured: that is
-                // exactly one confidently wrong edge on the first image tried.
-                String m = p.getMnemonicString();
-                if (!m.equals("MOVL") && !m.equals("MOVB")) return -1;
-                String[] ds = destSrc(p);
-                // The write must be to the WHOLE register under one of the two spellings this
-                // module renders (`XAR4` as an implicit destination, `@XAR4` as a loc32 operand).
-                // Anything else -- a 16-bit write to AR4, an unrecognized form -- is a clobber we
-                // cannot read, so the value stops being provable here.
-                if (ds == null) return -1;
-                boolean narrow = reg.startsWith("AR") && ds[0].equals("X" + reg);  // MOVB XAR0,#imm
-                if (!ds[0].equals(reg) && !ds[0].equals("@" + reg) && !narrow) return -1;
-                long v = sourceValue(ds[1], p, f, budget, depth);
-                return v < 0 || !narrow ? v : v & 0xFFFF;      // ARn is XARn's low half
-            }
+            if (ft == null || !ft.equals(cur.getAddress())) return null;
+            if (writesReg(p, reg)) return p;
             cur = p;
         }
-        return -1;
+        return null;
+    }
+
+    /** The single value `reg` holds at `at`, or -1. */
+    long regValue(String reg, Instruction at, Function f, int budget, int depth) {
+        if (depth > MAX_DEPTH) return -1;
+        Instruction p = defOf(reg, at, f, budget);
+        if (p == null) return -1;
+        // Only a MOVE defines a value we can read off. Arithmetic on a pointer register is how a
+        // dispatcher indexes a table -- `MOVL XAR1,#0x9b506 ; ADDL @XAR1,ACC` walks one at runtime
+        // -- and reading the ADDL as if it were a move hands back the table's FIRST element as
+        // though it were the only target. Measured: exactly one confidently wrong edge on the first
+        // image tried. Those walks are recovered whole by resolveStridedTables instead.
+        String m = p.getMnemonicString();
+        if (!m.equals("MOVL") && !m.equals("MOVB")) return -1;
+        String[] ds = destSrc(p);
+        // The write must be to the WHOLE register under one of the two spellings this module
+        // renders (`XAR4` as an implicit destination, `@XAR4` as a loc32 operand). Anything else --
+        // a 16-bit write to AR4, an unrecognized form -- is a clobber we cannot read, so the value
+        // stops being provable here.
+        if (ds == null) return -1;
+        boolean narrow = reg.startsWith("AR") && ds[0].equals("X" + reg);      // MOVB XAR0,#imm
+        if (!ds[0].equals(reg) && !ds[0].equals("@" + reg) && !narrow) return -1;
+        long v = sourceValue(ds[1], p, f, budget, depth);
+        return v < 0 || !narrow ? v : v & 0xFFFF;                              // ARn is XARn's low half
     }
 
     /** `MNEMONIC dst,src` split out of the rendered instruction, or null. */
@@ -829,6 +885,262 @@ public class MarkComponentRegistry extends GhidraScript {
             return i < 0 ? -1 : base + i;
         }
         try { return base + Long.decode(idx); } catch (Exception e) { return -1; }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // strided dispatch tables, read out of the dispatcher
+    // ---------------------------------------------------------------------------------------
+
+    /** `MOV ACC,@AR6<<#0x1` / `LSL ACC,#0x2` — the index scale. */
+    static final java.util.regex.Pattern SHIFT =
+        java.util.regex.Pattern.compile(".*<<#?(0x[0-9a-fA-F]+|\\d+)");
+
+    /** A pointer load feeding a computed call: `MOVL XARt,*+XARb[F]`. */
+    static final class Load {
+        String baseReg; long field; Instruction at;
+        Load(String b, long f, Instruction a) { baseReg = b; field = f; at = a; }
+    }
+
+    /**
+     * Recover the whole table behind `MOVL XARb,#base ; <scale> ; ADDL @XARb,ACC ; LCR *(XARb+F)`.
+     *
+     * This is the one dispatch shape base resolution deliberately refuses. The register is indexed
+     * at runtime, so there is no single target — but every parameter of the walk is a literal in
+     * the dispatcher's own instruction stream: the base is an immediate, the stride is the scale
+     * applied to the index, and the field offset is the load's displacement. Nothing is carved by
+     * guessing at a stride, which is the objection that keeps `discoverRuns` from being generalized:
+     * here the code states the stride.
+     *
+     * Extent is the only thing the code does not always state, so it is read from the table itself:
+     * walk records until one holds a word that is neither null nor code. Measured against the
+     * bound a dispatcher DOES state (`CMPB AL,#0x12` guarding an 18-record table at 0x9b506), the
+     * structural walk stops at exactly 18 — the 19th word is 0x01f400fa, plainly not a pointer.
+     *
+     * A record holding an address with an instruction already decoded at it, inside no function,
+     * becomes a function: a table the code provably calls through is evidence, and that is the same
+     * rule `targetsAt` applies to descriptor fields. An address with no instruction ends the table
+     * rather than being disassembled into existence.
+     *
+     * The edges are MAY-calls, which is the honest shape for a loop over a table — the same thing
+     * the descriptor pass emits, and for the same reason.
+     */
+    int resolveStridedTables(int maxBack, boolean createFns, int[] mk) {
+        int maxTable   = Integer.getInteger("c28x.reg.maxTable", 256);
+        int maxGap     = Integer.getInteger("c28x.reg.maxGap", 16);
+        int minTargets = Integer.getInteger("c28x.reg.minTargets", 2);
+        int sites = 0, walks = 0, tables = 0, added = 0, dataRefs = 0;
+        for (Function f : fm.getFunctions(true)) {
+            InstructionIterator ii = currentProgram.getListing().getInstructions(f.getBody(), true);
+            while (ii.hasNext()) {
+                Instruction in = ii.next();
+                if (!in.getFlowType().isCall() || !in.getFlowType().isComputed()) continue;
+                if (hasCallRef(in)) continue;
+                Register reg = callThrough(in);
+                if (reg == null) continue;
+                sites++;
+                Load ld = pointerLoad(reg.getName(), in, f, maxBack, 0);
+                if (ld == null) continue;
+
+                // the index add: ADDL @XARb,ACC
+                Instruction add = defOf(ld.baseReg, ld.at, f, maxBack);
+                if (add == null) continue;
+                String[] ds = destSrc(add);
+                if (ds == null || !ds[1].equals("ACC")) continue;
+                String am = add.getMnemonicString();
+                if (!am.equals("ADDL") && !am.equals("ADDU") && !am.equals("ADD")) continue;
+                if (!ds[0].equals("@" + ld.baseReg) && !ds[0].equals(ld.baseReg)) continue;
+                walks++;
+
+                long stride = strideOf(defOf("ACC", add, f, maxBack), f, maxBack);
+                if (stride <= 0) {
+                    println(String.format("  %05x  strided walk on %s: index scale not recognized"
+                        + " -- left alone", in.getAddress().getOffset() / 2, ld.baseReg));
+                    continue;
+                }
+                // Every base that can reach the add, not just one: two tables sharing a dispatch
+                // tail is a real shape (an `SB` into the middle of the walk), and each is a genuine
+                // MAY-call destination. If ANY reaching path is unprovable the site is skipped.
+                List<Long> bases = basesFrom(ld.baseReg, add.getPrevious(), f, maxBack, 0,
+                    new HashSet<Address>());
+                if (bases == null || bases.isEmpty()) {
+                    println(String.format("  %05x  strided walk on %s: base does not propagate"
+                        + " -- left alone", in.getAddress().getOffset() / 2, ld.baseReg));
+                    continue;
+                }
+                for (long base : bases) {
+                    List<Long> targets = new ArrayList<>();
+                    int records = 0, gap = 0;
+                    for (int i = 0; i < maxTable; i++) {
+                        long v = word32(base + i * stride + ld.field);
+                        if (v == 0) { if (++gap > maxGap) break; continue; }
+                        gap = 0;
+                        boolean ok = isCodeAddr(v) && fm.getFunctionAt(wa(v)) != null;
+                        if (!ok && createFns && isCodeAddr(v)
+                                && getInstructionAt(wa(v)) != null
+                                && fm.getFunctionContaining(wa(v)) == null
+                                && makeFunction(v)) {
+                            mk[0]++;
+                            ok = true;
+                        }
+                        if (!ok) break;                         // the table ends here
+                        targets.add(v);
+                        records = i + 1;
+                    }
+                    if (targets.size() < minTargets) {
+                        println(String.format("  %05x  table @%05x stride %d field +%d: only %d"
+                            + " target(s) -- not accepted", in.getAddress().getOffset() / 2, base,
+                            stride, ld.field, targets.size()));
+                        continue;
+                    }
+                    tables++;
+                    int n = 0;
+                    for (long v : targets) {
+                        if (addRef(in.getAddress(), wa(v), RefType.COMPUTED_CALL)) n++;
+                    }
+                    added += n;
+                    for (int i = 0; i < records; i++) {
+                        long slot = base + i * stride + ld.field;
+                        long v = word32(slot);
+                        if (v != 0 && isCodeAddr(v) && fm.getFunctionAt(wa(v)) != null
+                                && addRef(wa(slot), wa(v), RefType.DATA)) dataRefs++;
+                    }
+                    println(String.format("  %05x  table @%05x stride %d field +%d: %d records,"
+                        + " %d target(s), %d edge(s)", in.getAddress().getOffset() / 2, base,
+                        stride, ld.field, records, targets.size(), n));
+                }
+            }
+        }
+        println(String.format("  strided tables: %d unresolved computed call(s), %d indexed walk(s),"
+            + " %d table(s) accepted, %d slot->handler data ref(s)", sites, walks, tables, dataRefs));
+        return added;
+    }
+
+    /** The `MOVL XARt,*+XARb[F]` that puts the pointer in `reg`, chased through register copies. */
+    Load pointerLoad(String reg, Instruction at, Function f, int budget, int depth) {
+        if (depth > MAX_DEPTH) return null;
+        Instruction p = defOf(reg, at, f, budget);
+        if (p == null || !p.getMnemonicString().equals("MOVL")) return null;
+        String[] ds = destSrc(p);
+        if (ds == null || (!ds[0].equals(reg) && !ds[0].equals("@" + reg))) return null;
+        String src = ds[1];
+        if (src.equals("ACC") || src.equals("@ACC"))
+            return pointerLoad("ACC", p, f, budget, depth + 1);
+        if (src.matches("@?XAR[0-7]"))
+            return pointerLoad(src.replace("@", ""), p, f, budget, depth + 1);
+        if (src.matches("\\*XAR[0-7]")) return new Load(src.substring(1), 0, p);
+        java.util.regex.Matcher m = INDEXED.matcher(src);
+        if (!m.matches()) return null;
+        String idx = m.group(2);
+        long field;
+        if (idx.startsWith("AR")) {
+            field = regValue(idx, p, f, budget, 1);
+            if (field < 0) return null;
+        }
+        else {
+            try { field = Long.decode(idx); } catch (Exception e) { return null; }
+        }
+        return new Load(m.group(1), field, p);
+    }
+
+    /**
+     * The record stride the index was scaled by, in words, or -1.
+     *
+     * A shift is the compiler's usual scale; a multiply appears when the record size is not a power
+     * of two (`MOVB ACC,#0xc ; MOVL @XT,ACC ; IMPYL ACC,XT,@ACC` — a 12-word record). An unscaled
+     * index is stride 1. The cap rejects a shift that is plainly building a 32-bit value out of two
+     * halves rather than indexing anything.
+     */
+    long strideOf(Instruction scale, Function f, int budget) {
+        if (scale == null) return -1;
+        String s = scale.toString();
+        int sp = s.indexOf(' ');
+        if (sp < 0) return -1;
+        String[] ops = s.substring(sp + 1).trim().split(",");
+        if (ops.length == 0 || !ops[0].trim().equals("ACC")) return -1;
+        String m = scale.getMnemonicString();
+        long stride = -1;
+        if (m.startsWith("MPY") || m.startsWith("IMPY")) {
+            for (int i = 1; i < ops.length && stride < 0; i++) {
+                String o = ops[i].trim().replace("@", "");
+                if (o.startsWith("#")) { try { stride = Long.decode(o.substring(1)); } catch (Exception e) { } }
+                else if (o.matches("XT|T|ACC|XAR[0-7]|AR[0-7]|AL|AH")) {
+                    long v = regValue(o, scale, f, budget, 1);
+                    if (v > 0) stride = v;
+                }
+            }
+        }
+        else if (ops.length >= 2) {
+            String src = ops[ops.length - 1].trim();
+            java.util.regex.Matcher sh = SHIFT.matcher(m.equals("LSL") ? "<<" + src : src);
+            if (sh.matches()) {
+                try { stride = 1L << Long.decode(sh.group(1)); } catch (Exception e) { return -1; }
+            }
+            else if (m.equals("MOV") || m.equals("MOVU") || m.equals("MOVZ") || m.equals("MOVL")) {
+                stride = 1;                     // an unscaled index: one word per record
+            }
+        }
+        return stride >= 1 && stride <= 0x400 ? stride : -1;
+    }
+
+    /**
+     * Every immediate `reg` can hold at `p` (inclusive), across the paths that reach it, or null
+     * when any of them is unprovable.
+     *
+     * Straight-line while nothing branches in; at a join, each predecessor is resolved separately
+     * and the results unioned, so a dispatch tail two `MOVL XARb,#table` sites share yields both
+     * tables. Bounded in depth and guarded against revisiting a join, so a loop back-edge gives up
+     * rather than spinning.
+     */
+    List<Long> basesFrom(String reg, Instruction p, Function f, int budget, int depth,
+            Set<Address> seen) {
+        if (depth > 2) return null;
+        for (int k = 0; k < budget; k++) {
+            if (p == null || !f.getBody().contains(p.getAddress())) return null;
+            if (writesReg(p, reg)) {
+                String[] ds = destSrc(p);
+                String m = p.getMnemonicString();
+                if (ds == null || (!m.equals("MOVL") && !m.equals("MOVB"))) return null;
+                if (!ds[0].equals(reg) && !ds[0].equals("@" + reg)) return null;
+                if (!ds[1].startsWith("#")) return null;
+                try { return new ArrayList<>(List.of(Long.decode(ds[1].substring(1)))); }
+                catch (Exception e) { return null; }
+            }
+            Instruction prev = p.getPrevious();
+            boolean flows = prev != null && f.getBody().contains(prev.getAddress())
+                && prev.getFallThrough() != null && prev.getFallThrough().equals(p.getAddress());
+            List<Instruction> jumped = jumpPredecessors(p, f);
+            if (!jumped.isEmpty()) {
+                if (!seen.add(p.getAddress())) return null;
+                LinkedHashSet<Long> out = new LinkedHashSet<>();
+                for (Instruction q : jumped) {
+                    List<Long> sub = basesFrom(reg, q, f, budget, depth + 1, seen);
+                    if (sub == null) return null;
+                    out.addAll(sub);
+                }
+                if (flows) {
+                    List<Long> sub = basesFrom(reg, prev, f, budget, depth + 1, seen);
+                    if (sub == null) return null;
+                    out.addAll(sub);
+                }
+                return new ArrayList<>(out);
+            }
+            if (!flows) return null;
+            p = prev;
+        }
+        return null;
+    }
+
+    /** Instructions inside `f` that jump to `in`. */
+    List<Instruction> jumpPredecessors(Instruction in, Function f) {
+        List<Instruction> out = new ArrayList<>();
+        for (Reference r : rm.getReferencesTo(in.getAddress())) {
+            if (!r.getReferenceType().isJump()) continue;
+            Address from = r.getFromAddress();
+            if (!f.getBody().contains(from)) continue;
+            Instruction q = getInstructionAt(from);
+            if (q != null) out.add(q);
+        }
+        return out;
     }
 
     /** The one address `p` references, or -1 when it references none or several. */
