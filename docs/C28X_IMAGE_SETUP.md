@@ -312,12 +312,26 @@ MOVL XAR7,*+XAR1[0x0]     <- handler field within the record
 LCR  *XAR7
 ```
 
-Nothing here guesses a stride from a region's shape — the code states it. Only
-the record **count** is sometimes unstated, and that is read from the table:
-walk records until one holds a word that is neither null nor code. A record
-naming an address with an instruction already decoded at it, inside no function,
-becomes a function; an address with no instruction ends the table rather than
-being disassembled into existence.
+**Both operand orders occur, and the second is the commoner** — 18 sites against
+3 on the CPU2 image, so recognising only the first leaves most of them on the
+floor:
+
+```
+ADDL @XAR1,ACC                       ADDL ACC,@XAR1
+                                     MOVL XAR4,@ACC
+```
+
+Same table; the accumulator does the adding instead of the pointer. That form
+also lets the base arrive in a register or a global rather than as a literal at
+the add, so it is resolved rather than read straight off an immediate.
+
+Nothing here guesses a stride from a region's shape — the code states it, and a
+stride below 2 is rejected outright since a 32-bit function pointer occupies two
+words. Only the record **count** is sometimes unstated, and that is read from the
+table: walk records until one holds a word that is neither null nor code. A
+record naming an address with an instruction already decoded at it, inside no
+function, becomes a function; an address with no instruction ends the table
+rather than being disassembled into existence.
 
 **That stop rule was checked against a bound the code does state.** The table
 above is guarded by `CMPB AL,#0x12` — 18 records — and the structural walk stops
@@ -330,6 +344,24 @@ Edges are MAY-calls, the honest shape for a loop over a table — the same thing
 the descriptor pass emits. A walk that enumerates only one record is reported
 and skipped (`-Dc28x.reg.minTargets=1` to take it): an indexed walk with a
 single visible target is an incomplete enumeration, not a single-target call.
+
+### Cursors into a table already found
+
+The strided pass runs **first**, and base resolution then checks whether the slot
+it resolved lands inside a table that pass accepted. If it does, the site is
+walking that table through a saved cursor — one dispatcher advances it and stores
+it, another reloads it:
+
+```
+MOVL XAR4,@0x10           <- the saved cursor, not a table base
+MOVL XAR7,*+XAR4[0x2]
+LCR  *XAR7
+```
+
+The record the cursor holds in a static image is only where `.cinit` left it, so
+naming that one target is precise about the wrong thing. Emit the whole field
+instead — taking the field from *this* site's load, not the table's. Worth 9
+edges in place of 1 on the CPU2 image.
 
 ### These passes feed each other — run them to a fixpoint
 
@@ -347,13 +379,14 @@ third rounds alone were worth 51.6% → 56.1%.
 
 Baseline via `-Dc28x.reg.noBaseResolve -Dc28x.reg.noStrided`.
 
-| image | base resolution | strided tables | reachable |
-|-------|-----------------|----------------|-----------|
-| CPU1, sparse/inline | 2 sites, 0 new | 3 tables, 52 edges | 63.2% → **72.4%** |
-| CPU2, dense registry | 3 sites, 1 new | 5 tables, 75 edges | 50.5% → **56.1%** |
+| image | base resolution | strided tables | reachable | DATA-REFS-ONLY |
+|-------|-----------------|----------------|-----------|----------------|
+| CPU1, sparse/inline | 2 sites | 3 tables, 52 edges | 63.2% → **72.4%** | 40 → 19 |
+| CPU2, dense registry | 2 sites + 1 cursor | 16 tables, 191 edges | 50.5% → **62.4%** | 117 → 27 |
 
-That drains the highest-value bucket on both: DATA-REFS-ONLY 40 → 19 on CPU1 and
-117 → 57 on CPU2. No edge landed on a non-function on either image.
+The CPU2 tables run at strides 2, 4, 6, 8, 10 and 12 — every one of them read out
+of a dispatcher rather than inferred. No edge landed on a non-function on either
+image, and both converge in 2–3 rounds with a re-run adding nothing.
 
 **The three CPU2 sites that stay unresolved point at a real gap worth fixing.**
 Their targets are in D1 RAM that Step 4 *did* materialize — the bytes are there.

@@ -446,15 +446,18 @@ public class MarkComponentRegistry extends GhidraScript {
                 + " the passes below can now recognize) ---");
 
             int n = 0;
-            if (!Boolean.getBoolean("c28x.reg.noBaseResolve")) {
-                int k = resolveByBase(maxBack);
-                println(String.format("computed calls resolved from a propagated base: %d", k));
-                based += k; n += k;
-            }
+            // Strided first, so base resolution can see the tables it accepted: a site whose base
+            // resolves INTO one of them is walking that table through a saved cursor, and the whole
+            // field is the honest answer rather than whichever record the cursor was left on.
             if (!Boolean.getBoolean("c28x.reg.noStrided")) {
                 int k = resolveStridedTables(maxBack, createFns, mkT);
                 println(String.format("strided-table edges: %d", k));
                 strided += k; n += k;
+            }
+            if (!Boolean.getBoolean("c28x.reg.noBaseResolve")) {
+                int k = resolveByBase(maxBack);
+                println(String.format("computed calls resolved from a propagated base: %d", k));
+                based += k; n += k;
             }
             if (!Boolean.getBoolean("c28x.reg.noHooks")) {
                 int k = resolveRamHooks(window);
@@ -702,7 +705,7 @@ public class MarkComponentRegistry extends GhidraScript {
      * no single target, and picking its table's first element would be a confidently wrong edge.
      */
     int resolveByBase(int maxBack) {
-        int sites = 0, resolved = 0, notFn = 0, added = 0;
+        int sites = 0, resolved = 0, notFn = 0, added = 0, cursors = 0;
         for (Function f : fm.getFunctions(true)) {
             InstructionIterator ii = currentProgram.getListing().getInstructions(f.getBody(), true);
             while (ii.hasNext()) {
@@ -717,6 +720,25 @@ public class MarkComponentRegistry extends GhidraScript {
                 if (tgt < 0) continue;
                 if (tgt == 0) continue;        // a null hook: installed at runtime, nothing to say
                 resolved++;
+                // A base that lands INSIDE a table the strided pass accepted is a cursor into it,
+                // saved by one dispatcher and reloaded by another. The record it holds in a static
+                // image is only where the cursor was initialized, so emitting that one target
+                // would be precise about the wrong thing -- take the whole field instead. The
+                // field comes from this site's own load, not from the table's.
+                long[] tbl = lastSlot < 0 ? null : tableContaining(lastSlot);
+                if (tbl != null) {
+                    long fld = (lastSlot - tbl[0]) % tbl[1];
+                    TableScan s = scanTable(tbl[0], tbl[1], fld, false, new int[1]);
+                    if (s.targets.size() > 1) {
+                        int n = emitTargets(in, s.targets);
+                        cursors++; added += n;
+                        println(String.format("  cursor %05x in %-20s -> table @%05x stride %d"
+                            + " field +%d: %d target(s), %d edge(s)",
+                            in.getAddress().getOffset() / 2, f.getName(), tbl[0], tbl[1], fld,
+                            s.targets.size(), n));
+                        continue;
+                    }
+                }
                 // Exact function ENTRY, in flash or in an executable RAM block -- a ramfunc handler
                 // is as real a target as a flash one. Measured: the three CPU2 sites that come back
                 // unresolved point into D1 RAM that a materialize step DID populate; what is
@@ -741,7 +763,8 @@ public class MarkComponentRegistry extends GhidraScript {
             }
         }
         println(String.format("  base resolution: %d unresolved computed call(s), %d propagated to a"
-            + " single address, %d of those not a function entry", sites, resolved, notFn));
+            + " single address, %d of those into an accepted table (a cursor), %d not a function entry",
+            sites, resolved, cursors, notFn));
         return added;
     }
 
@@ -928,8 +951,6 @@ public class MarkComponentRegistry extends GhidraScript {
      * the descriptor pass emits, and for the same reason.
      */
     int resolveStridedTables(int maxBack, boolean createFns, int[] mk) {
-        int maxTable   = Integer.getInteger("c28x.reg.maxTable", 256);
-        int maxGap     = Integer.getInteger("c28x.reg.maxGap", 16);
         int minTargets = Integer.getInteger("c28x.reg.minTargets", 2);
         int sites = 0, walks = 0, tables = 0, added = 0, dataRefs = 0;
         for (Function f : fm.getFunctions(true)) {
@@ -944,78 +965,185 @@ public class MarkComponentRegistry extends GhidraScript {
                 Load ld = pointerLoad(reg.getName(), in, f, maxBack, 0);
                 if (ld == null) continue;
 
-                // the index add: ADDL @XARb,ACC
-                Instruction add = defOf(ld.baseReg, ld.at, f, maxBack);
-                if (add == null) continue;
-                String[] ds = destSrc(add);
-                if (ds == null || !ds[1].equals("ACC")) continue;
-                String am = add.getMnemonicString();
-                if (!am.equals("ADDL") && !am.equals("ADDU") && !am.equals("ADD")) continue;
-                if (!ds[0].equals("@" + ld.baseReg) && !ds[0].equals(ld.baseReg)) continue;
+                Indexed walk = indexedWalk(ld, f, maxBack);
+                if (walk == null) continue;
                 walks++;
 
-                long stride = strideOf(defOf("ACC", add, f, maxBack), f, maxBack);
-                if (stride <= 0) {
+                long stride = strideOf(walk.scale, f, maxBack);
+                if (stride < 2) {
+                    // Below 2 is not a record stride: a 32-bit function pointer occupies two
+                    // words, so consecutive entries cannot be closer than that.
                     println(String.format("  %05x  strided walk on %s: index scale not recognized"
                         + " -- left alone", in.getAddress().getOffset() / 2, ld.baseReg));
                     continue;
                 }
-                // Every base that can reach the add, not just one: two tables sharing a dispatch
-                // tail is a real shape (an `SB` into the middle of the walk), and each is a genuine
-                // MAY-call destination. If ANY reaching path is unprovable the site is skipped.
-                List<Long> bases = basesFrom(ld.baseReg, add.getPrevious(), f, maxBack, 0,
-                    new HashSet<Address>());
+                List<Long> bases = walk.bases;
                 if (bases == null || bases.isEmpty()) {
                     println(String.format("  %05x  strided walk on %s: base does not propagate"
                         + " -- left alone", in.getAddress().getOffset() / 2, ld.baseReg));
                     continue;
                 }
                 for (long base : bases) {
-                    List<Long> targets = new ArrayList<>();
-                    int records = 0, gap = 0;
-                    for (int i = 0; i < maxTable; i++) {
-                        long v = word32(base + i * stride + ld.field);
-                        if (v == 0) { if (++gap > maxGap) break; continue; }
-                        gap = 0;
-                        boolean ok = isCodeAddr(v) && fm.getFunctionAt(wa(v)) != null;
-                        if (!ok && createFns && isCodeAddr(v)
-                                && getInstructionAt(wa(v)) != null
-                                && fm.getFunctionContaining(wa(v)) == null
-                                && makeFunction(v)) {
-                            mk[0]++;
-                            ok = true;
-                        }
-                        if (!ok) break;                         // the table ends here
-                        targets.add(v);
-                        records = i + 1;
-                    }
-                    if (targets.size() < minTargets) {
+                    TableScan s = scanTable(base, stride, ld.field, createFns, mk);
+                    if (s.targets.size() < minTargets) {
                         println(String.format("  %05x  table @%05x stride %d field +%d: only %d"
                             + " target(s) -- not accepted", in.getAddress().getOffset() / 2, base,
-                            stride, ld.field, targets.size()));
+                            stride, ld.field, s.targets.size()));
                         continue;
                     }
                     tables++;
-                    int n = 0;
-                    for (long v : targets) {
-                        if (addRef(in.getAddress(), wa(v), RefType.COMPUTED_CALL)) n++;
-                    }
+                    acceptedTables.add(new long[]{base, stride, s.records});
+                    int n = emitTargets(in, s.targets);
                     added += n;
-                    for (int i = 0; i < records; i++) {
-                        long slot = base + i * stride + ld.field;
-                        long v = word32(slot);
-                        if (v != 0 && isCodeAddr(v) && fm.getFunctionAt(wa(v)) != null
-                                && addRef(wa(slot), wa(v), RefType.DATA)) dataRefs++;
-                    }
+                    dataRefs += emitSlotRefs(base, stride, ld.field, s.records);
                     println(String.format("  %05x  table @%05x stride %d field +%d: %d records,"
                         + " %d target(s), %d edge(s)", in.getAddress().getOffset() / 2, base,
-                        stride, ld.field, records, targets.size(), n));
+                        stride, ld.field, s.records, s.targets.size(), n));
                 }
             }
         }
         println(String.format("  strided tables: %d unresolved computed call(s), %d indexed walk(s),"
             + " %d table(s) accepted, %d slot->handler data ref(s)", sites, walks, tables, dataRefs));
         return added;
+    }
+
+    /** Tables this run accepted: {base, stride, records}. Used to spot a cursor into one. */
+    List<long[]> acceptedTables = new ArrayList<>();
+
+    // A table record naming a RAM address with nothing decoded at it is NOT disassembled into a
+    // function, and the measurement says leave it that way. Tried on the CPU2 image, gated on the
+    // block already holding functions: 5 functions created, ZERO reachability (62.4% -> 62.2%,
+    // diluted by its own new functions), because the dispatcher walking that table is itself
+    // unreachable. The gate was also unsound -- SetupF28377D maps every SARAM bank executable, and
+    // the GS bank holding the component structs qualified as "code" because something had already
+    // created a function in it. Risk with no return; the strict rule stands.
+
+    /** One field of one table, walked to its end. */
+    static final class TableScan { List<Long> targets = new ArrayList<>(); int records; }
+
+    /**
+     * Read `field` out of every record of the table at `base`, stopping where the table does.
+     *
+     * A record holds a null (no handler installed for that index), a function entry, or an address
+     * with an instruction already decoded at it and no owning function -- that last one is a
+     * handler SeedFunctions missed, and a table the code provably calls through is enough evidence
+     * to make it a function. Anything else ends the table: that is what bounds the walk on an image
+     * whose dispatcher does not state a count.
+     */
+    TableScan scanTable(long base, long stride, long field, boolean createFns, int[] mk) {
+        int maxTable = Integer.getInteger("c28x.reg.maxTable", 256);
+        int maxGap   = Integer.getInteger("c28x.reg.maxGap", 16);
+        TableScan s = new TableScan();
+        int gap = 0;
+        for (int i = 0; i < maxTable; i++) {
+            long v = word32(base + i * stride + field);
+            if (v == 0) { if (++gap > maxGap) break; continue; }
+            gap = 0;
+            boolean ok = isCodeAddr(v) && fm.getFunctionAt(wa(v)) != null;
+            if (!ok && createFns && isCodeAddr(v) && getInstructionAt(wa(v)) != null
+                    && fm.getFunctionContaining(wa(v)) == null && makeFunction(v)) {
+                mk[0]++;
+                ok = true;
+            }
+            if (!ok) break;
+            s.targets.add(v);
+            s.records = i + 1;
+        }
+        return s;
+    }
+
+    int emitTargets(Instruction site, List<Long> targets) {
+        int n = 0;
+        for (long v : targets) if (addRef(site.getAddress(), wa(v), RefType.COMPUTED_CALL)) n++;
+        return n;
+    }
+
+    int emitSlotRefs(long base, long stride, long field, int records) {
+        int n = 0;
+        for (int i = 0; i < records; i++) {
+            long slot = base + i * stride + field, v = word32(slot);
+            if (v != 0 && isCodeAddr(v) && fm.getFunctionAt(wa(v)) != null
+                    && addRef(wa(slot), wa(v), RefType.DATA)) n++;
+        }
+        return n;
+    }
+
+    /** The accepted table whose extent covers `slot`, or null. */
+    long[] tableContaining(long slot) {
+        for (long[] t : acceptedTables)
+            if (slot >= t[0] && slot < t[0] + t[2] * t[1]) return t;
+        return null;
+    }
+
+    /** A `base + index*stride` computation feeding a dispatch load. */
+    static final class Indexed {
+        Instruction scale;        // what scaled the index -- the stride is read off it
+        List<Long> bases;         // every table base that can reach the add
+    }
+
+    /**
+     * The indexed walk behind a dispatch load, in either operand order.
+     *
+     * A compiler emits `base + i*stride` two ways, and both occur — the second is by far the
+     * commoner on the CPU2 image, at 18 of its sites against 3 for the first:
+     *
+     *   1. accumulate into the POINTER:  MOVL XAR1,#base ; MOV ACC,i<<k ; ADDL @XAR1,ACC
+     *   2. accumulate into the ACC:      MOVL XAR1,#base ; MOV ACC,i<<k ; ADDL ACC,@XAR1 ;
+     *                                    MOVL XAR4,@ACC
+     *
+     * Same table either way. Shape 2 also lets the base arrive in a register or a global rather
+     * than as a literal at that instruction, which is why the base is resolved through
+     * `baseOperand` instead of being read straight off an immediate.
+     */
+    Indexed indexedWalk(Load ld, Function f, int maxBack) {
+        Instruction def = defOf(ld.baseReg, ld.at, f, maxBack);
+        if (def == null) return null;
+        String[] ds = destSrc(def);
+        if (ds == null) return null;
+        String m = def.getMnemonicString();
+        boolean isAdd = m.equals("ADDL") || m.equals("ADDU") || m.equals("ADD");
+
+        if (isAdd && ds[1].equals("ACC")
+                && (ds[0].equals("@" + ld.baseReg) || ds[0].equals(ld.baseReg))) {
+            Indexed w = new Indexed();
+            w.scale = defOf("ACC", def, f, maxBack);
+            // Every base that can reach the add, not just one: two tables sharing a dispatch tail
+            // is a real shape (an `SB` into the middle of the walk), and each is a genuine MAY-call
+            // destination. If ANY reaching path is unprovable the site is skipped.
+            w.bases = basesFrom(ld.baseReg, def.getPrevious(), f, maxBack, 0, new HashSet<Address>());
+            return w;
+        }
+        if (m.equals("MOVL") && (ds[1].equals("ACC") || ds[1].equals("@ACC"))) {
+            Instruction add = defOf("ACC", def, f, maxBack);
+            if (add == null) return null;
+            String[] as = destSrc(add);
+            String am = add.getMnemonicString();
+            if (as == null || !as[0].equals("ACC")) return null;
+            if (!am.equals("ADDL") && !am.equals("ADDU") && !am.equals("ADD")) return null;
+            Indexed w = new Indexed();
+            w.scale = defOf("ACC", add, f, maxBack);
+            w.bases = baseOperand(as[1], add, f, maxBack);
+            return w;
+        }
+        return null;
+    }
+
+    /** The table base an `ADDL ACC,<x>` adds in: a literal, a register, or a global holding one. */
+    List<Long> baseOperand(String src, Instruction add, Function f, int maxBack) {
+        if (src.startsWith("#")) {
+            try { return new ArrayList<>(List.of(Long.decode(src.substring(1)))); }
+            catch (Exception e) { return null; }
+        }
+        if (src.matches("@?XAR[0-7]"))
+            return basesFrom(src.replace("@", ""), add.getPrevious(), f, maxBack, 0,
+                new HashSet<Address>());
+        if (src.startsWith("*(0:") || src.matches("@0x[0-9a-fA-F]+|@\\d+")) {
+            long slot = uniqueRef(add);
+            if (slot < 0) return null;
+            long v = word32(slot);
+            return v <= 0 ? null : new ArrayList<>(List.of(v));
+        }
+        return null;                   // *XARn++ and friends: not a fixed base
     }
 
     /** The `MOVL XARt,*+XARb[F]` that puts the pointer in `reg`, chased through register copies. */
