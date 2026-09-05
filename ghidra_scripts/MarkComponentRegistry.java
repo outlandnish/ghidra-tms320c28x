@@ -1355,6 +1355,18 @@ public class MarkComponentRegistry extends GhidraScript {
                     unresolved++;
                     continue;
                 }
+                Function host = fm.getFunctionContaining(wa(v));
+                if (host != null) {
+                    // A vector pointing INTO a function is a handler whose entry was never split
+                    // out -- two routines emitted back to back and seeded as one. Say so: the
+                    // body is already reachable through its host, but the call graph credits the
+                    // wrong function and the vector cannot be named.
+                    println(String.format("  vector target %05x is inside %s at +%d -- a missed"
+                        + " function boundary, not a vector; re-seed or split it to name this one",
+                        v, host.getName(), v - host.getEntryPoint().getOffset() / 2));
+                    unresolved++;
+                    continue;
+                }
                 if (!createFns || !makeFunction(v)) { unresolved++; continue; }
                 made++;
                 f = fm.getFunctionAt(wa(v));
@@ -1434,6 +1446,22 @@ public class MarkComponentRegistry extends GhidraScript {
         List<String> mismatched = new ArrayList<>();
         for (Map.Entry<Long, List<Integer>> e : slotsByTarget.entrySet()) {
             if (e.getKey() == dflt) continue;                  // the unused-interrupt fill
+            // Only a real handler says anything about alignment. Two things here are not one:
+            //
+            //   * a target that is not a function ENTRY. Measured on an F28377D CPU1 image, one
+            //     value sat in six slots and resolved to FUN_0009098d+93 -- an address inside a
+            //     merged body, i.e. a second unused-interrupt stub whose entry SeedFunctions did
+            //     not split out. Three of its slots are reserved, and reading those as live
+            //     handlers condemned a table that is provably aligned: slot 0 held the reset
+            //     vector and slots 1-12 the default fill, which is exactly the 13 reserved
+            //     entries `struct PIE_VECT_TABLE` opens with (and `InitPieVectTable` skips the
+            //     first 3 of them, "initialized by Boot ROM with boot variables"), while every
+            //     other occupied slot named a peripheral this ECU plainly has -- TIMER2, NMI,
+            //     ADCB1, EPWM2 as a D0-RAM ramfunc, IPC2, CANA0/CANB0.
+            //   * a target occupying SEVERAL slots. That is a shared stub -- another fill value --
+            //     which the naming code below already refuses to name for the same reason.
+            if (e.getValue().size() > 1) continue;
+            if (fm.getFunctionAt(wa(e.getKey())) == null) continue;
             for (int slot : e.getValue()) {
                 if (slot == 0) continue;                       // boot-variable slot
                 String name = profile.name(slot);
