@@ -203,19 +203,46 @@ public class MarkComponentRegistry extends GhidraScript {
         }
         if (tables.isEmpty()) {
             println("");
-            println("No component registry found. If this image IS dispatch-driven, the table is");
-            println("probably not materialized yet -- run EmulateStartup (Step 4c) or a Materialize*");
-            println("script first, then re-run. A registry that has never been written reads as all");
-            println("zeros, and zeros are not pointers.");
-            // The PIE pass does NOT depend on the registry. Its evidence is the vector
-            // table's initializer, which sits in flash and is present in every static
-            // image -- returning here used to throw away interrupt rooting on exactly
-            // the images that need it most, the ones nothing else has resolved.
+            println("No DENSE component registry found -- running only the registry-INDEPENDENT passes");
+            println("(RAM single-slot hooks, PIE vectors, runtime-dispatched roots). Each scans for its");
+            println("own evidence and needs no discovered table, so it also covers the sparse/inline");
+            println("case: an image whose task registry is a struct array with the function pointer at a");
+            println("field offset exposes no dense pointer run for discovery, but MarkCodePointers still");
+            println("carries those slot refs and these passes still root what the runtime dispatches.");
+            println("(Observed on an F28377D CPU1 image.) If even these find nothing and the image IS");
+            println("dispatch-driven, the registry is probably not materialized -- run EmulateStartup");
+            println("(Step 4c) first: a registry that has never been written reads as all zeros.");
+
+            // These three passes were previously gated behind a discovered registry, but none of
+            // them consumes one: hooks resolve (*DAT_ram)() from the code, the PIE pass reads the
+            // flash vector initializer, and rootRuntimeDispatched scans RAM for planted
+            // function-pointers with no static caller. Running them here is what makes the sparse /
+            // inline-table (CPU1) case recover instead of returning empty-handed after PIE.
+            int hooks0 = Boolean.getBoolean("c28x.reg.noHooks") ? 0 : resolveRamHooks(window);
+            println(String.format("RAM single-slot hooks resolved: %d", hooks0));
+
+            // Vector pass BEFORE the inference pass, same as the main path: a handler rooted from the
+            // vector table is rooted on evidence, so the inference pass never has to guess at it.
             if (!Boolean.getBoolean("c28x.reg.noPie")) {
                 println("");
                 markPieVectors(Integer.getInteger("c28x.reg.minPieEntries", 64),
                     !Boolean.getBoolean("c28x.reg.noCreateFns"));
             }
+
+            if (!Boolean.getBoolean("c28x.reg.noRootDispatched")) {
+                println("");
+                int rooted0 = rootRuntimeDispatched(!Boolean.getBoolean("c28x.reg.noCreateFns"));
+                println(String.format("runtime-dispatched entry points registered: %d", rooted0));
+            }
+
+            int liveAfter0 = closureSize();
+            int total0 = fm.getFunctionCount();
+            println("");
+            println(String.format("reachable: %d -> %d of %d  (%.1f%% -> %.1f%%, %+d)",
+                liveBefore, liveAfter0, total0,
+                100.0 * liveBefore / total0, 100.0 * liveAfter0 / total0, liveAfter0 - liveBefore));
+            if (dry) println("DRY RUN -- nothing was written (the reachability delta above is therefore 0).");
+            else println("Re-run ReachabilityReport for the full bucketed picture.");
             return;
         }
 
