@@ -355,6 +355,14 @@ Baseline via `-Dc28x.reg.noBaseResolve -Dc28x.reg.noStrided`.
 That drains the highest-value bucket on both: DATA-REFS-ONLY 40 → 19 on CPU1 and
 117 → 57 on CPU2. No edge landed on a non-function on either image.
 
+**The three CPU2 sites that stay unresolved point at a real gap worth fixing.**
+Their targets are in D1 RAM that Step 4 *did* materialize — the bytes are there.
+What is missing is **disassembly**: `MaterializeSections` decodes a code section
+only at addresses something already calls, and nothing called these until this
+pass ran. Seeding RAM code sections from resolved dispatch tables (or re-running
+Step 4's disassembly after Step 4d) would close it. These passes deliberately do
+not disassemble an address into existence themselves.
+
 **One CPU1 result is worth keeping.** Its component structs really are a struct
 array with the handler at a field offset (strides 0x10 and 0x14), but no
 dispatcher reaches one from a constant: `.cinit` builds them as intrusive
@@ -515,12 +523,19 @@ an array base, no instruction anywhere holds a node's address as an immediate,
 and nothing in the image references the records at all. The walker itself has
 zero incoming references: it is the tick ISR.
 
-**Where its vector would be:** on F28377D the PIE vector table is RAM at
-`0x000D00–0x000DFF` (128 vectors × 2 words), mapped by `SetupF28377D` as
-`PIE_VECT_REGS`. It is not in flash and is not missing from the dump — it is
-simply **uninitialized**, because the application writes it at runtime and
+**Where its vector would be:** on F28377D the PIE vector table is RAM starting at
+`0x000D00`, one vector every 2 words — vector ID *N* at `0x0D00 + 2N`, through
+ID 226 (SPRUHM8K Tables 3-3/3-4), which is why `SetupF28377D` maps `PIE_VECT` as
+`0x000D00–0x000EFF` rather than the 128-entry range a C28x with fewer
+peripherals would use. It is not in flash and is not missing from the dump — it
+is simply **uninitialized**, because the application writes it at runtime and
 Step 4c stops at the handoff into `main`. So the chain terminates in a vector
 table that has never been filled in.
+
+**Do not go looking for runtime `PieVectTable.X = &isr` stores** — probed on both
+F28377D images and there are none. Every reference into `0x0D00–0x0EFF` is either
+`InitPieVectTable` itself or a constant-propagation artifact on a stack store.
+The flash initializer is the whole story, which is what Step 4d already reads.
 
 **You do not have to emulate that far to recover it, though.** TI's
 `InitPieVectTable` copies a *const initializer* out of flash, and that

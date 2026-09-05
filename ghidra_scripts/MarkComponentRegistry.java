@@ -717,9 +717,12 @@ public class MarkComponentRegistry extends GhidraScript {
                 if (tgt < 0) continue;
                 if (tgt == 0) continue;        // a null hook: installed at runtime, nothing to say
                 resolved++;
-                // Exact function ENTRY, in flash or in an executable RAM block -- a ramfunc
-                // handler is as real a target as a flash one, but only once a materialize step has
-                // populated D0/D1, which is why those come back unresolved and get reported.
+                // Exact function ENTRY, in flash or in an executable RAM block -- a ramfunc handler
+                // is as real a target as a flash one. Measured: the three CPU2 sites that come back
+                // unresolved point into D1 RAM that a materialize step DID populate; what is
+                // missing is disassembly, because MaterializeSections only decodes at addresses
+                // something already calls, and nothing called these until this pass ran. Reported
+                // rather than disassembled into existence -- see the note in the image-setup guide.
                 Function t = isCodeAddr(tgt) ? fm.getFunctionAt(wa(tgt)) : null;
                 if (t == null) {
                     notFn++;
@@ -1275,7 +1278,7 @@ public class MarkComponentRegistry extends GhidraScript {
      * The PIE vector table's FLASH initializer -- the best roots in the image, because they are
      * evidence rather than inference.
      *
-     * On C28x the PIE vector table itself is RAM (F28377D: 0x000D00-0x000DFF, 128 vectors x 2
+     * On C28x the PIE vector table itself is RAM (F28377D: 0x000D00 upward, one vector every 2
      * words), written at runtime by TI's InitPieVectTable, which copies a const table out of flash.
      * A static image therefore has an EMPTY vector table and a fully populated initializer sitting
      * in flash with nothing pointing into it.
@@ -1285,6 +1288,12 @@ public class MarkComponentRegistry extends GhidraScript {
      *   * one value repeated across most of the run -- the default/unused-interrupt handler that
      *     TI fills every unused slot with (209 of 224 entries on the image tested), and
      *   * entry 0 is the reset vector, i.e. exactly the _c_int00 signal D already recovered.
+     *
+     * Corroborated against the firmware's own copy: the image's InitPieVectTable reads
+     * `MOVL XAR4,#0xd00 ; MOVL XAR5,#0x9a94a ; MOV ACC,@0x1d ; LSL ACC,#1 ; LCR memcpyWords`,
+     * i.e. base 0x9a94a and 0xe0 = 224 entries -- both exactly what this scan derives. Anchoring
+     * on that memcpy instead would drop the "entry 0 must be _c_int00" requirement, at the cost
+     * of depending on the copy routine having been identified.
      *
      * Each distinct target is an interrupt handler: it runs, and nothing calls it. Create it,
      * reference it from its slot, and register it as an entry point. Targets may live in RAM
@@ -1578,7 +1587,7 @@ public class MarkComponentRegistry extends GhidraScript {
      * address as an immediate, and nothing in the image references the records at all.
      *
      * The function that walks that list has zero incoming references itself: it is the tick ISR,
-     * and on F28377D the PIE vector table that would name it lives in RAM at 0x000D00-0x000DFF and
+     * and on F28377D the PIE vector table that would name it lives in RAM from 0x000D00 and
      * is written AT RUNTIME. That region is mapped but uninitialized here, because replaying
      * startup stops at the handoff into main and any PIE setup the application does happens after
      * that point. So the chain terminates in a vector table that has never been filled in, and no
