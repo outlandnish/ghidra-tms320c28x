@@ -14,7 +14,7 @@ Every step is a script in the **TMS320C28x** Script-Manager category.
 | 3 | `MarkJumpTables.java`, `MarkDataTables.java` | Mark switch/pointer tables and float-constant pools as data so they stop decoding as garbage. |
 | 4 | `MaterializeSections.java` or `MaterializeCopyTable.java` | Copy the flash **load images** into their RAM **run** addresses so the RAM-resident code/data becomes real. Which one depends on the startup copy mechanism. |
 | 4c | `EmulateStartup.java` | The general alternative to 4/4b: **run the image's own `_c_int00`** and keep the RAM it writes. Covers whatever mechanism the image uses — including the inlined `.cinit` walk that neither materializer implements. Dry run by default. |
-| 4d | `MarkComponentRegistry.java` | Turns the materialized RAM dispatch table into actual call-graph **references**. 4/4b/4c restore the bytes; without this the graph never sees the indirect edges and every handler still looks dead. Finds the table structurally, reads each dispatcher's descriptor field offset out of the code, creates functions at proven call targets, and recovers a dispatcher's own function when nothing calls it either. Idempotent; `-Dc28x.reg.dryRun` to preview. |
+| 4d | `MarkComponentRegistry.java` | Turns the materialized RAM dispatch table into actual call-graph **references**. 4/4b/4c restore the bytes; without this the graph never sees the indirect edges and every handler still looks dead. Finds the table structurally, reads each dispatcher's descriptor field offset out of the code, creates functions at proven call targets, and recovers a dispatcher's own function when nothing calls it either. Sites with no table behind them go to **base resolution** — see §Step 4d. Idempotent; `-Dc28x.reg.dryRun` to preview. |
 | 5 | `FinalizeRamfuncs.java` | Post-analysis cleanup: rebuild bodies, clear stale flow bookmarks, repair conflicts. Run it **after** analysis has settled. |
 | 8 | `ReachabilityReport.java` | What is actually reachable from `_c_int00`, and *why* the rest is not. Run last — it is only as good as the reference graph. |
 | 6 | `RetypeWideMemory.java` | Retype 32/64-bit memory operands to kill `CONCAT22`/`CONCAT44` in the decompiler. |
@@ -267,6 +267,54 @@ flags, and `PREAD` setting no N/Z. It also surfaced the `*XAR7` repeat shadow
 source walks forward while the architectural `XAR7` stays put), now modelled in
 the state modifier. See `EmuAddbAccFlagsTest`, `EmuPreadFlagsTest`,
 `EmuPreadRepeatTest`.
+
+## Step 4d — base resolution (dispatch sites with no table behind them)
+
+Discovery needs a **dense** pointer run. Some images have none: their task
+registry is a heterogeneous set of per-component RAM structs, each carrying a
+function pointer at a field offset. For those, work from the call site instead —
+walk back from `LCR *XARn` to the instruction that defines the dispatched
+register and resolve its source:
+
+```
+MOVB XAR0,#0x10           <- the field offset
+MOVL XAR4,#0x12fae        <- the struct base
+MOVL XAR7,*+XAR4[AR0]     <- 0x12fae + 0x10 = 0x12fbe -> 0xb41bf
+LCR  *XAR7
+```
+
+The walk is straight-line: it stops at any instruction another path can branch
+to, so the definition it finds is the only one that can reach that call. The
+value must land exactly on a function entry. Nothing is created.
+
+**Refuse anything a runtime index touched.** `MOVL XAR1,#0x9b506 ; ADDL @XAR1,ACC
+; MOVL XAR7,*+XAR1[0x0]` walks a table, and Ghidra's constant propagator keeps
+its reference on the load pointing at *entry 0* — believing it turns a MAY-call
+over N entries into one confidently wrong edge. So a register-derived address is
+resolved by this walk only, never from a propagated reference; the reference is
+taken only where the operand is static (`@6bit`, `*(0:addr)`).
+
+Measured (F28377D, `-Dc28x.reg.noBaseResolve` for the baseline). It runs before
+the RAM-hook pass and takes over the sites hooks used to claim, so "new" counts
+only edges neither pass had:
+
+| image | sites resolved | new edges | reachable |
+|-------|----------------|-----------|-----------|
+| CPU2, dense registry | 3, + 3 reported (targets in unmaterialized D1 RAM) | 1 | 50.4% → 50.5% |
+| CPU1, sparse/inline  | 2 | 0 | 63.2% (unchanged) |
+
+No edge landed on a non-function on either. The CPU2 gain is a flash slot,
+which the hook pass refuses by design — safe here because the base is proved
+rather than scavenged out of the window.
+
+**The CPU1 result is the informative one.** Its component structs really are a
+struct array with the handler at a field offset (strides 0x10 and 0x14), but no
+dispatcher reaches one from a constant: `.cinit` builds them as intrusive
+doubly-linked lists whose members are linked at runtime, and the walkers take a
+node pointer as a *parameter* or index an array that is still all zeros in a
+static image. There is no base to propagate, and that is a fact about the
+firmware rather than a shortfall in the pass — rooting (Step 8) remains the
+correct recovery there.
 
 ## Step 5 — FinalizeRamfuncs (run AFTER analysis settles)
 

@@ -56,6 +56,38 @@
 // This is a MAY-call edge, which is the honest thing for a dispatch loop: the call really can
 // reach every descriptor's field, because the loop runs over every slot.
 //
+// BASE RESOLUTION (-Dc28x.reg.noBaseResolve to disable)
+// -----------------------------------------------------
+// Discovery above needs a DENSE pointer run. A sparse/inline image has none: its task registry is a
+// heterogeneous collection of per-component RAM structs, each carrying a function pointer at a
+// field offset, read field-by-field by many functions. Carving such a region into "descriptors" by
+// stride would invent MAY-call edges over records no dispatcher actually loops, so this pass works
+// from the CALL SITE instead, one site at a time:
+//
+//     MOVB XAR0,#0x10           <- the field offset
+//     MOVL XAR4,#0x1806e        <- the struct base
+//     MOVL XAR7,*+XAR4[AR0]     <- load the function pointer from base+off
+//     LCR  *XAR7                <- the indirect call
+//
+// Walk back from the call to the instruction that defines the register it dispatches through, then
+// resolve that instruction's source: an immediate, a register copy, or a load whose address is
+// itself resolved the same way. One concrete address in, one function out, one COMPUTED_CALL edge.
+//
+// Everything about it is deliberately narrow, because a wrong edge is worse than a missing one:
+// the walk is STRAIGHT-LINE (it stops at any instruction another path can branch to, so the
+// definition it finds is the only one that can reach the call), the value must land EXACTLY on an
+// existing function entry, and anything ambiguous is reported and skipped rather than guessed at.
+// It creates no functions — an address that is not already a function entry is exactly the case
+// where "resolved" usually means "read a constant that happens to look like code".
+//
+// And a register-derived address is resolved by THIS walk, never from the reference Ghidra's
+// constant propagator left on the load. The propagator carries a value across the very arithmetic
+// that makes an address unprovable: on `MOVL XAR1,#0x9b506 ; ADDL @XAR1,ACC ; MOVL XAR7,*+XAR1[0]`
+// its reference names entry 0 of a table the dispatcher indexes at runtime, and taking it turns a
+// MAY-call over N entries into one confidently wrong edge (measured, on the first image tried).
+// Only a STATIC operand -- `*(0:addr)`, or `@6bit`, whose DP is the DP analyzer's job -- takes the
+// reference, because there is no register there to prove.
+//
 // RAM HOOKS (-Dc28x.reg.noHooks to disable)
 // -----------------------------------------
 // The same materialization also resolves the single-slot form, `(*DAT_xxxx)()`. That one matters
@@ -66,6 +98,10 @@
 // offer exactly one such candidate. Flash-resident tables are left alone: those are jump/dispatch
 // tables and belong to MarkJumpTables, and a loose version of this rule happily "resolves" a
 // constant like 0x00010001 into a bogus RAM function.
+//
+// Hooks scavenge ANY resolved slot in the window and require it to be the only candidate; base
+// resolution tracks the specific register the call dispatches through. The precise pass runs first
+// so it owns the sites it can prove, and hooks keep the rest.
 //
 // ORDER: run AFTER SeedFunctions + a materialization step, and re-run ReachabilityReport after.
 //
@@ -80,7 +116,9 @@
 //   c28x.reg.window      (int,  default 10)   instructions scanned back from an indirect call
 //   c28x.reg.noCreateFns (bool)               don't create functions at proven dispatch targets
 //   c28x.reg.noSeedDispatchers (bool)         don't recover a dispatch site's enclosing function
-//   c28x.reg.maxBack     (int,  default 512)  instructions to walk back looking for that entry
+//   c28x.reg.maxBack     (int,  default 512)  instructions to walk back looking for that entry,
+//                                             and for a dispatched register's definition
+//   c28x.reg.noBaseResolve (bool)             skip the per-call-site base-resolution pass
 //   c28x.reg.noHooks     (bool)               skip the single-slot RAM hook pass
 //   c28x.reg.noPie       (bool)               skip the PIE vector-table initializer pass
 //   c28x.reg.minPieEntries (int, default 64)  shortest code-pointer run treated as a vector table
@@ -94,6 +132,7 @@
 
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.address.*;
+import ghidra.program.model.lang.Register;
 import ghidra.program.model.listing.*;
 import ghidra.program.model.mem.*;
 import ghidra.program.model.scalar.Scalar;
@@ -166,6 +205,9 @@ public class MarkComponentRegistry extends GhidraScript {
         double minTableFrac = Double.parseDouble(System.getProperty("c28x.reg.minTableFrac", "0.50"));
         double minOffFrac   = Double.parseDouble(System.getProperty("c28x.reg.minOffFrac", "0.10"));
         int minOffHits      = Integer.getInteger("c28x.reg.minOffHits", 4);
+        // Read here, not in the dense-registry branch: the base-resolution pass below uses the same
+        // budget and runs on both paths.
+        int maxBack         = Integer.getInteger("c28x.reg.maxBack", 512);
 
         // flash = initialized blocks at/above 0x80000 (word), same rule as the other scripts
         for (MemoryBlock b : mem.getBlocks()) {
@@ -204,20 +246,24 @@ public class MarkComponentRegistry extends GhidraScript {
         if (tables.isEmpty()) {
             println("");
             println("No DENSE component registry found -- running only the registry-INDEPENDENT passes");
-            println("(RAM single-slot hooks, PIE vectors, runtime-dispatched roots). Each scans for its");
-            println("own evidence and needs no discovered table, so it also covers the sparse/inline");
-            println("case: an image whose task registry is a struct array with the function pointer at a");
-            println("field offset exposes no dense pointer run for discovery, but MarkCodePointers still");
-            println("carries those slot refs and these passes still root what the runtime dispatches.");
-            println("(Observed on an F28377D CPU1 image.) If even these find nothing and the image IS");
-            println("dispatch-driven, the registry is probably not materialized -- run EmulateStartup");
-            println("(Step 4c) first: a registry that has never been written reads as all zeros.");
+            println("(per-call-site base resolution, RAM single-slot hooks, PIE vectors, runtime-");
+            println("dispatched roots). Each scans for its own evidence and needs no discovered table,");
+            println("so together they also cover the sparse/inline case: an image whose task registry is");
+            println("a struct array with the function pointer at a field offset exposes no dense pointer");
+            println("run for discovery, but the call sites still name their base in the code and these");
+            println("passes still root what the runtime dispatches. (Observed on an F28377D CPU1 image.)");
+            println("If even these find nothing and the image IS dispatch-driven, the registry is");
+            println("probably not materialized -- run EmulateStartup (Step 4c) first: a registry that");
+            println("has never been written reads as all zeros.");
 
-            // These three passes were previously gated behind a discovered registry, but none of
-            // them consumes one: hooks resolve (*DAT_ram)() from the code, the PIE pass reads the
-            // flash vector initializer, and rootRuntimeDispatched scans RAM for planted
-            // function-pointers with no static caller. Running them here is what makes the sparse /
-            // inline-table (CPU1) case recover instead of returning empty-handed after PIE.
+            // None of these passes consumes a discovered registry: base resolution and hooks read
+            // the code, the PIE pass reads the flash vector initializer, and rootRuntimeDispatched
+            // scans RAM for planted function-pointers with no static caller. Running them here is
+            // what makes the sparse / inline-table (CPU1) case recover instead of returning
+            // empty-handed after PIE.
+            int based0 = Boolean.getBoolean("c28x.reg.noBaseResolve") ? 0 : resolveByBase(maxBack);
+            println(String.format("computed calls resolved from a propagated base: %d", based0));
+
             int hooks0 = Boolean.getBoolean("c28x.reg.noHooks") ? 0 : resolveRamHooks(window);
             println(String.format("RAM single-slot hooks resolved: %d", hooks0));
 
@@ -274,7 +320,6 @@ public class MarkComponentRegistry extends GhidraScript {
         // ---- 3. the call edges: read each dispatch site's field offset out of the code ---------
         boolean createFns = !Boolean.getBoolean("c28x.reg.noCreateFns");
         boolean seedDispatchers = !Boolean.getBoolean("c28x.reg.noSeedDispatchers");
-        int maxBack = Integer.getInteger("c28x.reg.maxBack", 512);
         int sites = 0, attributed = 0, unattributed = 0, callRefs = 0, outsideFn = 0, dispatchFns = 0;
         int[] mk = new int[2];                       // [0] functions created, [1] left unresolved
         println("");
@@ -366,6 +411,14 @@ public class MarkComponentRegistry extends GhidraScript {
             "data refs: %d slot->descriptor, %d descriptor-field->handler, %d descriptor labels, "
             + "%d RAM slots typed as function pointers",
             slotRefs, fieldRefs, labels, typed));
+
+        // ---- 4b. computed calls whose base propagates to one address --------------------------
+        // Before hooks: this pass tracks the register the call actually dispatches through, so
+        // where both could fire it is the one with the provenance.
+        println("");
+        int based = 0;
+        if (!Boolean.getBoolean("c28x.reg.noBaseResolve")) based = resolveByBase(maxBack);
+        println(String.format("computed calls resolved from a propagated base: %d", based));
 
         // ---- 5. single-slot RAM hooks --------------------------------------------------------
         int hooks = 0;
@@ -580,6 +633,214 @@ public class MarkComponentRegistry extends GhidraScript {
             if (getInstructionAt(a) == null) return false;
             return createFunction(a, null) != null;
         } catch (Exception e) { return false; }
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // per-call-site base resolution
+    // ---------------------------------------------------------------------------------------
+
+    /** Where the last resolved load read its value from, so the slot can be typed (#61). */
+    long lastSlot = -1;
+
+    /** How far a value may travel through register copies before we stop believing it. */
+    static final int MAX_DEPTH = 4;
+
+    /** `*+XARn[0x4]` / `*+XARn[AR0]` — the only indexed forms decomposed by hand. */
+    static final java.util.regex.Pattern INDEXED =
+        java.util.regex.Pattern.compile("\\*\\+(XAR[0-7])\\[(0x[0-9a-fA-F]+|AR[01])\\]");
+
+    /**
+     * Resolve `LCR *XARn` by propagating the dispatched register back to one concrete value.
+     *
+     * This is the sparse/inline half of the registry problem. Where a dense registry lets the
+     * script emit a MAY-call over every descriptor's field, a heterogeneous struct region offers
+     * nothing to enumerate — but the dispatcher's own code still names the struct: the base is an
+     * immediate (or a slot that holds one) and the field offset is an immediate a few instructions
+     * earlier. One site, one address, one target.
+     *
+     * Sites whose base is a parameter or a runtime index do NOT resolve, and that is correct
+     * rather than a shortfall: a generic dispatcher handed a different component on every call has
+     * no single target, and picking its table's first element would be a confidently wrong edge.
+     */
+    int resolveByBase(int maxBack) {
+        int sites = 0, resolved = 0, notFn = 0, added = 0;
+        for (Function f : fm.getFunctions(true)) {
+            InstructionIterator ii = currentProgram.getListing().getInstructions(f.getBody(), true);
+            while (ii.hasNext()) {
+                Instruction in = ii.next();
+                if (!in.getFlowType().isCall() || !in.getFlowType().isComputed()) continue;
+                if (hasCallRef(in)) continue;                  // already resolved by someone
+                Register reg = callThrough(in);
+                if (reg == null) continue;
+                sites++;
+                lastSlot = -1;
+                long tgt = regValue(reg.getName(), in, f, maxBack, 0);
+                if (tgt < 0) continue;
+                if (tgt == 0) continue;        // a null hook: installed at runtime, nothing to say
+                resolved++;
+                // Exact function ENTRY, in flash or in an executable RAM block -- a ramfunc
+                // handler is as real a target as a flash one, but only once a materialize step has
+                // populated D0/D1, which is why those come back unresolved and get reported.
+                Function t = isCodeAddr(tgt) ? fm.getFunctionAt(wa(tgt)) : null;
+                if (t == null) {
+                    notFn++;
+                    println(String.format("  base %05x in %-20s -> %05x is not a function entry"
+                        + " -- skipped", in.getAddress().getOffset() / 2, f.getName(), tgt));
+                    continue;
+                }
+                if (!addRef(in.getAddress(), wa(tgt), RefType.COMPUTED_CALL)) continue;
+                added++;
+                // Same reasoning as the registry slots and the hooks: a RAM word the code
+                // provably calls through is a function-pointer global, so type it (#61).
+                if (lastSlot >= 0 && !inFlash(lastSlot)) typeFunctionPointer(lastSlot);
+                println(String.format("  base %05x in %-20s -> %s%s",
+                    in.getAddress().getOffset() / 2, f.getName(), t.getName(),
+                    lastSlot >= 0 ? String.format("   [via %05x]", lastSlot) : ""));
+            }
+        }
+        println(String.format("  base resolution: %d unresolved computed call(s), %d propagated to a"
+            + " single address, %d of those not a function entry", sites, resolved, notFn));
+        return added;
+    }
+
+    boolean hasCallRef(Instruction in) {
+        for (Reference r : rm.getReferencesFrom(in.getAddress()))
+            if (r.getReferenceType().isCall()) return true;
+        return false;
+    }
+
+    /** The register `LCR *XARn` dispatches through. */
+    Register callThrough(Instruction call) {
+        for (int i = 0; i < call.getNumOperands(); i++)
+            for (Object o : call.getOpObjects(i)) if (o instanceof Register) return (Register) o;
+        return null;
+    }
+
+    /** True when control can arrive at `in` other than by falling through its predecessor. */
+    boolean isJoin(Instruction in) {
+        for (Reference r : rm.getReferencesTo(in.getAddress())) {
+            RefType t = r.getReferenceType();
+            if (t.isJump() || t.isCall()) return true;
+        }
+        return false;
+    }
+
+    /**
+     * The single value `reg` holds at `at`, or -1.
+     *
+     * Straight-line only, and that is the whole safety argument: the walk stops at the first
+     * instruction another path can branch to, so the definition it finds is the one that reaches
+     * this call under every execution — no merge of two candidate values can hide behind it.
+     */
+    long regValue(String reg, Instruction at, Function f, int budget, int depth) {
+        if (depth > MAX_DEPTH) return -1;
+        Instruction cur = at;
+        for (int k = 0; k < budget; k++) {
+            if (isJoin(cur)) return -1;
+            Instruction p = cur.getPrevious();
+            if (p == null || !f.getBody().contains(p.getAddress())) return -1;
+            Address ft = p.getFallThrough();
+            if (ft == null || !ft.equals(cur.getAddress())) return -1;
+            if (writesReg(p, reg)) {
+                // Only a MOVE defines a value we can read off. Arithmetic on a pointer register is
+                // how a dispatcher indexes a table -- `MOVL XAR1,#0x9b506 ; ADDL @XAR1,ACC` walks
+                // one at runtime -- and reading the ADDL as if it were a move hands back the
+                // table's FIRST element as though it were the only target. Measured: that is
+                // exactly one confidently wrong edge on the first image tried.
+                String m = p.getMnemonicString();
+                if (!m.equals("MOVL") && !m.equals("MOVB")) return -1;
+                String[] ds = destSrc(p);
+                // The write must be to the WHOLE register under one of the two spellings this
+                // module renders (`XAR4` as an implicit destination, `@XAR4` as a loc32 operand).
+                // Anything else -- a 16-bit write to AR4, an unrecognized form -- is a clobber we
+                // cannot read, so the value stops being provable here.
+                if (ds == null) return -1;
+                boolean narrow = reg.startsWith("AR") && ds[0].equals("X" + reg);  // MOVB XAR0,#imm
+                if (!ds[0].equals(reg) && !ds[0].equals("@" + reg) && !narrow) return -1;
+                long v = sourceValue(ds[1], p, f, budget, depth);
+                return v < 0 || !narrow ? v : v & 0xFFFF;      // ARn is XARn's low half
+            }
+            cur = p;
+        }
+        return -1;
+    }
+
+    /** `MNEMONIC dst,src` split out of the rendered instruction, or null. */
+    String[] destSrc(Instruction in) {
+        String s = in.toString();
+        int sp = s.indexOf(' ');
+        if (sp < 0) return null;
+        String ops = s.substring(sp + 1).trim();
+        int comma = ops.indexOf(',');
+        if (comma < 0) return null;
+        return new String[]{ops.substring(0, comma).trim(), ops.substring(comma + 1).trim() };
+    }
+
+    /** Does `in` write `reg`, or any register overlapping it? */
+    boolean writesReg(Instruction in, String reg) {
+        for (Object o : in.getResultObjects()) {
+            if (!(o instanceof Register)) continue;
+            Register r = (Register) o;
+            if (r.getName().equals(reg)) return true;
+            for (Register q = r.getParentRegister(); q != null; q = q.getParentRegister())
+                if (q.getName().equals(reg)) return true;
+            List<Register> kids = r.getChildRegisters();
+            if (kids != null) for (Register c : kids) if (c.getName().equals(reg)) return true;
+        }
+        return false;
+    }
+
+    /** The value of a rendered source operand at `p`: an immediate, a register, or a load. */
+    long sourceValue(String src, Instruction p, Function f, int budget, int depth) {
+        if (src.startsWith("#")) {
+            try { return Long.decode(src.substring(1)); } catch (Exception e) { return -1; }
+        }
+        if (src.equals("ACC") || src.equals("@ACC")) return regValue("ACC", p, f, budget, depth + 1);
+        if (src.matches("@?XAR[0-7]")) return regValue(src.replace("@", ""), p, f, budget, depth + 1);
+        long slot = loadAddress(src, p, f, budget, depth);
+        if (slot < 0) return -1;
+        lastSlot = slot;                       // outermost load wins: it is assigned last
+        return word32(slot);
+    }
+
+    /**
+     * The address a load reads from.
+     *
+     * Where the address comes out of a REGISTER it is resolved here, by the same walk — never from
+     * the reference Ghidra's constant propagator attached. That propagator keeps a value across
+     * the very arithmetic that makes an address unprovable, so its reference on
+     * `MOVL XAR7,*+XAR1[0x0]` names the first element of a table the dispatcher indexes at
+     * runtime; believing it turns a MAY-call over N entries into a definite edge to entry 0.
+     *
+     * Where the address is a STATIC operand there is no register to prove and the reference is the
+     * whole answer, so it is taken: `*(0:addr)` is absolute, and `@6bit` is DP-relative, which is
+     * the DP analyzer's job rather than something to re-derive here.
+     */
+    long loadAddress(String src, Instruction p, Function f, int budget, int depth) {
+        if (src.startsWith("*(0:") || src.matches("@0x[0-9a-fA-F]+|@\\d+")) return uniqueRef(p);
+        if (src.matches("\\*XAR[0-7]")) return regValue(src.substring(1), p, f, budget, depth + 1);
+        java.util.regex.Matcher m = INDEXED.matcher(src);
+        if (!m.matches()) return -1;           // ++/--/SP/circular forms: not a fixed address
+        long base = regValue(m.group(1), p, f, budget, depth + 1);
+        if (base < 0) return -1;
+        String idx = m.group(2);
+        if (idx.startsWith("AR")) {
+            long i = regValue(idx, p, f, budget, depth + 1);
+            return i < 0 ? -1 : base + i;
+        }
+        try { return base + Long.decode(idx); } catch (Exception e) { return -1; }
+    }
+
+    /** The one address `p` references, or -1 when it references none or several. */
+    long uniqueRef(Instruction p) {
+        Address only = null;
+        for (Reference r : rm.getReferencesFrom(p.getAddress())) {
+            RefType t = r.getReferenceType();
+            if (t.isFlow() || t.isCall() || t.isJump()) continue;
+            if (only != null && !only.equals(r.getToAddress())) return -1;
+            only = r.getToAddress();
+        }
+        return only == null ? -1 : only.getOffset() / 2;
     }
 
     /**
