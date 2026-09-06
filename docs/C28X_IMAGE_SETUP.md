@@ -14,8 +14,9 @@ Every step is a script in the **TMS320C28x** Script-Manager category.
 | 3 | `MarkJumpTables.java`, `MarkDataTables.java` | Mark switch/pointer tables and float-constant pools as data so they stop decoding as garbage. |
 | 4 | `MaterializeSections.java` or `MaterializeCopyTable.java` | Copy the flash **load images** into their RAM **run** addresses so the RAM-resident code/data becomes real. Which one depends on the startup copy mechanism. |
 | 4c | `EmulateStartup.java` | The general alternative to 4/4b: **run the image's own `_c_int00`** and keep the RAM it writes. Covers whatever mechanism the image uses — including the inlined `.cinit` walk that neither materializer implements. Dry run by default. |
-| 4d | `MarkComponentRegistry.java` | Turns the materialized RAM dispatch table into actual call-graph **references**. 4/4b/4c restore the bytes; without this the graph never sees the indirect edges and every handler still looks dead. Finds the table structurally, reads each dispatcher's descriptor field offset out of the code, creates functions at proven call targets, and recovers a dispatcher's own function when nothing calls it either. Idempotent; `-Dc28x.reg.dryRun` to preview. |
+| 4d | `MarkComponentRegistry.java` | Turns the materialized RAM dispatch table into actual call-graph **references**. 4/4b/4c restore the bytes; without this the graph never sees the indirect edges and every handler still looks dead. Finds the table structurally, reads each dispatcher's descriptor field offset out of the code, creates functions at proven call targets, and recovers a dispatcher's own function when nothing calls it either. Sites with no discovered table behind them go to **base resolution** and the **strided-table** walk — see §Step 4d. Idempotent; `-Dc28x.reg.dryRun` to preview. |
 | 5 | `FinalizeRamfuncs.java` | Post-analysis cleanup: rebuild bodies, clear stale flow bookmarks, repair conflicts. Run it **after** analysis has settled. |
+| 5b | `MergeSplitFunctions.java` | Reunite functions step 2 cut in two at a mid-function register push it mistook for a prologue. The far half keeps the `LRETR` and inherits no callers, so it and everything it calls read as dead. See §Step 5b. Idempotent; `-Dc28x.split.dryRun` to preview. |
 | 8 | `ReachabilityReport.java` | What is actually reachable from `_c_int00`, and *why* the rest is not. Run last — it is only as good as the reference graph. |
 | 6 | `RetypeWideMemory.java` | Retype 32/64-bit memory operands to kill `CONCAT22`/`CONCAT44` in the decompiler. |
 | 7 | `SweepResidualMarks.java` + verify | Classify leftover `Bad Instruction` marks, delete only the provably cosmetic ones, and confirm against a known-good baseline. |
@@ -268,6 +269,144 @@ source walks forward while the architectural `XAR7` stays put), now modelled in
 the state modifier. See `EmuAddbAccFlagsTest`, `EmuPreadFlagsTest`,
 `EmuPreadRepeatTest`.
 
+## Step 4d — dispatch sites with no table behind them
+
+Discovery needs a **dense** pointer run in RAM. Plenty of dispatch has none, so
+two passes work from the call site instead. Both read their parameters out of
+the dispatcher's own instruction stream, which is the same principle the
+descriptor-offset attribution already rests on: the immediate in the code is
+ground truth, a shape inferred from a region's bytes is not.
+
+### Base resolution — one site, one address, one target
+
+Walk back from `LCR *XARn` to the instruction that defines the dispatched
+register and resolve its source:
+
+```
+MOVB XAR0,#0x10           <- the field offset
+MOVL XAR4,#0x12fae        <- the struct base
+MOVL XAR7,*+XAR4[AR0]     <- 0x12fae + 0x10 = 0x12fbe -> 0xb41bf
+LCR  *XAR7
+```
+
+The walk is straight-line: it stops at any instruction another path can branch
+to, so the definition it finds is the only one that can reach that call. The
+value must land exactly on a function entry. Nothing is created.
+
+**Refuse anything a runtime index touched.** `MOVL XAR1,#0x9b506 ; ADDL @XAR1,ACC
+; MOVL XAR7,*+XAR1[0x0]` walks a table, and Ghidra's constant propagator keeps
+its reference on the load pointing at *entry 0* — believing it turns a MAY-call
+over N entries into one confidently wrong edge. So a register-derived address is
+resolved by this walk only, never from a propagated reference; the reference is
+taken only where the operand is static (`@6bit`, `*(0:addr)`).
+
+### Strided tables — the sites base resolution refuses
+
+That same `ADDL` says the dispatcher is walking a table, and every parameter of
+the walk is a literal a few instructions back:
+
+```
+MOVL XAR1,#0x9b506        <- base
+MOV  ACC,@AL<<#0x2        <- index scaled by the record stride (4 words)
+ADDL @XAR1,ACC
+MOVL XAR7,*+XAR1[0x0]     <- handler field within the record
+LCR  *XAR7
+```
+
+**Both operand orders occur, and the second is the commoner** — 18 sites against
+3 on the CPU2 image, so recognising only the first leaves most of them on the
+floor:
+
+```
+ADDL @XAR1,ACC                       ADDL ACC,@XAR1
+                                     MOVL XAR4,@ACC
+```
+
+Same table; the accumulator does the adding instead of the pointer. That form
+also lets the base arrive in a register or a global rather than as a literal at
+the add, so it is resolved rather than read straight off an immediate.
+
+Nothing here guesses a stride from a region's shape — the code states it, and a
+stride below 2 is rejected outright since a 32-bit function pointer occupies two
+words. Only the record **count** is sometimes unstated, and that is read from the
+table: walk records until one holds a word that is neither null nor code. A
+record naming an address with an instruction already decoded at it, inside no
+function, becomes a function; an address with no instruction ends the table
+rather than being disassembled into existence.
+
+**That stop rule was checked against a bound the code does state.** The table
+above is guarded by `CMPB AL,#0x12` — 18 records — and the structural walk stops
+at exactly 18: word 19 is `0x01f400fa`. Across five tables on two images it
+landed on the true last entry every time (the next word was a float constant, a
+RAM pointer, or a small integer). Two tables sharing a dispatch tail both
+resolve; a base any reaching path leaves unprovable resolves to nothing.
+
+Edges are MAY-calls, the honest shape for a loop over a table — the same thing
+the descriptor pass emits. A walk that enumerates only one record is reported
+and skipped (`-Dc28x.reg.minTargets=1` to take it): an indexed walk with a
+single visible target is an incomplete enumeration, not a single-target call.
+
+### Cursors into a table already found
+
+The strided pass runs **first**, and base resolution then checks whether the slot
+it resolved lands inside a table that pass accepted. If it does, the site is
+walking that table through a saved cursor — one dispatcher advances it and stores
+it, another reloads it:
+
+```
+MOVL XAR4,@0x10           <- the saved cursor, not a table base
+MOVL XAR7,*+XAR4[0x2]
+LCR  *XAR7
+```
+
+The record the cursor holds in a static image is only where `.cinit` left it, so
+naming that one target is precise about the wrong thing. Emit the whole field
+instead — taking the field from *this* site's load, not the table's. Worth 9
+edges in place of 1 on the CPU2 image.
+
+### These passes feed each other — run them to a fixpoint
+
+They are not independent: each creates *functions* the others then recognize. A
+table entry that was an unclaimed address before the vector pass ran is a
+function afterwards, so the table walk that stopped at it gets further next time.
+Step 4d therefore loops until a round adds nothing (`-Dc28x.reg.rounds`, default
+4). Everything it does only ever adds, so it settles — CPU1 takes 2 rounds, CPU2
+takes 3, and a re-run of either does nothing.
+
+Running the set only once under-reports, and by a lot: on CPU2 the second and
+third rounds alone were worth 51.6% → 56.1%.
+
+### Measured (F28377D)
+
+Baseline via `-Dc28x.reg.noBaseResolve -Dc28x.reg.noStrided`.
+
+| image | base resolution | strided tables | reachable | DATA-REFS-ONLY |
+|-------|-----------------|----------------|-----------|----------------|
+| CPU1, sparse/inline | 2 sites | 3 tables, 52 edges | 63.2% → **72.4%** | 40 → 19 |
+| CPU2, dense registry | 2 sites + 1 cursor | 16 tables, 191 edges | 50.5% → **62.4%** | 117 → 27 |
+
+The CPU2 tables run at strides 2, 4, 6, 8, 10 and 12 — every one of them read out
+of a dispatcher rather than inferred. No edge landed on a non-function on either
+image, and both converge in 2–3 rounds with a re-run adding nothing.
+
+**The three CPU2 sites that stay unresolved point at a real gap worth fixing.**
+Their targets are in D1 RAM that Step 4 *did* materialize — the bytes are there.
+What is missing is **disassembly**: `MaterializeSections` decodes a code section
+only at addresses something already calls, and nothing called these until this
+pass ran. Seeding RAM code sections from resolved dispatch tables (or re-running
+Step 4's disassembly after Step 4d) would close it. These passes deliberately do
+not disassemble an address into existence themselves.
+
+**One CPU1 result is worth keeping.** Its component structs really are a struct
+array with the handler at a field offset (strides 0x10 and 0x14), but no
+dispatcher reaches one from a constant: `.cinit` builds them as intrusive
+doubly-linked lists whose members are linked at runtime, and the walkers take a
+node pointer as a *parameter* or index an array that is still all zeros in a
+static image. There is no base to propagate, and that is a fact about the
+firmware rather than a shortfall in the pass — rooting (Step 8) is the recovery
+there. What these two passes reach on that image is the *other* dispatch
+population: flash tables indexed at runtime.
+
 ## Step 5 — FinalizeRamfuncs (run AFTER analysis settles)
 
 Three artifacts of Ghidra's auto-analysis, all needing background analysis to
@@ -315,6 +454,173 @@ have run first (which a script on the Swing/EDT thread cannot force):
    failure). Because pass 2's fall-through re-disassembly can spawn new
    conflicts, **passes 2 and 3 loop until neither changes anything**, then
    stale flow bookmarks are re-cleared.
+
+## Step 5b — functions the seeder cut in two
+
+`SeedFunctions` signal B seeds on a prologue run: consecutive callee-saved
+pushes (`MOVL *SP++,XARn`, `MOV32 *SP++,RnH`). TI's compiler emits that exact
+sequence **mid-function** whenever it needs another saved register partway
+through a body, and at seed time nothing can tell the two apart — no code is
+decoded yet, so there is no previous instruction to ask. The seed lands inside a
+live function and splits it. The near half keeps the name and the callers; the
+far half keeps the `LRETR` and inherits nothing, because a fall-through is not a
+reference. It reads as dead, and so does everything only it calls.
+
+The worked example is the DIR component framework's own registry walk:
+
+```
+ade1c  MOVL *SP++,XAR1        <- FUN_000ade1c: prologue, has the callers
+ade1d  MOVL XAR4,#0x14480
+ade1f  MOVW DP,#0x511
+ade21  MOVL *SP++,XAR2        <- FUN_000ade21: seeded here, nothing reaches it
+ade22  MOVL *SP++,XAR3
+...
+ade30  LCR *XAR7              <- 69 recovered dispatch edges hang off this
+...
+ade59  MOVL XAR1,*--SP        <- pops the XAR1 that ade1c pushed
+ade5a  LRETR
+```
+
+One function, one prologue, one epilogue, cut at `ade21`. The 69 edges step 4d
+recovered from that `LCR *XAR7` were all hanging off an entry point that nothing
+could reach — 156 functions stranded behind a boundary error.
+
+**The rule.** Compiled code enters a function by calling it, so an entry merges
+back only when all four hold:
+
+1. nothing references it — call, jump or data;
+2. its address appears nowhere in the image as a 32-bit value, so no table can
+   hold a pointer to it;
+3. it sits exactly on the fall-through of the instruction before it;
+4. the function that instruction belongs to has **no return instruction
+   anywhere**, so it cannot be a complete function — its epilogue is on the
+   other side of the cut.
+
+(4) is what makes it conclusive rather than plausible, and it costs almost
+nothing: it held on 105 of 107 candidate sites on a CPU2 image and 89 of 89 on
+CPU1. The two exceptions are refused and reported, not repaired. A renamed
+function is never merged away, so a name you applied to the far half survives and
+a re-run changes nothing.
+
+**Measured.**
+
+| image | reachable before | after | fns with no return | non-contiguous bodies |
+|---|---|---|---|---|
+| CPU2 (DIR), 105 merges | 1368/2194 = 62.4% | 1654/2089 = **79.2%** | 217 → 112 | 30 → 24 |
+| CPU1 (PMR), 89 merges | 663/916 = 72.4% | 696/827 = **84.2%** | 122 → 33 | 14 → 12 |
+
+The no-return column is the check that matters: every merge repaired a function
+that provably could not have been whole, and no body became fragmented.
+
+After this, the unreachable tail is genuinely flat — the largest remaining
+orphan subtree on CPU2 is 38 functions and on CPU1 is 10, against 156 before.
+
+## The CLA — a second program, not a second mode
+
+If the image drives the Control Law Accelerator, the pipeline above will materialize its
+program RAM and then leave it completely undecoded, because the C28x SLEIGH cannot read a
+CLA instruction. **The signature is unmistakable once you look for it**: an LSx bank that
+is initialized and mostly non-zero yet holds *zero* C28x instructions and *zero* functions,
+while its neighbours hold hundreds. On the 2022 DIR CPU2 image:
+
+```
+LS0_RAM  08000-087ff init=true  fns=0   insn=0     nonzero=1579   <== CLA program
+LS1_RAM  08800-08fff init=true  fns=0   insn=0     nonzero=1432   <== CLA program
+LS2_RAM  09000-097ff init=true  fns=17  insn=925   nonzero=1336
+LS3_RAM  09800-09fff init=true  fns=7   insn=968   nonzero=2024
+```
+
+Corroborate it on the C28x side before believing it: the CLA is configured by writes to
+`Cla1Regs` (`0x1400`) and `MemCfgRegs.LSxMSEL`/`LSxCLAPGM` (`0x5F424`/`0x5F426`). On that
+image one function writes `MVECT1`/`MVECT2` and `MIER` under `EALLOW` and `PREAD`s the two
+MemCfg words from a flash table, and another forces a task through `MIFRC` then spins on
+`MIRUN & 0xF` — that is a CLA being started and waited on.
+
+The CLA is a separate **language** (`TMS320C28x:LE:32:cla`), so its code has to be a
+separate **program** — Ghidra binds one language per program. Two scripts:
+
+```
+# 1. on the C28x program: survey the banks, find the tasks, write the .bin
+ExportClaProgram.java      -Dc28x.cla.out=<path>.bin
+
+# 2. import it, then set it up
+-import <path>.bin -processor TMS320C28x:LE:32:cla -loader BinaryLoader \
+    -loader-baseAddr 0x8000
+SetupClaProgram.java       -Dc28x.cla.tasks=<the list step 1 printed>
+```
+
+`-loader-baseAddr` is in **words** here, like every other address in this space.
+
+**On Windows, pass those `-D` options through `JAVA_TOOL_OPTIONS`, not as script
+arguments.** `analyzeHeadless.bat` drops everything after the `=` in a script argument, so
+`-Dc28x.cla.out=C:\x.bin` arrives as the bare flag and the value is lost. A valueless
+switch survives, which is why this is easy to miss — the failure looks like a script trying
+to open a file called `true`.
+
+Result on that image: **1934 CLA instructions, none undecodable**, 7 tasks rooted from
+MVECT and 14 more subroutines recovered from what follows each `MSTOP`/`MRCNDD`. It reads
+as what it is:
+
+```
+08380  MMOVZ16    MR2,ADCBRESULT
+08386  MMOVZ16    MR3,ADCARESULT
+08388  MMPYF32    MR2,#0x3980,MR2          ; ADC counts -> per-unit
+0838e  MSUBF32    MR0,MR2,MR0||MMOV32 MR2,DAT_00009018
+08390  MMPYF32    MR0,MR1,MR0||MSUBF32 MR2,MR3,MR2
+0839c  MCCNDD     FUN_00008c2e,UNCF
+```
+
+### Making the two programs one analysis
+
+Ghidra has no cross-program references, but both programs address the **same device map** —
+`0x1486` in the CLA program is `0x1486` in the C28x program. Put them in one project and:
+
+```
+SyncClaLabels.java   -Dc28x.sync.other=<the other program>   # both directions by default
+```
+
+It carries applied names and data types across, ranked by `SourceType`
+(`DEFAULT < ANALYSIS < IMPORTED < USER_DEFINED`): `SetupF28377D`'s precise register names
+replace `SetupClaProgram`'s coarse region labels, a name you typed by hand outranks
+everything, and an equal-ranked disagreement is *reported*, not resolved. Copies keep the
+source's `SourceType`, so syncing back is a no-op. On the DIR pair: **1821 labels and 196
+data types carried, 0 conflicts**, and a second run copies nothing.
+
+What that buys, concretely — before and after, on the CLA side:
+
+```
+08380  MMOVZ16  MR2,DAT_00000b20          ->  MMOVZ16  MR2,ADCB_RESULT_ADCRESULT0
+08366  MMOVZ16  MR0,DAT_00004104          ->  MMOVZ16  MR0,EPWM2_TBCTR
+```
+
+and on the C28x side, `Cla1Task_8366` now appears at the address `MVECT2` is loaded with, so
+the vector write points at something named.
+
+The handshake surface to work on is the message RAM, and **which block is which is settled
+by the two firmwares, not by a header's naming.** SPRUHM8K 3.11.1.5 gives the CLA write
+access only to the "CLA to CPU" block and the CPU write access only to "CPU to CLA", with
+both able to read both — so counting each side's reads and writes decides it:
+
+| | CLA writes | CLA reads | CPU writes | CPU reads | |
+|---|---|---|---|---|---|
+| `0x1480-0x14FF` | **36** | 14 | **0** | 35 | CLA1 to CPU |
+| `0x1500-0x157F` | **0** | 3 | **11** | 4 | CPU to CLA1 |
+
+A perfect mirror with no counterexample either way. So `0x1480` is the CLA's **output** (read
+it on the C28x side) and `0x1500` its **input** (written on the C28x side).
+
+Note the CLA reaches further than the datasheet peripheral list suggests. Asking which
+addresses the decoded CLA code referenced that nothing had mapped — rather than working down
+TI's frame table — turned up read-modify-write pairs on **`PIECTRL` and `PIEIER1`**
+(`0xCE0`/`0xCE2`), and a direct load from `0xF874`, which the C28x map calls GS RAM. So
+`SetupClaProgram` maps named frames where it can and then fills *every* remaining gap in the
+CLA's 16-bit reach, which is what takes dangling references to zero.
+
+Two things to know when reading it. The three instructions after `MBCNDD`/`MCCNDD`/`MRCNDD`
+are **delay slots that always execute** — Ghidra folds them into the branch and prefixes
+them with `_`. And the CLA's *data* banks are an `LSxMSEL` decision the exported program
+does not carry, so `SetupClaProgram` maps the whole `0x8000-0xBFFF` window as RAM to keep
+those references resolvable; on the image above that is where 281 of 456 references land.
 
 ## Step 6 — RetypeWideMemory
 
@@ -418,12 +724,19 @@ an array base, no instruction anywhere holds a node's address as an immediate,
 and nothing in the image references the records at all. The walker itself has
 zero incoming references: it is the tick ISR.
 
-**Where its vector would be:** on F28377D the PIE vector table is RAM at
-`0x000D00–0x000DFF` (128 vectors × 2 words), mapped by `SetupF28377D` as
-`PIE_VECT_REGS`. It is not in flash and is not missing from the dump — it is
-simply **uninitialized**, because the application writes it at runtime and
+**Where its vector would be:** on F28377D the PIE vector table is RAM starting at
+`0x000D00`, one vector every 2 words — vector ID *N* at `0x0D00 + 2N`, through
+ID 226 (SPRUHM8K Tables 3-3/3-4), which is why `SetupF28377D` maps `PIE_VECT` as
+`0x000D00–0x000EFF` rather than the 128-entry range a C28x with fewer
+peripherals would use. It is not in flash and is not missing from the dump — it
+is simply **uninitialized**, because the application writes it at runtime and
 Step 4c stops at the handoff into `main`. So the chain terminates in a vector
 table that has never been filled in.
+
+**Do not go looking for runtime `PieVectTable.X = &isr` stores** — probed on both
+F28377D images and there are none. Every reference into `0x0D00–0x0EFF` is either
+`InitPieVectTable` itself or a constant-propagation artifact on a stack store.
+The flash initializer is the whole story, which is what Step 4d already reads.
 
 **You do not have to emulate that far to recover it, though.** TI's
 `InitPieVectTable` copies a *const initializer* out of flash, and that

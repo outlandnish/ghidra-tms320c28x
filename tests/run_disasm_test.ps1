@@ -33,14 +33,27 @@
 #                   MSW -- the opposite order from the #16FHi immediates, and getting
 #                   it backwards silently moves RND32 onto NI. Assembled by asm2000
 #                   from TI mnemonics (`SETFLG RNDF32=1` -> e610 0200).
+#   cla_all      -- the WHOLE CLA instruction set, on the separate CLA language: every
+#                   one of the 79 encoded forms, all five addressing modes and the
+#                   delayed branches. Built from tests/cla_all.asm by
+#                   `cl2000 -v28 --cla_support=cla1` and dis2000, so every expected line
+#                   is TI's own decode of TI's own encoding. Three lines deliberately
+#                   diverge from dis2000's text and are marked in the expected file:
+#                   the branches, where we print the RESOLVED target instead of the raw
+#                   displacement, and MSETFLG, where we print the raw FLAG/VALUE masks
+#                   like the C28x spec's SETFLG rather than TI's FLAG=VALUE list.
 #
 # Usage:  pwsh -File tests\run_disasm_test.ps1 -Ghidra <ghidra-install-dir>
 #   (Ghidra defaults to $env:GHIDRA_INSTALL_DIR; Module defaults to this repo root.)
 param(
   [string]$Ghidra = $env:GHIDRA_INSTALL_DIR,
   [string]$Module = (Split-Path -Parent $PSScriptRoot),
-  [string[]]$Cases = @("addr_modes", "fpu_display", "fpu_parallel", "fpu_flags", "c2xlp")
+  [string[]]$Cases = @("addr_modes", "fpu_display", "fpu_parallel", "fpu_flags", "c2xlp",
+                       "cla_all")
 )
+# Cases not listed here run on the core C28x language.
+$ProcessorOf = @{ "cla_all" = "TMS320C28x:LE:32:cla" }
+$DefaultProcessor = "TMS320C28x:LE:32:default"
 # Load this worktree's local config (.c28x.env), then re-resolve -Ghidra from it
 # when it was not passed explicitly. Absent file => no-op (CI is unaffected).
 . "$PSScriptRoot\_env.ps1"
@@ -56,10 +69,14 @@ $tmp  = Get-C28xScratchRoot -Module $Module -Kind "test"
 $bld = "$tmp\build"; New-Item -ItemType Directory -Force -Path $bld | Out-Null
 Copy-Item "$lang\*" $bld -Force
 Push-Location $bld
-$null | & "$Ghidra\support\sleigh.bat" tms320c28x.slaspec
+# Every language in data/languages, not just the core: the CLA is its own .slaspec.
+foreach ($spec in (Get-ChildItem "$bld\*.slaspec")) {
+  $null | & "$Ghidra\support\sleigh.bat" $spec.Name
+  $sla = [IO.Path]::ChangeExtension($spec.FullName, ".sla")
+  if (-not (Test-Path $sla)) { Pop-Location; throw "SLEIGH compile failed for $($spec.Name)" }
+  Copy-Item $sla $lang -Force
+}
 Pop-Location
-if (-not (Test-Path "$bld\tms320c28x.sla")) { throw "SLEIGH compile failed (no .sla)" }
-Copy-Item "$bld\tms320c28x.sla" $lang -Force
 
 # 2. reinstall into Ghidra (Module.manifest too, so a fresh Ghidra recognizes the
 # directory as a module and discovers the language). Install-C28xModule prefers
@@ -83,8 +100,9 @@ foreach ($name in $Cases) {
   $prevEA = $ErrorActionPreference
   $ErrorActionPreference = "Continue"
   try {
+    $proc = if ($ProcessorOf.ContainsKey($name)) { $ProcessorOf[$name] } else { $DefaultProcessor }
     $raw = & "$Ghidra\support\analyzeHeadless.bat" "$ws\proj" "t_$name" `
-      -import "$ws\$name.bin" -processor "TMS320C28x:LE:32:default" `
+      -import "$ws\$name.bin" -processor $proc `
       -scriptPath "$ws\scripts" -postScript DumpDisasm.java -noanalysis -overwrite 2>&1
   } finally {
     $ErrorActionPreference = $prevEA
@@ -99,7 +117,10 @@ foreach ($name in $Cases) {
     ($_ -replace ".*DumpDisasm.java> ", "" -replace " \(GhidraScript\)\s*$","" `
         -replace "^[A-Za-z]+:0*", "0x" -replace "^0*([0-9a-fA-F])", "0x`$1").Trim()
   }
-  $exp = Get-Content "$Module\tests\$name.expected.txt"
+  # `#` lines are commentary (used to mark deliberate divergences from TI's rendering);
+  # drop them before indexing so expected/got stay aligned.
+  $exp = Get-Content "$Module\tests\$name.expected.txt" |
+           Where-Object { $_.Trim() -ne "" -and -not $_.TrimStart().StartsWith("#") }
   "--- GOT ---"; $got
   for ($i=0; $i -lt $exp.Count; $i++) {
     $e = $exp[$i].Trim(); $g = if ($i -lt $got.Count) { $got[$i].Trim() } else { "<missing>" }

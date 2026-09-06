@@ -32,6 +32,14 @@
 #
 # Sub-table definitions (`name: ... is ...`) are not top-level and are exempt.
 #
+# SCOPE: PER LANGUAGE, NOT PER DIRECTORY. The whole problem starts with a `:^instruction`
+# wrapper, so a language that has none has nothing to partition and is skipped -- the CLA
+# (tms320c28x_cla.slaspec) has no repeat instruction and no rpt_phase context variable at
+# all, so demanding the bit on its constructors would be demanding a field that does not
+# exist. Each .slaspec's @include tree is resolved and gated on whether it contains a
+# wrapper, which keeps this correct automatically when another language is added. A .sinc
+# that no .slaspec includes is an error, not a silent skip.
+#
 # Usage:  pwsh -File tests\run_phase_check.ps1 [-Module <module-root>]
 param(
   [string]$Module = (Split-Path -Parent $PSScriptRoot)
@@ -43,10 +51,50 @@ if (-not (Test-Path $lang)) { throw "no such directory: $lang" }
 $ok = 0; $wrappers = 0; $repeated = 0
 $bad = New-Object System.Collections.Generic.List[string]
 
+# Resolve one .slaspec's transitive @include tree (the spec itself first).
+function Get-SpecTree {
+  param([string]$Spec, [string]$LangDir)
+  $tree = [System.Collections.Generic.List[string]]::new()
+  $queue = [System.Collections.Generic.Queue[string]]::new()
+  $tree.Add($Spec); $queue.Enqueue($Spec)
+  while ($queue.Count -gt 0) {
+    foreach ($line in (Get-Content $queue.Dequeue())) {
+      if ($line -notmatch '^\s*@include\s+"([^"]+)"') { continue }
+      $p = Join-Path $LangDir $Matches[1]
+      if ((Test-Path $p) -and -not $tree.Contains($p)) { $tree.Add($p); $queue.Enqueue($p) }
+    }
+  }
+  return $tree
+}
+
 # NB: filter on the extension rather than `-Include`, which silently matches NOTHING
 # unless the -Path ends in a wildcard -- a green run over zero files looks like a pass.
-$files = Get-ChildItem -Path $lang -File | Where-Object { $_.Extension -in ".sinc", ".slaspec" }
-if ($files.Count -eq 0) { throw "no .sinc/.slaspec found under $lang -- refusing to report a vacuous pass" }
+$allSinc = Get-ChildItem -Path $lang -File | Where-Object { $_.Extension -eq ".sinc" }
+$specs = Get-ChildItem -Path $lang -File | Where-Object { $_.Extension -eq ".slaspec" }
+if ($specs.Count -eq 0) { throw "no .slaspec found under $lang -- refusing to report a vacuous pass" }
+
+$checkPaths = [System.Collections.Generic.List[string]]::new()
+$seenPaths = [System.Collections.Generic.List[string]]::new()
+foreach ($spec in $specs) {
+  $tree = Get-SpecTree -Spec $spec.FullName -LangDir $lang
+  foreach ($p in $tree) { if (-not $seenPaths.Contains($p)) { $seenPaths.Add($p) } }
+  $hasWrapper = $false
+  foreach ($p in $tree) { if (Select-String -Path $p -Pattern '^:\^' -Quiet) { $hasWrapper = $true; break } }
+  if ($hasWrapper) {
+    foreach ($p in $tree) { if (-not $checkPaths.Contains($p)) { $checkPaths.Add($p) } }
+  } else {
+    Write-Host "skipping $($spec.Name): no :^instruction wrapper, so no phase to partition"
+  }
+}
+
+# Anything under data/languages that no .slaspec pulls in would escape the check entirely.
+foreach ($f in $allSinc) {
+  if (-not $seenPaths.Contains($f.FullName)) {
+    throw "$($f.Name) is included by no .slaspec -- it would escape this check"
+  }
+}
+if ($checkPaths.Count -eq 0) { throw "no language uses :^instruction wrappers -- refusing to report a vacuous pass" }
+$files = $checkPaths | ForEach-Object { Get-Item $_ }
 
 foreach ($file in $files) {
   $lines = Get-Content $file.FullName

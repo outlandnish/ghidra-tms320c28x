@@ -114,11 +114,20 @@ jobs:
             grep "^ERROR" /tmp/sleigh.log | head -20
             exit 1
           fi
-          if [ ! -f languages/tms320c28x.sla ]; then
-            echo "::error::No .sla produced."
-            exit 1
-          fi
-          echo "Built $(stat -c%s languages/tms320c28x.sla) bytes"
+          # Assert one .sla per .slaspec, not just the core one: `-a` compiles every spec in
+          # the directory, so a second language (the CLA) that silently produced nothing
+          # would otherwise ship as a missing file rather than a failed build.
+          missing=0
+          for spec in languages/*.slaspec; do
+            sla="${spec%.slaspec}.sla"
+            if [ ! -f "$sla" ]; then
+              echo "::error::No .sla produced for $(basename "$spec")."
+              missing=1
+            else
+              echo "Built $(basename "$sla"): $(stat -c%s "$sla") bytes"
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
           echo "Warnings: $(grep -c '^WARN' /tmp/sleigh.log || true)"
 
       # The `sleigh` compile above never reads the .cspec/.pspec -- those are parsed only
@@ -186,7 +195,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: tms320c28x-sla
-          path: data/languages/tms320c28x.sla
+          path: data/languages/*.sla       # every language, not just the core one
           if-no-files-found: error
 
       # The zip is built on EVERY push and PR, not just when releasing. Gating it to
@@ -266,4 +275,4 @@ jobs:
             --title "$TAG" \
             --generate-notes \
             dist/*.zip \
-            sla/tms320c28x.sla
+            sla/*.sla

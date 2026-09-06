@@ -34,12 +34,60 @@
 #
 # Sub-table definitions (`name: ... is ...`) are not top-level and are exempt.
 #
+# SCOPE: PER LANGUAGE, NOT PER DIRECTORY. The whole problem starts with a `:^instruction`
+# wrapper, so a language that has none has nothing to partition and is skipped -- the CLA
+# (tms320c28x_cla.slaspec) has no repeat instruction and no rpt_phase context variable at
+# all, so demanding the bit on its constructors would be demanding a field that does not
+# exist. Each .slaspec's @include tree is resolved and gated on whether it contains a
+# wrapper, which keeps this correct automatically when another language is added. A .sinc
+# that no .slaspec includes is an error, not a silent skip.
+#
 # Usage:  bash tests/run_phase_check.sh [module-root]
 set -euo pipefail
 
 module="${1:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 lang="$module/data/languages"
 [ -d "$lang" ] || { echo "error: no such directory: $lang" >&2; exit 2; }
+
+# Resolve one .slaspec's transitive @include tree (the spec itself first).
+spec_tree() {
+    local spec="$1" cur inc p
+    local -a tree=("$spec") queue=("$spec")
+    while [ ${#queue[@]} -gt 0 ]; do
+        cur="${queue[0]}"; queue=("${queue[@]:1}")
+        while read -r inc; do
+            [ -n "$inc" ] || continue
+            p="$lang/$inc"
+            [ -f "$p" ] || continue
+            case " ${tree[*]} " in *" $p "*) continue ;; esac
+            tree+=("$p"); queue+=("$p")
+        done < <(sed -n 's/^[[:space:]]*@include[[:space:]]*"\([^"]*\)".*/\1/p' "$cur")
+    done
+    printf '%s\n' "${tree[@]}"
+}
+
+check_files=()
+seen_files=()
+for spec in "$lang"/*.slaspec; do
+    mapfile -t tree < <(spec_tree "$spec")
+    seen_files+=("${tree[@]}")
+    if grep -lqE '^:\^' "${tree[@]}" >/dev/null 2>&1; then
+        check_files+=("${tree[@]}")
+    else
+        echo "skipping $(basename "$spec"): no :^instruction wrapper, so no phase to partition"
+    fi
+done
+
+# Anything under data/languages that no .slaspec pulls in would escape the check entirely.
+for f in "$lang"/*.sinc; do
+    case " ${seen_files[*]} " in
+        *" $f "*) ;;
+        *) echo "error: $(basename "$f") is included by no .slaspec -- it would escape this check" >&2
+           exit 2 ;;
+    esac
+done
+
+[ ${#check_files[@]} -gt 0 ] || { echo "error: no language uses :^instruction wrappers -- refusing to report a vacuous pass" >&2; exit 2; }
 
 awk '
 function flush(   head, p) {
@@ -102,7 +150,7 @@ END {
     printf("violations                              : %d\n", bad)
     if (bad > 0) exit 1
 }
-' "$lang"/*.sinc "$lang"/*.slaspec || {
+' "${check_files[@]}" || {
     # Keep the verdict on stdout with the detail lines above it -- interleaving the two
     # across stdout/stderr makes CI logs read out of order.
     echo "FAIL: phase-bit invariant violated (see above)."
