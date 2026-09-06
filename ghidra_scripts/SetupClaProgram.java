@@ -56,10 +56,18 @@ public class SetupClaProgram extends GhidraScript {
     // {startWord, endWordInclusive, name}.
     private static final Object[][] CLA_VISIBLE = {
         {0x000B00L, 0x000B7FL, "ADC_RESULTS"},        // ADCA/B/C/D result frames, 0x20 each
+        // The CLA reads AND WRITES PIECTRL/PIEIER1 in this firmware -- two read-modify-write
+        // pairs at 0xCE0 and 0xCE2. Found by asking which addresses the decoded CLA code
+        // referenced that nothing had mapped, not by working down TI's frame list.
+        {0x000CE0L, 0x000CF9L, "PIE_CTRL"},
         {0x001400L, 0x00147FL, "CLA1_REGS"},
-        // Direction confirmed against the firmware, not just the header: the CLA writes
-        // 0x1480 36 times and 0x1500 never, and SPRUHM8K 3.11.1.5 gives it write access
-        // only to the "CLA to CPU" block.
+        // WHICH MESSAGE RAM IS WHICH, settled from both programs rather than from the
+        // header's naming convention. SPRUHM8K 3.11.1.5: the CLA may write only the "CLA to
+        // CPU" block, the CPU only the "CPU to CLA" block, and both may read both. Counted:
+        //          CLA writes  CLA reads   CPU writes  CPU reads
+        //   0x1480     36          14          0           35
+        //   0x1500      0           3         11            4
+        // A perfect mirror, and no counterexample either way.
         {0x001480L, 0x0014FFL, "CLA1_TO_CPU_MSGRAM"},
         {0x001500L, 0x00157FL, "CPU_TO_CLA1_MSGRAM"},
         {0x004000L, 0x004BFFL, "EPWM"},               // EPWM1-12, 0x100 each
@@ -126,15 +134,18 @@ public class SetupClaProgram extends GhidraScript {
         if (prog == null) { println("no initialized block -- import the CLA .bin first"); return; }
         long lo = w(prog.getStart()), hi = w(prog.getEnd());
 
-        // The CLA's DATA lives in whichever LSx/Dx banks LSxMSEL gave it, and that register is
-        // configured from a table on the C28x side which the exported program does not carry.
-        // So map the whole 0x8000-0xBFFF window that the program itself does not cover, as
-        // uninitialized RAM: every data reference then lands somewhere nameable instead of
-        // dangling. (Measured on an F28377D CPU2 CLA: 287 of 456 references pointed here.)
-        for (long a = 0x8000L; a <= 0xBFFFL; ) {
+        // Catch-all for the rest of the CLA's reach. Its DATA lives in whichever LSx/Dx banks
+        // LSxMSEL gave it, and that register is configured from a table on the C28x side the
+        // exported program does not carry -- and a firmware can reach further still (this one
+        // loads from 0xF874, which the C28x map calls GS RAM). Rather than chase each region,
+        // fill every gap in the CLA's whole 16-bit address space, so NO data reference can
+        // dangle whatever the image does. The named frames above still take precedence, and
+        // SyncClaLabels brings the precise names over from the C28x program.
+        // (Measured on an F28377D CPU2 CLA: 287 of 456 references land in this fill.)
+        for (long a = 0x0000L; a <= 0xFFFFL; ) {
             if (mem.getBlock(wa(a)) != null) { a++; continue; }
             long end = a;
-            while (end + 1 <= 0xBFFFL && mem.getBlock(wa(end + 1)) == null) end++;
+            while (end + 1 <= 0xFFFFL && mem.getBlock(wa(end + 1)) == null) end++;
             MemoryBlock b = mem.createUninitializedBlock(
                 String.format("CLA_DATA_%04x", a), wa(a), (end - a + 1) * 2, false);
             b.setRead(true); b.setWrite(true);

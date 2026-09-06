@@ -8,14 +8,18 @@
 // 0x1486 in the C28x program. So a name you work out on one side is already meaningful on
 // the other; it just does not travel. This script carries it across.
 //
-// THE SHARED SURFACE, measured on the 2022 DIR CPU2 image:
-//   0x1480-0x14FF  CLA1 to CPU MSGRAM   CLA writes 36 sites, reads 14 -- the CLA's OUTPUT
-//   0x1500-0x157F  CPU to CLA1 MSGRAM   CLA reads 3, writes 0        -- the CLA's INPUT
-//   LS/Dx window   CLA data             281 references
-//   0xB00 / 0xB20  ADCARESULT/ADCBRESULT, ePWM
-// The zero is the useful part: SPRUHM8K 3.11.1.5 gives the CLA write access to the "CLA to
-// CPU" block and read-only access to "CPU to CLA", and the firmware matches exactly, which
-// is what pins down which block is which.
+// THE SHARED SURFACE, measured on the 2022 DIR pair. SPRUHM8K 3.11.1.5 gives the CLA write
+// access only to the "CLA to CPU" block and the CPU write access only to "CPU to CLA", with
+// both able to read both -- so counting reads and writes on each side says which is which,
+// with no reliance on a header's naming:
+//
+//                     CLA writes  CLA reads   CPU writes  CPU reads
+//   0x1480-0x14FF         36          14           0          35     -> CLA1 to CPU
+//   0x1500-0x157F          0           3          11           4     -> CPU to CLA1
+//
+// A perfect mirror, and no counterexample either way. Beyond the message RAMs the CLA also
+// touches the LS/Dx data window (281 references), ADCA/ADCB results, ePWM, and -- found by
+// asking what the decoded CLA code referenced that nothing had mapped -- PIECTRL/PIEIER1.
 //
 // WHAT IT COPIES, and what it refuses to. Only symbols and data types someone actually
 // applied -- a symbol whose SourceType is DEFAULT (`DAT_00001486`) carries no information

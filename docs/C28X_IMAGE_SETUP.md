@@ -583,7 +583,7 @@ It carries applied names and data types across, ranked by `SourceType`
 (`DEFAULT < ANALYSIS < IMPORTED < USER_DEFINED`): `SetupF28377D`'s precise register names
 replace `SetupClaProgram`'s coarse region labels, a name you typed by hand outranks
 everything, and an equal-ranked disagreement is *reported*, not resolved. Copies keep the
-source's `SourceType`, so syncing back is a no-op. On the DIR pair: **1482 labels and 125
+source's `SourceType`, so syncing back is a no-op. On the DIR pair: **1821 labels and 196
 data types carried, 0 conflicts**, and a second run copies nothing.
 
 What that buys, concretely — before and after, on the CLA side:
@@ -596,11 +596,25 @@ What that buys, concretely — before and after, on the CLA side:
 and on the C28x side, `Cla1Task_8366` now appears at the address `MVECT2` is loaded with, so
 the vector write points at something named.
 
-The handshake surface to work on is the message RAM. **The direction is settled by the
-firmware, not just the header**: the CLA writes `0x1480` 36 times and `0x1500` never, and
-SPRUHM8K 3.11.1.5 gives the CLA write access only to the "CLA to CPU" block. So `0x1480` is
-the CLA's **output** (read it on the C28x side) and `0x1500` its **input** (written on the
-C28x side).
+The handshake surface to work on is the message RAM, and **which block is which is settled
+by the two firmwares, not by a header's naming.** SPRUHM8K 3.11.1.5 gives the CLA write
+access only to the "CLA to CPU" block and the CPU write access only to "CPU to CLA", with
+both able to read both — so counting each side's reads and writes decides it:
+
+| | CLA writes | CLA reads | CPU writes | CPU reads | |
+|---|---|---|---|---|---|
+| `0x1480-0x14FF` | **36** | 14 | **0** | 35 | CLA1 to CPU |
+| `0x1500-0x157F` | **0** | 3 | **11** | 4 | CPU to CLA1 |
+
+A perfect mirror with no counterexample either way. So `0x1480` is the CLA's **output** (read
+it on the C28x side) and `0x1500` its **input** (written on the C28x side).
+
+Note the CLA reaches further than the datasheet peripheral list suggests. Asking which
+addresses the decoded CLA code referenced that nothing had mapped — rather than working down
+TI's frame table — turned up read-modify-write pairs on **`PIECTRL` and `PIEIER1`**
+(`0xCE0`/`0xCE2`), and a direct load from `0xF874`, which the C28x map calls GS RAM. So
+`SetupClaProgram` maps named frames where it can and then fills *every* remaining gap in the
+CLA's 16-bit reach, which is what takes dangling references to zero.
 
 Two things to know when reading it. The three instructions after `MBCNDD`/`MCCNDD`/`MRCNDD`
 are **delay slots that always execute** — Ghidra folds them into the branch and prefixes
