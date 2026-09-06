@@ -46,18 +46,31 @@ public class SetupClaProgram extends GhidraScript {
     static final long MNOP_LSW = 0x0000L, MNOP_MSW = 0x7FA0L;
     static final int MSTOP_MSW = 0x7F80, MRCNDD_MSW = 0x79A0;
 
-    // Everything in the low 64K the CLA is permitted to read or write (SPRUHM8K 6.3, and
-    // SPRS880P Table 7-5 for the frame bounds). {startWord, endWordInclusive, name}.
+    // Frames in the low 64K the CLA can reach: the two message RAMs, its own control
+    // registers, and the peripherals on the secondary VBUS32 it owns by default
+    // (SPRUHM8K 6.2.3 -- CpuSysRegs.SECMSEL[VBUS32_x] hands the bus to the CLA at reset).
+    // Bounds are TI's own frame origins and lengths from F2837xD_Headers_nonBIOS_cpuN.cmd,
+    // coalesced per peripheral family. Deliberately COARSE: these exist so a data reference
+    // lands somewhere named at all. The precise per-register names come from syncing with
+    // the C28x program, which has SetupF28377D's full table -- see SyncClaLabels.java.
+    // {startWord, endWordInclusive, name}.
     private static final Object[][] CLA_VISIBLE = {
-        {0x000B00L, 0x000B1FL, "ADCARESULT"}, {0x000B20L, 0x000B3FL, "ADCBRESULT"},
-        {0x000B40L, 0x000B5FL, "ADCCRESULT"}, {0x000B60L, 0x000B7FL, "ADCDRESULT"},
+        {0x000B00L, 0x000B7FL, "ADC_RESULTS"},        // ADCA/B/C/D result frames, 0x20 each
         {0x001400L, 0x00147FL, "CLA1_REGS"},
+        // Direction confirmed against the firmware, not just the header: the CLA writes
+        // 0x1480 36 times and 0x1500 never, and SPRUHM8K 3.11.1.5 gives it write access
+        // only to the "CLA to CPU" block.
         {0x001480L, 0x0014FFL, "CLA1_TO_CPU_MSGRAM"},
         {0x001500L, 0x00157FL, "CPU_TO_CLA1_MSGRAM"},
-        {0x004000L, 0x0043FFL, "EPWM"},      {0x005000L, 0x0051FFL, "ECAP"},
-        {0x005100L, 0x00517FL, "EQEP"},      {0x005C00L, 0x005C7FL, "CMPSS"},
-        {0x005C00L, 0x005C7FL, "DAC"},       {0x005E00L, 0x005EFFL, "SDFM"},
-        {0x007400L, 0x00743FL, "XBAR"},
+        {0x004000L, 0x004BFFL, "EPWM"},               // EPWM1-12, 0x100 each
+        {0x005000L, 0x0050BFL, "ECAP"},               // ECAP1-6,  0x20 each
+        {0x005100L, 0x0051A1L, "EQEP"},               // EQEP1-3 at 0x5100/0x5140/0x5180
+        {0x005C00L, 0x005C27L, "DAC"},                // DACA/B/C at 0x5C00/0x5C10/0x5C20
+        {0x005C80L, 0x005D7FL, "CMPSS"},              // CMPSS1-8, 0x20 each
+        {0x005E00L, 0x005EFFL, "SDFM"},               // SDFM1-2,  0x80 each
+        {0x007400L, 0x0075FFL, "ADC_CONFIG"},         // ADCA-D config, 0x80 each
+        {0x007900L, 0x007945L, "XBAR_IN"},            // INPUTXBAR / XBAR / SYNCSOC
+        {0x007A00L, 0x007ABFL, "XBAR_OUT"},           // EPWMXBAR / CLBXBAR / OUTPUTXBAR
     };
 
     void promoteDashDArgs() {
@@ -101,7 +114,11 @@ public class SetupClaProgram extends GhidraScript {
             if (mem.getBlock(wa(lo)) != null) continue;
             MemoryBlock b = mem.createUninitializedBlock(name, wa(lo), (hi - lo + 1) * 2, false);
             b.setRead(true); b.setWrite(true); b.setVolatile(true);
-            createLabel(wa(lo), name, true, SourceType.USER_DEFINED);
+            // ANALYSIS, not USER_DEFINED: these are coarse region labels standing in until a
+            // better name arrives. SyncClaLabels ranks USER_DEFINED above ANALYSIS, so
+            // SetupF28377D's precise register names (ADCA_RESULT_ADCRESULT0) replace this
+            // block-start `ADCARESULT` on the first sync instead of colliding with it.
+            createLabel(wa(lo), name, true, SourceType.ANALYSIS);
             mapped++;
         }
         MemoryBlock prog = null;

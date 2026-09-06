@@ -570,6 +570,38 @@ as what it is:
 0839c  MCCNDD     FUN_00008c2e,UNCF
 ```
 
+### Making the two programs one analysis
+
+Ghidra has no cross-program references, but both programs address the **same device map** —
+`0x1486` in the CLA program is `0x1486` in the C28x program. Put them in one project and:
+
+```
+SyncClaLabels.java   -Dc28x.sync.other=<the other program>   # both directions by default
+```
+
+It carries applied names and data types across, ranked by `SourceType`
+(`DEFAULT < ANALYSIS < IMPORTED < USER_DEFINED`): `SetupF28377D`'s precise register names
+replace `SetupClaProgram`'s coarse region labels, a name you typed by hand outranks
+everything, and an equal-ranked disagreement is *reported*, not resolved. Copies keep the
+source's `SourceType`, so syncing back is a no-op. On the DIR pair: **1482 labels and 125
+data types carried, 0 conflicts**, and a second run copies nothing.
+
+What that buys, concretely — before and after, on the CLA side:
+
+```
+08380  MMOVZ16  MR2,DAT_00000b20          ->  MMOVZ16  MR2,ADCB_RESULT_ADCRESULT0
+08366  MMOVZ16  MR0,DAT_00004104          ->  MMOVZ16  MR0,EPWM2_TBCTR
+```
+
+and on the C28x side, `Cla1Task_8366` now appears at the address `MVECT2` is loaded with, so
+the vector write points at something named.
+
+The handshake surface to work on is the message RAM. **The direction is settled by the
+firmware, not just the header**: the CLA writes `0x1480` 36 times and `0x1500` never, and
+SPRUHM8K 3.11.1.5 gives the CLA write access only to the "CLA to CPU" block. So `0x1480` is
+the CLA's **output** (read it on the C28x side) and `0x1500` its **input** (written on the
+C28x side).
+
 Two things to know when reading it. The three instructions after `MBCNDD`/`MCCNDD`/`MRCNDD`
 are **delay slots that always execute** — Ghidra folds them into the branch and prefixes
 them with `_`. And the CLA's *data* banks are an `LSxMSEL` decision the exported program
