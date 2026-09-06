@@ -16,6 +16,7 @@ Every step is a script in the **TMS320C28x** Script-Manager category.
 | 4c | `EmulateStartup.java` | The general alternative to 4/4b: **run the image's own `_c_int00`** and keep the RAM it writes. Covers whatever mechanism the image uses — including the inlined `.cinit` walk that neither materializer implements. Dry run by default. |
 | 4d | `MarkComponentRegistry.java` | Turns the materialized RAM dispatch table into actual call-graph **references**. 4/4b/4c restore the bytes; without this the graph never sees the indirect edges and every handler still looks dead. Finds the table structurally, reads each dispatcher's descriptor field offset out of the code, creates functions at proven call targets, and recovers a dispatcher's own function when nothing calls it either. Sites with no discovered table behind them go to **base resolution** and the **strided-table** walk — see §Step 4d. Idempotent; `-Dc28x.reg.dryRun` to preview. |
 | 5 | `FinalizeRamfuncs.java` | Post-analysis cleanup: rebuild bodies, clear stale flow bookmarks, repair conflicts. Run it **after** analysis has settled. |
+| 5b | `MergeSplitFunctions.java` | Reunite functions step 2 cut in two at a mid-function register push it mistook for a prologue. The far half keeps the `LRETR` and inherits no callers, so it and everything it calls read as dead. See §Step 5b. Idempotent; `-Dc28x.split.dryRun` to preview. |
 | 8 | `ReachabilityReport.java` | What is actually reachable from `_c_int00`, and *why* the rest is not. Run last — it is only as good as the reference graph. |
 | 6 | `RetypeWideMemory.java` | Retype 32/64-bit memory operands to kill `CONCAT22`/`CONCAT44` in the decompiler. |
 | 7 | `SweepResidualMarks.java` + verify | Classify leftover `Bad Instruction` marks, delete only the provably cosmetic ones, and confirm against a known-good baseline. |
@@ -453,6 +454,66 @@ have run first (which a script on the Swing/EDT thread cannot force):
    failure). Because pass 2's fall-through re-disassembly can spawn new
    conflicts, **passes 2 and 3 loop until neither changes anything**, then
    stale flow bookmarks are re-cleared.
+
+## Step 5b — functions the seeder cut in two
+
+`SeedFunctions` signal B seeds on a prologue run: consecutive callee-saved
+pushes (`MOVL *SP++,XARn`, `MOV32 *SP++,RnH`). TI's compiler emits that exact
+sequence **mid-function** whenever it needs another saved register partway
+through a body, and at seed time nothing can tell the two apart — no code is
+decoded yet, so there is no previous instruction to ask. The seed lands inside a
+live function and splits it. The near half keeps the name and the callers; the
+far half keeps the `LRETR` and inherits nothing, because a fall-through is not a
+reference. It reads as dead, and so does everything only it calls.
+
+The worked example is the DIR component framework's own registry walk:
+
+```
+ade1c  MOVL *SP++,XAR1        <- FUN_000ade1c: prologue, has the callers
+ade1d  MOVL XAR4,#0x14480
+ade1f  MOVW DP,#0x511
+ade21  MOVL *SP++,XAR2        <- FUN_000ade21: seeded here, nothing reaches it
+ade22  MOVL *SP++,XAR3
+...
+ade30  LCR *XAR7              <- 69 recovered dispatch edges hang off this
+...
+ade59  MOVL XAR1,*--SP        <- pops the XAR1 that ade1c pushed
+ade5a  LRETR
+```
+
+One function, one prologue, one epilogue, cut at `ade21`. The 69 edges step 4d
+recovered from that `LCR *XAR7` were all hanging off an entry point that nothing
+could reach — 156 functions stranded behind a boundary error.
+
+**The rule.** Compiled code enters a function by calling it, so an entry merges
+back only when all four hold:
+
+1. nothing references it — call, jump or data;
+2. its address appears nowhere in the image as a 32-bit value, so no table can
+   hold a pointer to it;
+3. it sits exactly on the fall-through of the instruction before it;
+4. the function that instruction belongs to has **no return instruction
+   anywhere**, so it cannot be a complete function — its epilogue is on the
+   other side of the cut.
+
+(4) is what makes it conclusive rather than plausible, and it costs almost
+nothing: it held on 105 of 107 candidate sites on a CPU2 image and 89 of 89 on
+CPU1. The two exceptions are refused and reported, not repaired. A renamed
+function is never merged away, so a name you applied to the far half survives and
+a re-run changes nothing.
+
+**Measured.**
+
+| image | reachable before | after | fns with no return | non-contiguous bodies |
+|---|---|---|---|---|
+| CPU2 (DIR), 105 merges | 1368/2194 = 62.4% | 1654/2089 = **79.2%** | 217 → 112 | 30 → 24 |
+| CPU1 (PMR), 89 merges | 663/916 = 72.4% | 696/827 = **84.2%** | 122 → 33 | 14 → 12 |
+
+The no-return column is the check that matters: every merge repaired a function
+that provably could not have been whole, and no body became fragmented.
+
+After this, the unreachable tail is genuinely flat — the largest remaining
+orphan subtree on CPU2 is 38 functions and on CPU1 is 10, against 156 before.
 
 ## Step 6 — RetypeWideMemory
 
