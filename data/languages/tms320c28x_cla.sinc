@@ -1,0 +1,450 @@
+# SPDX-License-Identifier: Apache-2.0
+# Copyright 2026 Nishanth Samala
+#
+# CLA Type-1 instruction set (SPRUHM8K 6.7). 79 encoded forms, all 32 bits wide.
+#
+# Every opcode below was verified against TI's own toolchain: tests/cla_all.asm is
+# assembled with `cl2000 -v28 --cla_support=cla1` and disassembled with dis2000, and
+# tests/cla_all.expected.txt is that output. dis2000 decodes CLA object code natively,
+# so the oracle the C28x core spec uses covers this spec too -- see
+# tests/run_disasm_test.ps1 case `cla_all`.
+#
+# The TRM's opcode table has one transcription error: it prints MADD32 as
+# `0111 1110 1100 0000`, which collides with MF32TOUI16R. The 0x7Cx0 family is regular
+# (MMPYF32 MADDF32 MSUBF32 MAND32 MOR32 MXOR32 _ MSUB32) and TI's assembler emits 0x7CC0
+# for MADD32, filling the gap. The assembler wins.
+
+define pcodeop claTaskEnd;        # MSTOP -- the task ends and the CLA idles
+define pcodeop claDebugStop;      # MDEBUGSTOP -- halt for the debugger, then continue
+
+# =============================================================================
+# Flag helpers. ZF/NF are set from the RESULT of most operations (SPRUHM8K 6.8.2.20).
+# LUF/LVF are latched underflow/overflow, which SLEIGH cannot compute from the p-code
+# float ops -- they are written only by MSETFLG and by MMOV32 MSTF,mem32, and read by
+# the LU/LV conditions, which is enough for the conditions to be tracked honestly.
+# =============================================================================
+macro cla_znf(v) {              # flags from a floating-point result
+    ZF = (v f== 0);
+    NF = (v f< 0);
+}
+macro cla_zni(v) {              # flags from an integer result
+    ZF = (v == 0);
+    NF = (v s< 0);
+}
+
+# MSETFLG's 8-bit FLAG mask -> flag registers. Bit positions determined from TI's
+# assembler (`MSETFLG RNDF32=1` -> 8080, `TF=1` -> 4040, `ZF=1` -> 0808, `NF=1` -> 0404,
+# `LUF=1` -> 0202, `LVF=1` -> 0101); the TRM's own bit diagram disagrees and is wrong.
+macro cla_setflg(fl, va) {
+    if ((fl & 0x01) == 0) goto <s1>;  LVF     = ((va & 0x01) != 0);
+  <s1>
+    if ((fl & 0x02) == 0) goto <s2>;  LUF     = ((va & 0x02) != 0);
+  <s2>
+    if ((fl & 0x04) == 0) goto <s3>;  NF      = ((va & 0x04) != 0);
+  <s3>
+    if ((fl & 0x08) == 0) goto <s4>;  ZF      = ((va & 0x08) != 0);
+  <s4>
+    if ((fl & 0x40) == 0) goto <s5>;  TF      = ((va & 0x40) != 0);
+  <s5>
+    if ((fl & 0x80) == 0) goto <s6>;  RNDF32  = ((va & 0x80) != 0);
+  <s6>
+}
+
+# MSTF <-> the unpacked flag registers, materialized only where MMOV32 moves the packed
+# word. Layout per Table 6-43: [0]=LVF [1]=LUF [2]=NF [3]=ZF [6]=TF [9]=RNDF32
+# [11]=MEALLOW [27:12]=_RPC.
+macro cla_packmstf(dst) {
+    dst = zext(LVF);
+    dst = dst | (zext(LUF) << 1);
+    dst = dst | (zext(NF) << 2);
+    dst = dst | (zext(ZF) << 3);
+    dst = dst | (zext(TF) << 6);
+    dst = dst | (zext(RNDF32) << 9);
+    dst = dst | (zext(MEALLOWF) << 11);
+    dst = dst | ((MRPC & 0xFFFF) << 12);
+}
+macro cla_unpackmstf(src) {
+    LVF      = ((src & 0x001) != 0);
+    LUF      = ((src & 0x002) != 0);
+    NF       = ((src & 0x004) != 0);
+    ZF       = ((src & 0x008) != 0);
+    TF       = ((src & 0x040) != 0);
+    RNDF32   = ((src & 0x200) != 0);
+    MEALLOWF = ((src & 0x800) != 0);
+    MRPC     = (src >> 12) & 0xFFFF;
+}
+
+# =============================================================================
+# Condition field (Table 6-10). Four copies because SLEIGH binds a sub-table to one
+# token field and CNDF appears at four different bit positions.
+#
+# Each exports TWO bits: bit0 = the condition holds, bit1 = this encoding also updates
+# ZF/NF. Only UNCF sets bit1 -- every other code, UNC included, leaves the flags alone
+# (Table 6-10 note 2), which is why a conditional MMOV32 chain does not clobber the
+# compare that set it up.
+# =============================================================================
+cndfM: "NEQ"   is m_cndf=0b0000 { local b:1 = (ZF == 0);                 export b; }
+cndfM: "EQ"    is m_cndf=0b0001 { local b:1 = (ZF == 1);                 export b; }
+cndfM: "GT"    is m_cndf=0b0010 { local b:1 = (ZF == 0) && (NF == 0);    export b; }
+cndfM: "GEQ"   is m_cndf=0b0011 { local b:1 = (NF == 0);                 export b; }
+cndfM: "LT"    is m_cndf=0b0100 { local b:1 = (NF == 1);                 export b; }
+cndfM: "LEQ"   is m_cndf=0b0101 { local b:1 = (ZF == 1) || (NF == 1);    export b; }
+cndfM: "TF"    is m_cndf=0b1010 { local b:1 = (TF == 1);                 export b; }
+cndfM: "NTF"   is m_cndf=0b1011 { local b:1 = (TF == 0);                 export b; }
+cndfM: "LU"    is m_cndf=0b1100 { local b:1 = (LUF == 1);                export b; }
+cndfM: "LV"    is m_cndf=0b1101 { local b:1 = (LVF == 1);                export b; }
+cndfM: "UNC"   is m_cndf=0b1110 { local b:1 = 1;                         export b; }
+cndfM: "UNCF"  is m_cndf=0b1111 { local b:1 = 3;                         export b; }
+
+cndfL: "NEQ"   is l_cndf=0b0000 { local b:1 = (ZF == 0);                 export b; }
+cndfL: "EQ"    is l_cndf=0b0001 { local b:1 = (ZF == 1);                 export b; }
+cndfL: "GT"    is l_cndf=0b0010 { local b:1 = (ZF == 0) && (NF == 0);    export b; }
+cndfL: "GEQ"   is l_cndf=0b0011 { local b:1 = (NF == 0);                 export b; }
+cndfL: "LT"    is l_cndf=0b0100 { local b:1 = (NF == 1);                 export b; }
+cndfL: "LEQ"   is l_cndf=0b0101 { local b:1 = (ZF == 1) || (NF == 1);    export b; }
+cndfL: "TF"    is l_cndf=0b1010 { local b:1 = (TF == 1);                 export b; }
+cndfL: "NTF"   is l_cndf=0b1011 { local b:1 = (TF == 0);                 export b; }
+cndfL: "LU"    is l_cndf=0b1100 { local b:1 = (LUF == 1);                export b; }
+cndfL: "LV"    is l_cndf=0b1101 { local b:1 = (LVF == 1);                export b; }
+cndfL: "UNC"   is l_cndf=0b1110 { local b:1 = 1;                         export b; }
+cndfL: "UNCF"  is l_cndf=0b1111 { local b:1 = 3;                         export b; }
+
+cndfB: "NEQ"   is b_cndf=0b0000 { local b:1 = (ZF == 0);                 export b; }
+cndfB: "EQ"    is b_cndf=0b0001 { local b:1 = (ZF == 1);                 export b; }
+cndfB: "GT"    is b_cndf=0b0010 { local b:1 = (ZF == 0) && (NF == 0);    export b; }
+cndfB: "GEQ"   is b_cndf=0b0011 { local b:1 = (NF == 0);                 export b; }
+cndfB: "LT"    is b_cndf=0b0100 { local b:1 = (NF == 1);                 export b; }
+cndfB: "LEQ"   is b_cndf=0b0101 { local b:1 = (ZF == 1) || (NF == 1);    export b; }
+cndfB: "TF"    is b_cndf=0b1010 { local b:1 = (TF == 1);                 export b; }
+cndfB: "NTF"   is b_cndf=0b1011 { local b:1 = (TF == 0);                 export b; }
+cndfB: "LU"    is b_cndf=0b1100 { local b:1 = (LUF == 1);                export b; }
+cndfB: "LV"    is b_cndf=0b1101 { local b:1 = (LVF == 1);                export b; }
+cndfB: "UNC"   is b_cndf=0b1110 { local b:1 = 1;                         export b; }
+cndfB: "UNCF"  is b_cndf=0b1111 { local b:1 = 3;                         export b; }
+
+cndfT: "NEQ"   is l_cndf4=0b0000 { local b:1 = (ZF == 0);                export b; }
+cndfT: "EQ"    is l_cndf4=0b0001 { local b:1 = (ZF == 1);                export b; }
+cndfT: "GT"    is l_cndf4=0b0010 { local b:1 = (ZF == 0) && (NF == 0);   export b; }
+cndfT: "GEQ"   is l_cndf4=0b0011 { local b:1 = (NF == 0);                export b; }
+cndfT: "LT"    is l_cndf4=0b0100 { local b:1 = (NF == 1);                export b; }
+cndfT: "LEQ"   is l_cndf4=0b0101 { local b:1 = (ZF == 1) || (NF == 1);   export b; }
+cndfT: "TF"    is l_cndf4=0b1010 { local b:1 = (TF == 1);                export b; }
+cndfT: "NTF"   is l_cndf4=0b1011 { local b:1 = (TF == 0);                export b; }
+cndfT: "LU"    is l_cndf4=0b1100 { local b:1 = (LUF == 1);               export b; }
+cndfT: "LV"    is l_cndf4=0b1101 { local b:1 = (LVF == 1);               export b; }
+cndfT: "UNC"   is l_cndf4=0b1110 { local b:1 = 1;                        export b; }
+cndfT: "UNCF"  is l_cndf4=0b1111 { local b:1 = 1;                        export b; }
+
+# =============================================================================
+# Addressing modes (Table 6-7). MEMA computes the effective ADDRESS once -- the
+# computation is size-independent -- and MEM32/MEM16 wrap it as a memory varnode of the
+# right width. Going through a varnode rather than loading from a raw value is what makes
+# Ghidra attach an operand reference, so `MMOVZ16 MR3,0xb00` renders as ADCARESULT and
+# the XREF appears on the register. MMOVD32 uses MEMA directly, because it is the one
+# instruction that needs [mem32+2] as well as [mem32].
+#
+# The MAR post-increment happens inside MEMA, which is emitted once per instruction; the
+# address is captured into a temporary first, so a POST-increment is what the parent
+# sees. Both increment and offset wrap on a 16-bit boundary, as the TRM requires, because
+# the arithmetic is done in a 2-byte temporary.
+#
+# Reserved mode encodings (0011, 0100, 0111-1111) are deliberately absent: an
+# instruction word carrying one does not decode, rather than decoding as something
+# plausible.
+# =============================================================================
+MEMA: imm16                     is m_addr=0b0000 & imm16 { local a:4 = imm16; export a; }
+MEMA: "*MAR0++"                 is m_addr=0b0001 & imm16=1
+                                    { local a:4 = zext(MAR0); MAR0 = MAR0 + 1; export a; }
+MEMA: "*MAR0["^imm16^"]++"      is m_addr=0b0001 & imm16
+                                    { local a:4 = zext(MAR0); MAR0 = MAR0 + imm16; export a; }
+MEMA: "*MAR1++"                 is m_addr=0b0010 & imm16=1
+                                    { local a:4 = zext(MAR1); MAR1 = MAR1 + 1; export a; }
+MEMA: "*MAR1["^imm16^"]++"      is m_addr=0b0010 & imm16
+                                    { local a:4 = zext(MAR1); MAR1 = MAR1 + imm16; export a; }
+MEMA: "*MAR0+["^imm16^"]"       is m_addr=0b0101 & imm16
+                                    { local t:2 = MAR0 + imm16; local a:4 = zext(t); export a; }
+MEMA: "*MAR1+["^imm16^"]"       is m_addr=0b0110 & imm16
+                                    { local t:2 = MAR1 + imm16; local a:4 = zext(t); export a; }
+
+MEM32: MEMA is MEMA { export *[ram]:4 MEMA; }
+MEM16: MEMA is MEMA { export *[ram]:2 MEMA; }
+
+# Branch destination: PC-relative in WORDS from the branch's own address (verified by
+# linking -- the field is unchanged by the linker, and 0x80b4 + 0x12 = 0x80c6 lands on
+# the called label). dis2000 prints the raw displacement; we print the resolved target,
+# which is what makes the listing navigable.
+bdest: reloc  is simm16 [ reloc = inst_start + simm16; ] { export *[ram]:4 reloc; }
+
+# =============================================================================
+# Register-register, two operands. MSW is an exact match; LSW = 0000 0000 0000 bbaa.
+# =============================================================================
+:MABSF32    l_a, l_b  is msw=0x7E20 & l_hi12=0 & l_b & l_a { l_a = abs(l_b); cla_znf(l_a); }
+:MFRACF32   l_a, l_b  is msw=0x7E00 & l_hi12=0 & l_b & l_a { l_a = l_b f- trunc(l_b); cla_znf(l_a); }
+:MEINVF32   l_a, l_b  is msw=0x7F00 & l_hi12=0 & l_b & l_a {
+    local one:4 = 0x3F800000;
+    l_a = one f/ l_b;
+}
+:MEISQRTF32 l_a, l_b  is msw=0x7E40 & l_hi12=0 & l_b & l_a {
+    local one:4 = 0x3F800000;
+    l_a = one f/ sqrt(l_b);
+}
+# MAX/MIN: SLEIGH has no ternary, so pick with a branch. The compare sets ZF/NF.
+:MMAXF32    l_a, l_b  is msw=0x7D20 & l_hi12=0 & l_b & l_a {
+    cla_znf(l_a f- l_b);
+    if (l_a f>= l_b) goto <keep>;
+    l_a = l_b;
+  <keep>
+}
+:MMINF32    l_a, l_b  is msw=0x7D40 & l_hi12=0 & l_b & l_a {
+    cla_znf(l_a f- l_b);
+    if (l_a f<= l_b) goto <keep>;
+    l_a = l_b;
+  <keep>
+}
+:MCMPF32    l_a, l_b  is msw=0x7D00 & l_hi12=0 & l_b & l_a { cla_znf(l_a f- l_b); }
+:MCMP32     l_a, l_b  is msw=0x7F20 & l_hi12=0 & l_b & l_a { cla_zni(l_a - l_b); }
+
+# Conversions. Widths follow the FPU forms these mirror: the 16-bit results land
+# sign/zero-extended in the 32-bit register.
+:MF32TOI16   l_a, l_b is msw=0x7DE0 & l_hi12=0 & l_b & l_a { local v:2 = trunc(l_b); l_a = sext(v); cla_zni(l_a); }
+:MF32TOI16R  l_a, l_b is msw=0x7E60 & l_hi12=0 & l_b & l_a { local v:2 = trunc(l_b); l_a = sext(v); cla_zni(l_a); }
+:MF32TOI32   l_a, l_b is msw=0x7D60 & l_hi12=0 & l_b & l_a { l_a = trunc(l_b); cla_zni(l_a); }
+:MF32TOUI16  l_a, l_b is msw=0x7EA0 & l_hi12=0 & l_b & l_a { local v:2 = trunc(l_b); l_a = zext(v); cla_zni(l_a); }
+:MF32TOUI16R l_a, l_b is msw=0x7EC0 & l_hi12=0 & l_b & l_a { local v:2 = trunc(l_b); l_a = zext(v); cla_zni(l_a); }
+:MF32TOUI32  l_a, l_b is msw=0x7DA0 & l_hi12=0 & l_b & l_a { l_a = trunc(l_b); cla_zni(l_a); }
+:MI16TOF32   l_a, l_b is msw=0x7E80 & l_hi12=0 & l_b & l_a { local v:2 = l_b:2; l_a = int2float(v); cla_znf(l_a); }
+:MUI16TOF32  l_a, l_b is msw=0x7EE0 & l_hi12=0 & l_b & l_a { local v:4 = zext(l_b:2); l_a = int2float(v); cla_znf(l_a); }
+:MI32TOF32   l_a, l_b is msw=0x7D80 & l_hi12=0 & l_b & l_a { l_a = int2float(l_b); cla_znf(l_a); }
+:MUI32TOF32  l_a, l_b is msw=0x7DC0 & l_hi12=0 & l_b & l_a { local v:8 = zext(l_b); l_a = int2float(v); cla_znf(l_a); }
+
+# =============================================================================
+# Register-register with a condition. LSW = 0000 0000 cndf bbaa.
+# =============================================================================
+:MNEGF32 l_a, l_b, cndfL  is msw=0x7A80 & l_hi8=0 & cndfL & l_b & l_a {
+    l_a = l_b;
+    if ((cndfL & 1) == 0) goto <done>;
+    l_a = f- l_b;
+  <done>
+    if ((cndfL & 2) == 0) goto <end>;
+    cla_znf(l_a);
+  <end>
+}
+:MMOV32 l_a, l_b, cndfL   is msw=0x7AC0 & l_hi8=0 & cndfL & l_b & l_a {
+    if ((cndfL & 1) == 0) goto <end>;
+    l_a = l_b;
+    if ((cndfL & 2) == 0) goto <end>;
+    cla_znf(l_a);
+  <end>
+}
+:MSWAPF l_a, l_b, cndfL   is msw=0x7B00 & l_hi8=0 & cndfL & l_b & l_a {
+    if ((cndfL & 1) == 0) goto <end>;
+    local t:4 = l_a;
+    l_a = l_b;
+    l_b = t;
+  <end>
+}
+
+# =============================================================================
+# Three-operand register forms. LSW = 0000 0000 00cc bbaa.
+# =============================================================================
+:MMPYF32 l_a, l_b, l_cc is msw=0x7C00 & l_hi10=0 & l_cc & l_b & l_a { l_a = l_b f* l_cc; cla_znf(l_a); }
+:MADDF32 l_a, l_b, l_cc is msw=0x7C20 & l_hi10=0 & l_cc & l_b & l_a { l_a = l_b f+ l_cc; cla_znf(l_a); }
+:MSUBF32 l_a, l_b, l_cc is msw=0x7C40 & l_hi10=0 & l_cc & l_b & l_a { l_a = l_b f- l_cc; cla_znf(l_a); }
+:MAND32  l_a, l_b, l_cc is msw=0x7C60 & l_hi10=0 & l_cc & l_b & l_a { l_a = l_b & l_cc;  cla_zni(l_a); }
+:MOR32   l_a, l_b, l_cc is msw=0x7C80 & l_hi10=0 & l_cc & l_b & l_a { l_a = l_b | l_cc;  cla_zni(l_a); }
+:MXOR32  l_a, l_b, l_cc is msw=0x7CA0 & l_hi10=0 & l_cc & l_b & l_a { l_a = l_b ^ l_cc;  cla_zni(l_a); }
+:MADD32  l_a, l_b, l_cc is msw=0x7CC0 & l_hi10=0 & l_cc & l_b & l_a { l_a = l_b + l_cc;  cla_zni(l_a); }
+:MSUB32  l_a, l_b, l_cc is msw=0x7CE0 & l_hi10=0 & l_cc & l_b & l_a { l_a = l_b - l_cc;  cla_zni(l_a); }
+
+# =============================================================================
+# Shifts. LSW = 0000 0000 0shi ftaa, where the 5-bit field encodes shift-1 (Table 6-8),
+# so the count is the field plus one. dis2000 renders it bare and in decimal, hence the
+# attached names in the .slaspec; l_shiftv is the same bits as a value.
+# =============================================================================
+:MASR32 l_a, l_shift is msw=0x7B40 & l_hi9=0 & l_shift & l_shiftv & l_a {
+    local n:4 = l_shiftv + 1;  l_a = l_a s>> n;  cla_zni(l_a);
+}
+:MLSR32 l_a, l_shift is msw=0x7B80 & l_hi9=0 & l_shift & l_shiftv & l_a {
+    local n:4 = l_shiftv + 1;  l_a = l_a >> n;   cla_zni(l_a);
+}
+:MLSL32 l_a, l_shift is msw=0x7BC0 & l_hi9=0 & l_shift & l_shiftv & l_a {
+    local n:4 = l_shiftv + 1;  l_a = l_a << n;   cla_zni(l_a);
+}
+
+# =============================================================================
+# #16FHi immediates. The immediate is the UPPER half of an IEEE-754 float with a zero
+# low mantissa, held whole in the LSW -- no split-field reassembly, unlike the C28x FPU
+# forms. MMPYF32/MADDF32 have two assembly spellings (`MRa,#imm,MRb` and
+# `MRa,MRb,#imm`) that share one encoding; TI's own disassembler prints the first.
+# =============================================================================
+:MMPYF32 i_a, "#"imm16, i_b is msw_hi12=0x778 & i_b & i_a & imm16 {
+    local v:4 = imm16 << 16;  i_a = v f* i_b; cla_znf(i_a);
+}
+:MADDF32 i_a, "#"imm16, i_b is msw_hi12=0x77C & i_b & i_a & imm16 {
+    local v:4 = imm16 << 16;  i_a = v f+ i_b; cla_znf(i_a);
+}
+:MSUBF32 i_a, "#"imm16, i_b is msw_hi12=0x780 & i_b & i_a & imm16 {
+    local v:4 = imm16 << 16;  i_a = v f- i_b; cla_znf(i_a);
+}
+:MMOVIZ  i_a, "#"imm16  is msw_hi14=0x1E10 & i_a & imm16 { i_a = imm16 << 16; cla_znf(i_a); }
+:MMOVXI  i_a, "#"imm16  is msw_hi14=0x1E20 & i_a & imm16 { i_a[0,16] = imm16; }
+:MCMPF32 i_a, "#"imm16  is msw_hi14=0x1E30 & i_a & imm16 {
+    local v:4 = imm16 << 16;  cla_znf(i_a f- v);
+}
+:MMAXF32 i_a, "#"imm16  is msw_hi14=0x1E40 & i_a & imm16 {
+    local v:4 = imm16 << 16;
+    cla_znf(i_a f- v);
+    if (i_a f>= v) goto <keep>;
+    i_a = v;
+  <keep>
+}
+:MMINF32 i_a, "#"imm16  is msw_hi14=0x1E50 & i_a & imm16 {
+    local v:4 = imm16 << 16;
+    cla_znf(i_a f- v);
+    if (i_a f<= v) goto <keep>;
+    i_a = v;
+  <keep>
+}
+
+# =============================================================================
+# Auxiliary-register loads. MSW = 0111 1111 11 M T 00aa: M picks MAR0/MAR1 and T picks
+# between the immediate-only form (TI's assembler and disassembler both spell it
+# MMOV16, though the TRM calls it MMOVI16) and the MRa + immediate form.
+# =============================================================================
+:MMOV16 k_mar, "#"imm16          is msw_hi10=0x1FF & k_withreg=0 & k_mar & k_zero2=0 & k_a=0 & imm16
+                                    { k_mar = imm16; }
+:MMOV16 k_mar, k_a, "#"imm16     is msw_hi10=0x1FF & k_withreg=1 & k_mar & k_zero2=0 & k_a & imm16
+                                    { k_mar = k_a:2 + imm16; }
+
+# =============================================================================
+# Memory forms. MSW = <10-bit opcode> aa addr.
+# =============================================================================
+:MMOVD32    m_a, MEMA is msw_hi10=0x1D0 & m_a & MEMA {
+    local v:4 = *[ram]:4 MEMA;
+    m_a = v;
+    local nxt:4 = MEMA + 2;
+    *[ram]:4 nxt = v;
+    cla_znf(m_a);
+}
+:MI32TOF32  m_a, MEM32 is msw_hi10=0x1D1 & m_a & MEM32 { m_a = int2float(MEM32); cla_znf(m_a); }
+:MUI32TOF32 m_a, MEM32 is msw_hi10=0x1D2 & m_a & MEM32 {
+    local v:8 = zext(MEM32);  m_a = int2float(v); cla_znf(m_a);
+}
+:MMOV32     MEM32, m_a is msw_hi10=0x1D3 & m_a & MEM32 { MEM32 = m_a; }
+:MI16TOF32  m_a, MEM16 is msw_hi10=0x1D4 & m_a & MEM16 { m_a = int2float(MEM16); cla_znf(m_a); }
+:MUI16TOF32 m_a, MEM16 is msw_hi10=0x1D5 & m_a & MEM16 {
+    local v:4 = zext(MEM16);  m_a = int2float(v); cla_znf(m_a);
+}
+:MMOVZ16    m_a, MEM16 is msw_hi10=0x1D6 & m_a & MEM16 { m_a = zext(MEM16); cla_zni(m_a); }
+:MMOV16     MEM16, m_a is msw_hi10=0x1D7 & m_a & MEM16 { MEM16 = m_a:2; }
+
+# MMOV16 MARx <-> mem16: MSW = 0111 0110 D M 00 addr (D = direction, M = MAR select).
+:MMOV16 q_mar, MEM16 is msw_hi8=0x76 & q_dir=0 & q_mar & q_zero2=0 & MEM16 { q_mar = MEM16; }
+:MMOV16 MEM16, q_mar is msw_hi8=0x76 & q_dir=1 & q_mar & q_zero2=0 & MEM16 { MEM16 = q_mar; }
+
+# MSTF <-> mem32. The packed status word only exists at these two instructions.
+:MMOV32 "MSTF", MEM32 is msw_hi12=0x770 & MEM32 { MSTF = MEM32; cla_unpackmstf(MSTF); }
+:MMOV32 MEM32, "MSTF" is msw_hi12=0x774 & MEM32 { cla_packmstf(MSTF); MEM32 = MSTF; }
+
+# MMOV32 MRa, mem32 {,CNDF} -- the only load with a condition, and the widest opcode
+# field in the ISA (MSW[15:10] = 011100 leaves ten bits of operands).
+:MMOV32 m_a, MEM32, cndfM is msw_hi6=0x1C & cndfM & m_a & MEM32 {
+    if ((cndfM & 1) == 0) goto <end>;
+    m_a = MEM32;
+    if ((cndfM & 2) == 0) goto <end>;
+    cla_znf(m_a);
+  <end>
+}
+
+# =============================================================================
+# Parallel forms. MSW[15:12] selects which pair; the five register selectors and the
+# addressing mode share the remaining twelve bits (MSW = oooo ffee ddaa addr).
+# The two halves read their sources before either writes, which is why MMACF32's
+# accumulate consumes the PREVIOUS product still sitting in MR2.
+# =============================================================================
+:MMPYF32 p_d, p_e, p_f^"||MMOV32" p_a, MEM32 is msw_hi4=0b0000 & p_f & p_e & p_d & p_a & MEM32 {
+    local v:4 = MEM32;  p_d = p_e f* p_f;  p_a = v;  cla_znf(p_d);
+}
+:MADDF32 p_d, p_e, p_f^"||MMOV32" p_a, MEM32 is msw_hi4=0b0001 & p_f & p_e & p_d & p_a & MEM32 {
+    local v:4 = MEM32;  p_d = p_e f+ p_f;  p_a = v;  cla_znf(p_d);
+}
+:MSUBF32 p_d, p_e, p_f^"||MMOV32" p_a, MEM32 is msw_hi4=0b0010 & p_f & p_e & p_d & p_a & MEM32 {
+    local v:4 = MEM32;  p_d = p_e f- p_f;  p_a = v;  cla_znf(p_d);
+}
+:"MMACF32 MR3,MR2,"^p_d^","^p_e^","^p_f^"||MMOV32" p_a, MEM32
+        is msw_hi4=0b0011 & p_f & p_e & p_d & p_a & MEM32 {
+    local v:4 = MEM32;
+    MR3 = MR3 f+ MR2;
+    p_d = p_e f* p_f;
+    p_a = v;
+    cla_znf(MR3);
+}
+:MMPYF32 p_d, p_e, p_f^"||MMOV32" MEM32, p_a is msw_hi4=0b0100 & p_f & p_e & p_d & p_a & MEM32 {
+    MEM32 = p_a;  p_d = p_e f* p_f;  cla_znf(p_d);
+}
+:MADDF32 p_d, p_e, p_f^"||MMOV32" MEM32, p_a is msw_hi4=0b0101 & p_f & p_e & p_d & p_a & MEM32 {
+    MEM32 = p_a;  p_d = p_e f+ p_f;  cla_znf(p_d);
+}
+:MSUBF32 p_d, p_e, p_f^"||MMOV32" MEM32, p_a is msw_hi4=0b0110 & p_f & p_e & p_d & p_a & MEM32 {
+    MEM32 = p_a;  p_d = p_e f- p_f;  cla_znf(p_d);
+}
+
+# Register-only parallel pairs: MSW is exact, all six selectors ride in the LSW.
+:MMPYF32 l_a, l_b, l_cc^"||MADDF32" l_dd, l_ee, l_ff
+        is msw=0x7A00 & l_hi4=0 & l_ff & l_ee & l_dd & l_cc & l_b & l_a {
+    local m:4 = l_b f* l_cc;
+    local s:4 = l_ee f+ l_ff;
+    l_a = m;
+    l_dd = s;
+    cla_znf(l_a);
+}
+:MMPYF32 l_a, l_b, l_cc^"||MSUBF32" l_dd, l_ee, l_ff
+        is msw=0x7A40 & l_hi4=0 & l_ff & l_ee & l_dd & l_cc & l_b & l_a {
+    local m:4 = l_b f* l_cc;
+    local s:4 = l_ee f- l_ff;
+    l_a = m;
+    l_dd = s;
+    cla_znf(l_a);
+}
+
+# =============================================================================
+# Flags, control and the delayed branches.
+#
+# MBCNDD/MCCNDD/MRCNDD have THREE delay slots: the next three instructions always
+# execute, whether or not the branch is taken (SPRUHM8K 6.5). `delayslot` counts BYTES,
+# not instructions, so three 32-bit instructions is `delayslot(12)` -- with 3 it swallows
+# only one and the other two decode as ordinary instructions after the branch. Ghidra
+# folds them into the branch and the decompiler then sees the real execution order. The
+# TRM forbids a branch, MSTOP or MDEBUGSTOP in those slots, so a delay slot can never
+# itself redirect flow.
+# =============================================================================
+:MSETFLG "#"l_flag, "#"l_value is msw=0x79C0 & l_flag & l_value {
+    local f:2 = l_flag;  local v:2 = l_value;  cla_setflg(f, v);
+}
+:MTESTTF cndfT   is msw=0x7F40 & l_hi12=0 & cndfT { TF = (cndfT & 1) != 0; }
+:MEALLOW         is op32=0x7F900000 { MEALLOWF = 1; }
+:MEDIS           is op32=0x7FB00000 { MEALLOWF = 0; }
+:MNOP            is op32=0x7FA00000 { }
+:MDEBUGSTOP      is op32=0x7F600000 { claDebugStop(); }
+:MSTOP           is op32=0x7F800000 { claTaskEnd(); local t:4 = 0; return [t]; }
+
+:MBCNDD bdest, cndfB is msw_hi12=0x798 & cndfB & bdest {
+    local c:1 = cndfB & 1;
+    delayslot(12);
+    if (c) goto bdest;
+}
+:MCCNDD bdest, cndfB is msw_hi12=0x799 & cndfB & bdest {
+    local c:1 = cndfB & 1;
+    delayslot(12);
+    if (!c) goto <skip>;
+    MRPC = inst_next;
+    call bdest;
+  <skip>
+}
+:MRCNDD cndfB        is msw_hi12=0x79A & imm16=0 & cndfB {
+    local c:1 = cndfB & 1;
+    delayslot(12);
+    if (!c) goto <skip>;
+    return [MRPC];
+  <skip>
+}

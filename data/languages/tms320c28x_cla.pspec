@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-License-Identifier: Apache-2.0
+  Copyright 2026 Nishanth Samala
+-->
+
+<!-- See Relax specification: Ghidra/Framework/SoftwareModeling/data/languages/processor_spec.rxg -->
+
+<processor_spec>
+  <programcounter register="MPC"/>
+
+  <properties>
+    <!-- Same reasoning as the C28x spec: the heuristic no-return / shared-return
+         analyzers misread bare-metal DSP code. A CLA task ends at MSTOP, which this
+         spec already models as a terminator, so nothing is gained by letting the
+         heuristics guess at additional non-returning functions. -->
+    <property key="enableNoReturnAnalysis"     value="false"/>
+    <property key="enableSharedReturnAnalysis" value="false"/>
+  </properties>
+
+  <!-- The CLA reads MVECT1-MVECT8 out of the main CPU's Cla1Regs to find its eight task
+       entry points, so a CLA program has eight roots and no reset vector. They cannot be
+       listed here (their values are written at run time by the C28x, and differ per
+       image). SetupClaProgram.java reads them off the C28x side and marks them.
+
+       Peripheral and message-RAM labels are left to that script too: nothing here can
+       know which LSx banks MemCfgRegs assigned to the CLA, and a default_symbols entry
+       at an address the imported image does not cover is silently dropped anyway. -->
+</processor_spec>

@@ -35,6 +35,12 @@
 #                   MSW -- the opposite order from the #16FHi immediates, and getting
 #                   it backwards silently moves RND32 onto NI. Assembled by asm2000
 #                   from TI mnemonics (`SETFLG RNDF32=1` -> e610 0200).
+#   cla_all      -- the WHOLE CLA instruction set, on the separate CLA language: every
+#                   one of the 79 encoded forms, all five addressing modes and the
+#                   delayed branches. Built from tests/cla_all.asm by
+#                   `cl2000 -v28 --cla_support=cla1` and dis2000, so every expected line
+#                   is TI's own decode of TI's own encoding. Three renderings deliberately
+#                   diverge from dis2000's text; they are marked in the expected file.
 #
 # Env / args:
 #   GHIDRA_INSTALL_DIR  -- required. Root of Ghidra install.
@@ -68,11 +74,22 @@ lang="$module/data/languages"
 tmp=$(mktemp -d -t c28x-test-XXXXXX)
 trap 'rm -rf "$tmp"' EXIT
 
-CASES="addr_modes fpu_display fpu_parallel fpu_flags c2xlp"
+CASES="addr_modes fpu_display fpu_parallel fpu_flags c2xlp cla_all"
 
-# 1. compile the .sla
-(cd "$lang" && "$GHIDRA_INSTALL_DIR/support/sleigh" tms320c28x.slaspec)
-[ -f "$lang/tms320c28x.sla" ] || { echo "SLEIGH compile failed (no .sla)"; exit 1; }
+# Cases not named here run on the core C28x language.
+processor_for() {
+  case "$1" in
+    cla_all) echo "TMS320C28x:LE:32:cla" ;;
+    *)       echo "TMS320C28x:LE:32:default" ;;
+  esac
+}
+
+# 1. compile every .sla -- the CLA is its own .slaspec, not a variant of the core one.
+for spec in "$lang"/*.slaspec; do
+  (cd "$lang" && "$GHIDRA_INSTALL_DIR/support/sleigh" "$(basename "$spec")")
+  sla="${spec%.slaspec}.sla"
+  [ -f "$sla" ] || { echo "SLEIGH compile failed for $(basename "$spec")"; exit 1; }
+done
 
 # 2. reinstall into Ghidra. On a fresh Ghidra the TMS320C28x module does not exist
 # yet, so Install also drops in the Module.manifest -- without it Ghidra won't treat
@@ -99,7 +116,7 @@ for name in $CASES; do
   # `|| true`: don't let a headless failure abort under `set -e` before we can print
   # its output -- an empty $got below is reported as a diagnostic instead of a blank.
   raw=$("$GHIDRA_INSTALL_DIR/support/analyzeHeadless" "$tmp/proj" "t_$name" \
-    -import "$tmp/$name.bin" -processor "TMS320C28x:LE:32:default" \
+    -import "$tmp/$name.bin" -processor "$(processor_for "$name")" \
     -scriptPath "$tmp/scripts" -postScript DumpDisasm.java -noanalysis -overwrite 2>&1) || true
 
   # 4. compare. Pull "ADDR<tab>BYTES<tab>TEXT" lines from DumpDisasm's println output;
@@ -119,7 +136,10 @@ for name in $CASES; do
     printf '%s\n' "$raw" >&2
   fi
 
-  exp="$module/tests/$name.expected.txt"
+  # `#` lines are commentary (marking deliberate divergences from TI's rendering);
+  # drop them before indexing so expected/got stay aligned.
+  exp="$tmp/$name.expected.txt"
+  grep -v -E '^[[:space:]]*(#|$)' "$module/tests/$name.expected.txt" > "$exp"
   lineno=0
   while IFS= read -r e; do
     lineno=$((lineno + 1))

@@ -118,6 +118,19 @@ Raw `.bin` images have no symbols; auto-analysis alone finds almost nothing. Ord
 5b. `MergeSplitFunctions.java` — reunites functions step 1 cut in two. A mid-function callee-saved push is byte-identical to a prologue, so signal B seeds inside a live body; the far half keeps the `LRETR` and inherits no callers, because a fall-through is not a reference. Merges an entry only when nothing references it, its address appears nowhere in the image as a 32-bit value, it sits on the previous instruction's fall-through, and that previous function has **no return anywhere** — it cannot be whole. Never touches a renamed function; idempotent. Measured: CPU2 105 merges, 62.4% → **79.2%** reachable and functions-with-no-return 217 → 112; CPU1 89 merges, 72.4% → **84.2%**, 122 → 33.
 8. `ReachabilityReport.java` — what is reachable from `_c_int00`, bucketed by *why* the rest is not. On a dispatch-driven image the fn-ptr registry is filled in by `.cinit` at runtime, so live handlers look unreferenced (measured: 2.5%). **Materializing does not by itself fix this** — verified on a clean import, reachability was 2.5% both before and after `EmulateStartup apply`, because materialization restores bytes while the graph is built from *references*. Step 4d emits those references *and* roots what the runtime dispatches, taking the same image to **1070/2191 = 48.8%**. See [docs/C28X_IMAGE_SETUP.md](docs/C28X_IMAGE_SETUP.md) §Step 8 for why the OS task list cannot be rooted statically (its walker is the tick ISR, and the PIE vector table at `0xD00` is RAM written at runtime, so it is empty in a static image).
 
+### The CLA is a separate language
+
+`TMS320C28x:LE:32:cla` (`tms320c28x_cla.slaspec`) decodes the Control Law Accelerator — an independent 32-bit float coprocessor executing out of whichever LSx banks `MemCfgRegs.LSxCLAPGM` assigns it. Its ISA shares no encoding with the core, so it is its own language and its program RAM is analysed as its **own program**. Every instruction is exactly 32 bits (LSW at the even word, MSW at the odd), which is why this spec has no context variable and no multi-token machinery.
+
+A CLA-using image is easy to miss: LS0/LS1 come out of materialization full of non-zero words with **zero** C28x instructions and zero functions, and are then simply never looked at. Two scripts close that:
+
+- `ExportClaProgram.java` (run on the C28x program) — surveys the LS banks for that signature, reports where `Cla1Regs.MVECT1-8` are written, and writes the CLA program RAM out as a flat `.bin` plus the import recipe.
+- `SetupClaProgram.java` (run on the imported CLA program) — maps what the CLA can reach (message RAMs, ADC results, ePWM, and the LS/D data window), roots the tasks from the MVECT values, then recovers the rest from what follows each `MSTOP`/`MRCNDD`.
+
+Measured on the 2022 DIR CPU2 image: **1934 CLA instructions, 0 undecodable**, 7 tasks + 14 subroutines, reading `ADCARESULT`/`ADCBRESULT` and writing the CLA↔CPU message RAM — the current-loop math.
+
+`dis2000` disassembles CLA object code natively, so the same oracle the core uses covers this: `tests/cla_all.asm` → `cl2000 --cla_support=cla1` → `dis2000` → `tests/cla_all.expected.txt`, 104 instructions, run as case `cla_all`.
+
 Ghidra's **"Non-Returning Functions - Discovered"** and **"Shared Return Calls"** analyzers are disabled by default in the pspec — they falsely mark `.ramfunc` bodies non-returning and delete their real flash callers. Re-enable per-program in Analysis Options only if genuinely needed.
 
 Full pipeline (section-copy mechanism, no-return opt-out, base-address rules): [docs/C28X_IMAGE_SETUP.md](docs/C28X_IMAGE_SETUP.md).

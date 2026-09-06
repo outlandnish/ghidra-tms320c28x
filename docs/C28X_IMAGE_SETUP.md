@@ -515,6 +515,67 @@ that provably could not have been whole, and no body became fragmented.
 After this, the unreachable tail is genuinely flat — the largest remaining
 orphan subtree on CPU2 is 38 functions and on CPU1 is 10, against 156 before.
 
+## The CLA — a second program, not a second mode
+
+If the image drives the Control Law Accelerator, the pipeline above will materialize its
+program RAM and then leave it completely undecoded, because the C28x SLEIGH cannot read a
+CLA instruction. **The signature is unmistakable once you look for it**: an LSx bank that
+is initialized and mostly non-zero yet holds *zero* C28x instructions and *zero* functions,
+while its neighbours hold hundreds. On the 2022 DIR CPU2 image:
+
+```
+LS0_RAM  08000-087ff init=true  fns=0   insn=0     nonzero=1579   <== CLA program
+LS1_RAM  08800-08fff init=true  fns=0   insn=0     nonzero=1432   <== CLA program
+LS2_RAM  09000-097ff init=true  fns=17  insn=925   nonzero=1336
+LS3_RAM  09800-09fff init=true  fns=7   insn=968   nonzero=2024
+```
+
+Corroborate it on the C28x side before believing it: the CLA is configured by writes to
+`Cla1Regs` (`0x1400`) and `MemCfgRegs.LSxMSEL`/`LSxCLAPGM` (`0x5F424`/`0x5F426`). On that
+image one function writes `MVECT1`/`MVECT2` and `MIER` under `EALLOW` and `PREAD`s the two
+MemCfg words from a flash table, and another forces a task through `MIFRC` then spins on
+`MIRUN & 0xF` — that is a CLA being started and waited on.
+
+The CLA is a separate **language** (`TMS320C28x:LE:32:cla`), so its code has to be a
+separate **program** — Ghidra binds one language per program. Two scripts:
+
+```
+# 1. on the C28x program: survey the banks, find the tasks, write the .bin
+ExportClaProgram.java      -Dc28x.cla.out=<path>.bin
+
+# 2. import it, then set it up
+-import <path>.bin -processor TMS320C28x:LE:32:cla -loader BinaryLoader \
+    -loader-baseAddr 0x8000
+SetupClaProgram.java       -Dc28x.cla.tasks=<the list step 1 printed>
+```
+
+`-loader-baseAddr` is in **words** here, like every other address in this space.
+
+**On Windows, pass those `-D` options through `JAVA_TOOL_OPTIONS`, not as script
+arguments.** `analyzeHeadless.bat` drops everything after the `=` in a script argument, so
+`-Dc28x.cla.out=C:\x.bin` arrives as the bare flag and the value is lost. A valueless
+switch survives, which is why this is easy to miss — the failure looks like a script trying
+to open a file called `true`.
+
+Result on that image: **1934 CLA instructions, none undecodable**, 7 tasks rooted from
+MVECT and 14 more subroutines recovered from what follows each `MSTOP`/`MRCNDD`. It reads
+as what it is:
+
+```
+08380  MMOVZ16    MR2,ADCBRESULT
+08386  MMOVZ16    MR3,ADCARESULT
+08388  MMPYF32    MR2,#0x3980,MR2          ; ADC counts -> per-unit
+0838e  MSUBF32    MR0,MR2,MR0||MMOV32 MR2,DAT_00009018
+08390  MMPYF32    MR0,MR1,MR0||MSUBF32 MR2,MR3,MR2
+0839c  MCCNDD     FUN_00008c2e,UNCF
+```
+
+Two things to know when reading it. The three instructions after `MBCNDD`/`MCCNDD`/`MRCNDD`
+are **delay slots that always execute** — Ghidra folds them into the branch and prefixes
+them with `_`. And the CLA's *data* banks are an `LSxMSEL` decision the exported program
+does not carry, so `SetupClaProgram` maps the whole `0x8000-0xBFFF` window as RAM to keep
+those references resolvable; on the image above that is where 281 of 456 references land.
+
 ## Step 6 — RetypeWideMemory
 
 Unchanged; run last to clean up the decompiler's 32/64-bit reads. See its

@@ -1,0 +1,93 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  SPDX-License-Identifier: Apache-2.0
+  Copyright 2026 Nishanth Samala
+-->
+
+<!-- See Relax specification: Ghidra/Framework/SoftwareModeling/data/languages/compiler_spec.rxg -->
+<!-- ABI reference: SPRU514 section 7 (the CLA subsection) plus SPRUHM8K 6.7. -->
+
+<compiler_spec>
+  <!-- Word-addressable like the C28x: a CLA "char" is 16 bits and every type is a
+       multiple of that. A CLA pointer is 16 bits, not 32, because the CLA can only
+       reach the low 64K of the device map (SPRUHM8K 6.7.2). -->
+  <data_organization>
+    <absolute_max_alignment value="0"/>
+    <machine_alignment value="2"/>
+    <default_alignment value="1"/>
+    <default_pointer_alignment value="1"/>
+    <pointer_size value="2"/>
+    <wchar_size value="2"/>
+    <short_size value="2"/>
+    <integer_size value="2"/>
+    <long_size value="4"/>
+    <long_long_size value="8"/>
+    <float_size value="4"/>
+    <double_size value="4"/>
+    <size_alignment_map>
+      <entry size="1" alignment="1"/>
+      <entry size="2" alignment="1"/>
+      <entry size="4" alignment="1"/>
+      <entry size="8" alignment="1"/>
+    </size_alignment_map>
+  </data_organization>
+
+  <global>
+    <range space="ram"/>
+  </global>
+
+  <!-- The CLA HAS NO STACK. TI's CLA compiler gives each task a statically allocated
+       frame and forbids recursion, and there is no push, pop or stack pointer in the
+       instruction set. Ghidra's decompiler still requires a stack space to exist, so the
+       spec points at the SP register the SLEIGH spec defines for exactly this purpose:
+       no instruction reads or writes it, so it stays zero and the frame stays empty. -->
+  <stackpointer register="SP" space="ram" growth="negative"/>
+
+  <default_proto>
+    <!-- MCCNDD passes nothing in registers; TI's CLA compiler hands arguments in MR0-MR3
+         and returns in MR0 (SPRU514: the CLA argument-passing rules follow the FPU's).
+         MAR0/MAR1 are the pointer registers, so a pointer argument arrives there. -->
+    <prototype name="__stdcall" extrapop="0" stackshift="0">
+      <input>
+        <pentry minsize="2" maxsize="2">
+          <register name="MAR0"/>
+        </pentry>
+        <pentry minsize="2" maxsize="2">
+          <register name="MAR1"/>
+        </pentry>
+        <pentry minsize="4" maxsize="4">
+          <register name="MR0"/>
+        </pentry>
+        <pentry minsize="4" maxsize="4">
+          <register name="MR1"/>
+        </pentry>
+        <pentry minsize="4" maxsize="4">
+          <register name="MR2"/>
+        </pentry>
+        <pentry minsize="4" maxsize="4">
+          <register name="MR3"/>
+        </pentry>
+      </input>
+      <output>
+        <pentry minsize="4" maxsize="4">
+          <register name="MR0"/>
+        </pentry>
+      </output>
+      <unaffected>
+        <register name="SP"/>
+      </unaffected>
+      <killedbycall>
+        <register name="MR0"/>
+        <register name="MR1"/>
+        <register name="MR2"/>
+        <register name="MR3"/>
+        <register name="MRPC"/>
+        <register name="ZF"/>
+        <register name="NF"/>
+        <register name="TF"/>
+        <register name="LUF"/>
+        <register name="LVF"/>
+      </killedbycall>
+    </prototype>
+  </default_proto>
+</compiler_spec>

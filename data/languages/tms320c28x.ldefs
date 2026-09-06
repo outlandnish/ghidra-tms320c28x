@@ -37,4 +37,25 @@
     <compiler name="default" spec="tms320c28x.cspec" id="default"/>
     <external_name tool="IDA-PRO" name="tms320c28"/>
   </language>
+
+  <!-- CLA (Control Law Accelerator) Type-1: the independent 32-bit floating-point
+       coprocessor on the F2837x, executing out of whichever LSx banks MemCfgRegs
+       assigns it. Its own register file, its own instruction set (SPRUHM8K ch.6), its
+       own PC, and no encoding in common with the C28x core — so it is a separate
+       language, not a decode mode, and CLA program RAM is analysed as its own program.
+       Every instruction is 32 bits; addresses are 16-bit word addresses (the CLA reaches
+       only the low 64K), held in a wordsize=2 space like the core's. Pair with
+       ghidra_scripts/SetupClaProgram.java, which maps the banks and roots the eight
+       tasks from Cla1Regs.MVECT1-8. -->
+  <language processor="TMS320C28x"
+            endian="little"
+            size="32"
+            variant="cla"
+            version="0.1"
+            slafile="tms320c28x_cla.sla"
+            processorspec="tms320c28x_cla.pspec"
+            id="TMS320C28x:LE:32:cla">
+    <description>TI CLA Type-1 coprocessor (TMS320F2837x). 32-bit fixed-width float ISA, word-addressable.</description>
+    <compiler name="default" spec="tms320c28x_cla.cspec" id="default"/>
+  </language>
 </language_definitions>
