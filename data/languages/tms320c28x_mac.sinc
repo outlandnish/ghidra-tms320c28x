@@ -124,7 +124,12 @@
 # "ADDL ACC,P << PM". The manual's own MPY P,loc16,#16bit example shows exactly
 # the MPY P / ADDL ACC,P << PM sequence this image uses.
 #
-# PM shift is not modeled, consistent with the rest of this file.
+# PM shift: the DEFAULT of each form below is unshifted, consistent with the rest of
+# this file, because PM=0 is what the TI C runtime establishes at every function entry
+# (SPRU514 Table 7-4) and what reaches nearly every product use -- measured, 868 of 924
+# product-consuming instructions in a DIR image sit in a function containing no SPM at
+# all. Where an SPM proves PM non-zero on every path in, TMS320C28xPmShiftAnalyzer sets
+# the pm_shift context bit and the paired variant applies the real shift. See #74.
 
 # (MOVL ACC,P << PM = 0x16AC and MOVL P,ACC = 0xFF5A were already covered in
 #  tms320c28x_more.sinc as MOVL ACC,"P" / MOVL "P",ACC — don't re-add them here.)
@@ -137,15 +142,37 @@
 # encoding from the general form (loc_full8!=0xAC above) so there is no overlap at
 # all. Verify any addition like this on a real word, not just on a clean compile.
 
+# Each of these comes in a pair: the default (pm_shift=0) keeps the unshifted model
+# described in the file header, and the pm_shift=1 variant applies the real PM shift
+# where TMS320C28xPmShiftAnalyzer has proved PM non-zero on every path in (#74).
+# BOTH sides carry the constraint -- a variant that only adds a bit to one pattern is
+# indistinguishable from the base and the resolver silently picks whichever it likes,
+# the same trap documented for rpt_phase in the slaspec.
+
 # ADDL ACC,P << PM   0001 0000 1010 1100
-:ADDL "ACC,P << PM"  is rpt_phase=1 & op16=0x10AC  { ACC = ACC + P; }
+:ADDL "ACC,P << PM"  is rpt_phase=1 & pm_shift=0 & op16=0x10AC  { ACC = ACC + P; }
+:ADDL "ACC,P << PM"  is rpt_phase=1 & pm_shift=1 & op16=0x10AC  {
+    local v:4; pshift(v);
+    ACC = ACC + v;
+}
 
 # SUBL ACC,P << PM   0001 0001 1010 1100
-:SUBL "ACC,P << PM"  is rpt_phase=1 & op16=0x11AC  { ACC = ACC - P; }
+:SUBL "ACC,P << PM"  is rpt_phase=1 & pm_shift=0 & op16=0x11AC  { ACC = ACC - P; }
+:SUBL "ACC,P << PM"  is rpt_phase=1 & pm_shift=1 & op16=0x11AC  {
+    local v:4; pshift(v);
+    ACC = ACC - v;
+}
 
 # CMPL ACC,P << PM   1111 1111 0101 1001   -- compare only; ACC unchanged
-:CMPL "ACC,P << PM"  is rpt_phase=1 & op16=0xFF59  {
+:CMPL "ACC,P << PM"  is rpt_phase=1 & pm_shift=0 & op16=0xFF59  {
     local b:4 = P;
+    local r:4 = ACC - b;
+    $(C) = !(ACC < b);
+    $(V) = sborrow(ACC, b);
+    setNZ32(r);
+}
+:CMPL "ACC,P << PM"  is rpt_phase=1 & pm_shift=1 & op16=0xFF59  {
+    local b:4; pshift(b);
     local r:4 = ACC - b;
     $(C) = !(ACC < b);
     $(V) = sborrow(ACC, b);

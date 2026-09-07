@@ -190,6 +190,25 @@ macro mext(out, in) {
 # independent low half. Commit the full architectural result, then restate that
 # low half so ordinary 16-bit consumers see the invariant directly instead of
 # carrying the SXM term through every downstream expression.
+# --- the PM product shift (SPRU430F 6.x, ST0.PM) ------------------------------
+# P as the product-shift mode leaves it. PM is stored DECODED here (-6..+1, see
+# packst0), so a positive mode shifts left and a negative one shifts arithmetically
+# right. Only reached under the analyzer-proven pm_shift=1 variants; PM=0 sites keep
+# the plain unshifted P, which is both the common case and the cheaper p-code.
+#
+# Branchless so one instruction stays one basic block. Whichever side is not
+# selected shifts by a nonsense count -- SLEIGH gives 0 or a sign fill for a count
+# at or past the width -- and is masked off, so only the selected side survives.
+# The shift count is the PM register rather than a constant, which lets the
+# decompiler fold it wherever the governing SPM is visible.
+macro pshift(out) {
+    local pm:4 = sext($(PM));
+    local neg:4 = 0 - zext(pm s< 0);
+    local left:4 = P << pm;
+    local right:4 = P s>> (0 - pm);
+    out = (right & neg) | (left & ~neg);
+}
+
 macro mov_acc_mext_shift(in, shift) {
     local source:2 = in;
     local full:4;

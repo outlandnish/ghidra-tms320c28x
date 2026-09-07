@@ -213,6 +213,24 @@ Files adapted so far:
   labels through the subsequent CMP/BF and `LB *XAR7`), and update N/Z; the SUB
   canonical variant adds `C=1` and N/Z updates for arithmetic-flag parity. The
   non-canonical (default) constructors are unchanged. See #18.
+- **`src/main/java/ghidra/app/plugin/core/analysis/TMS320C28xPmShiftAnalyzer.java`** (new),
+  the `pm_shift` context bit, and the paired `P << PM` constructors in `_mac.sinc` /
+  `_more.sinc` — mwdmwd's `375fa7f` **inverted**. Their `TMS320C28PmProductStoreAnalyzer`
+  proves PM=0 in order to select a *no-shift* variant, because their spec applies the
+  product shift everywhere. This module has never modelled the shift at all, so their
+  polarity is backwards here: adopting it unchanged would have put a shift term on ~900
+  product paths to fix 32, and the 868 of 924 DIR product uses that sit in a function
+  containing no `SPM` are exactly the ones no prover can discharge, so they would carry the
+  term permanently. The mechanism is theirs — prove the mode over a straight-line run, set a
+  context bit, let SLEIGH pick the variant — with the sign reversed: the default stays
+  unshifted and the analyzer marks only the sites where an `SPM` proves PM non-zero on every
+  path in. Measured: 14 sites in a DIR image, spanning PM `+1`, `-2`, `-4`, `-5`, `-6`; 1 in
+  a PMR image. No code taken. See #74.
+
+  `MOVL loc32,P` is excluded on TI's own wording — SPRU430F defines it as `[loc32] = P` and
+  titles it "Store the P Register", against "Store Lower Half of *Shifted* P Register" for
+  `MOV loc16,P`. Telling them apart needs the raw printed text, since `MOVL ACC,P` (shifted)
+  and `MOVL @ACC,P` (not) differ only by the `@` that the field helpers strip.
 - **`data/languages/tms320c28x.sinc`** (partial, the `mext_value` / `mext` /
   `mov_acc_mext_shift` macros) and the `MOV` / `ADD` / `SUB ACC,{loc16|#imm16}<<shift`
   constructors in **`_more.sinc`** and **`_ext56.sinc`** that call them — port of
