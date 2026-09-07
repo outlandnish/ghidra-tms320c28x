@@ -24,6 +24,12 @@
 // DSA already recovered on its own (the native forms) are left untouched, and only the
 // still-unresolved PREAD computed branches get an override. See issue #18.
 //
+// An override this analyzer installs is OWNED: it leaves a bookmark recording the table and
+// targets it published, and it will revoke and republish only what that bookmark claims. The
+// distinction matters because Ghidra writes every jump-table override -- ours, the user's,
+// and DSA's -- with USER_DEFINED symbols in one namespace, so nothing else in the program
+// distinguishes an edge this pass may correct from one it must not touch. See issue #72.
+//
 // Caveat: a recovered case whose body only clears an interrupt flag (AND/OR IFR,#mask)
 // decompiles as an empty `break` -- IFR is a scratch register whose write is never read
 // again, so the decompiler dead-code-eliminates it. The write is still shown in the
@@ -45,6 +51,9 @@ import ghidra.app.util.importer.MessageLog;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.lang.Processor;
+import ghidra.program.model.listing.Bookmark;
+import ghidra.program.model.listing.BookmarkManager;
+import ghidra.program.model.listing.BookmarkType;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.FunctionManager;
 import ghidra.program.model.listing.Instruction;
@@ -54,12 +63,16 @@ import ghidra.program.model.listing.Program;
 import ghidra.program.model.mem.Memory;
 import ghidra.program.model.mem.MemoryAccessException;
 import ghidra.program.model.mem.MemoryBlock;
+import ghidra.program.model.pcode.HighFunction;
 import ghidra.program.model.pcode.JumpTable;
 import ghidra.program.model.scalar.Scalar;
+import ghidra.program.model.symbol.Namespace;
 import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.ReferenceManager;
 import ghidra.program.model.symbol.RefType;
 import ghidra.program.model.symbol.SourceType;
+import ghidra.program.model.symbol.Symbol;
+import ghidra.program.model.symbol.SymbolTable;
 import ghidra.util.Msg;
 import ghidra.util.exception.CancelledException;
 import ghidra.util.exception.InvalidInputException;
@@ -76,6 +89,10 @@ public class TMS320C28xProgramReadSwitchAnalyzer extends AbstractAnalyzer {
 	private static final String DESCRIPTION =
 		"Recovers program-read (PREAD) switch tables that Decompiler Switch Analysis misses";
 	private static final String PROCESSOR_NAME = "TMS320C28x";
+	// Bookmark category marking an override as this analyzer's. Ghidra writes every jump-table
+	// override with USER_DEFINED symbols, so without this there is nothing in the program that
+	// tells one of ours apart from the user's.
+	private static final String OWNER_CATEGORY = "TMS320C28x PREAD switch";
 	private static final int MAX_ENTRIES = 1024;
 	private static final long TABLE_ENTRY_WORDS = 2;
 	// How far back of the table load the range guard may sit. The observed schedule puts two
@@ -107,29 +124,53 @@ public class TMS320C28xProgramReadSwitchAnalyzer extends AbstractAnalyzer {
 		while (instructions.hasNext()) {
 			monitor.checkCancelled();
 			Instruction branch = instructions.next();
-			if (!isComputedXar7Branch(branch) || isAlreadyResolved(program, branch)) {
+			// Revocation is reached through the branch, so an override whose LB itself was
+			// cleared away is not withdrawn here -- this pass walks instructions, not bookmarks.
+			// The case that actually occurs is the schedule changing while the LB survives.
+			if (!isComputedXar7Branch(branch)) {
 				continue;
 			}
 			Function function = functions.getFunctionContaining(branch.getMinAddress());
 			if (function == null) {
 				continue;
 			}
+			Bookmark marker = ownerMarker(program, branch.getMinAddress());
+			// Resolved but not ours -- DSA recovered it unaided, or the user overrode it by
+			// hand. Either way the edges are not this analyzer's to replace.
+			if (marker == null && isAlreadyResolved(program, branch)) {
+				continue;
+			}
+
+			Address table = null;
+			List<Address> targets = null;
 			Instruction tableInstruction = recoverProgramReadTable(branch);
-			if (tableInstruction == null) {
-				continue;
+			Integer count = tableInstruction == null ? null : recoverCaseCount(tableInstruction);
+			if (count != null) {
+				table = tableAddress(tableInstruction, immediateTableBase(tableInstruction));
+				targets = recoverTableTargets(program, table, branch, count);
 			}
-			Integer count = recoverCaseCount(tableInstruction);
-			if (count == null) {
-				continue;
-			}
-			Address table = tableAddress(tableInstruction, immediateTableBase(tableInstruction));
-			List<Address> targets = recoverTableTargets(program, table, branch, count);
-			if (targets == null) {
-				continue;
-			}
+
 			try {
-				installOverride(program, function, branch, targets);
-				Msg.info(this, "PREAD switch override at " + branch.getMinAddress() +
+				if (targets == null) {
+					// The schedule no longer recovers -- the listing changed under an override
+					// we published. Withdraw it rather than leaving edges nothing stands behind.
+					if (marker != null) {
+						revokeOverride(program, function, branch.getMinAddress(), marker, monitor,
+							log);
+						Msg.info(this, "revoked stale PREAD switch override at " +
+							branch.getMinAddress());
+					}
+					continue;
+				}
+				String descriptor = describeOverride(table, targets);
+				if (marker != null && descriptor.equals(marker.getComment())) {
+					continue;
+				}
+				installOverride(program, function, branch, targets, log);
+				program.getBookmarkManager().setBookmark(branch.getMinAddress(),
+					BookmarkType.ANALYSIS, OWNER_CATEGORY, descriptor);
+				Msg.info(this, (marker == null ? "PREAD switch override at " :
+					"republished PREAD switch override at ") + branch.getMinAddress() +
 					" table=" + table + " cases=" + targets.size());
 			}
 			catch (InvalidInputException | RuntimeException exception) {
@@ -137,6 +178,67 @@ public class TMS320C28xProgramReadSwitchAnalyzer extends AbstractAnalyzer {
 			}
 		}
 		return true;
+	}
+
+	/** The bookmark marking an override as this analyzer's, or null if it is not ours. */
+	private static Bookmark ownerMarker(Program program, Address branch) {
+		return program.getBookmarkManager().getBookmark(branch, BookmarkType.ANALYSIS,
+			OWNER_CATEGORY);
+	}
+
+	/**
+	 * What was published, as the marker's comment. Compared verbatim on a later pass, so a
+	 * re-run over an unchanged listing is a no-op and a changed table republishes.
+	 *
+	 * <p>The targets are folded to a digest rather than listed. This string is a bookmark
+	 * comment the user reads in the Bookmarks window, and a hundred-case switch would fill it
+	 * with addresses that say nothing the table base and count do not.
+	 */
+	private static String describeOverride(Address table, List<Address> targets) {
+		long digest = 0;
+		for (Address target : targets) {
+			digest = digest * 31 + target.getOffset();
+		}
+		return String.format("table=%s cases=%d targets=%08x", table, targets.size(),
+			(int) (digest ^ (digest >>> 32)));
+	}
+
+	/**
+	 * Withdraw an override this analyzer published: drop the decompiler's switch symbols, the
+	 * edges that fed them, and the ownership marker.
+	 *
+	 * <p>Only the analyzer's own {@code ANALYSIS} references go. A user's computed-jump
+	 * reference at the same branch is left where it is -- it was not published from here, and
+	 * nothing about this schedule failing to re-recover makes it wrong.
+	 */
+	private void revokeOverride(Program program, Function function, Address branch,
+			Bookmark marker, TaskMonitor monitor, MessageLog log)
+			throws InvalidInputException, CancelledException {
+		SymbolTable symbols = program.getSymbolTable();
+		Namespace overrideSpace = HighFunction.findOverrideSpace(function);
+		Namespace switchSpace = overrideSpace == null ? null
+				: symbols.getNamespace("jmp_" + branch, overrideSpace);
+		if (switchSpace != null && !HighFunction.clearNamespace(symbols, switchSpace)) {
+			// Something other than the label symbols writeOverride() lays down is in there.
+			// Leave the whole thing alone -- including the marker, so this is retried rather
+			// than silently forgotten.
+			log.appendMsg(NAME, "kept switch override namespace at " + branch +
+				": it holds symbols this analyzer did not write");
+			return;
+		}
+		removeAnalysisComputedJumps(program, branch);
+		program.getBookmarkManager().removeBookmark(marker);
+		CreateFunctionCmd.fixupFunctionBody(program, function, monitor);
+	}
+
+	private static void removeAnalysisComputedJumps(Program program, Address branch) {
+		ReferenceManager references = program.getReferenceManager();
+		for (Reference reference : references.getReferencesFrom(branch)) {
+			if (reference.getReferenceType() == RefType.COMPUTED_JUMP &&
+				reference.getSource() == SourceType.ANALYSIS) {
+				references.delete(reference);
+			}
+		}
 	}
 
 	/**
@@ -303,11 +405,14 @@ public class TMS320C28xProgramReadSwitchAnalyzer extends AbstractAnalyzer {
 	}
 
 	private void installOverride(Program program, Function function, Instruction branch,
-			List<Address> targets) throws InvalidInputException {
+			List<Address> targets, MessageLog log) throws InvalidInputException {
 		Address lb = branch.getMinAddress();
 		Address entry = function.getEntryPoint();
 		ReferenceManager references = program.getReferenceManager();
 		FunctionManager functions = program.getFunctionManager();
+		// Drop whatever a previous run of this analyzer published here, so republishing a
+		// changed table replaces its edges instead of accumulating a second set.
+		removeAnalysisComputedJumps(program, lb);
 		// Computed-jump references so the case blocks are reachable in the listing and the
 		// function body can absorb them below; mirrors what Decompiler Switch Analysis records.
 		for (Address target : targets) {
@@ -317,15 +422,36 @@ public class TMS320C28xProgramReadSwitchAnalyzer extends AbstractAnalyzer {
 		// (each case block looked like orphan code); required so the body fold below succeeds.
 		for (Address target : targets) {
 			Function caseFunction = functions.getFunctionAt(target);
-			if (caseFunction != null && !caseFunction.getEntryPoint().equals(entry)) {
-				functions.removeFunction(target);
+			if (caseFunction == null || caseFunction.getEntryPoint().equals(entry)) {
+				continue;
 			}
+			// Never a function somebody put there. Removing one discards its name, signature,
+			// comments and applied types with no way back, and a case block that carries any of
+			// those is exactly the analysis worth protecting. Losing the body fold costs
+			// readability; the override alone still recovers the switch.
+			if (isUserOwned(caseFunction)) {
+				log.appendMsg(NAME, "kept user-owned function " + caseFunction.getName() + " at " +
+					target + "; case block not folded into " + function.getName());
+				continue;
+			}
+			functions.removeFunction(target);
 		}
 		// Install the decompiler jump-table override with the recovered case targets.
+		// writeOverride() clears the switch namespace first, so this republishes cleanly.
 		new JumpTable(lb, new ArrayList<>(targets), true, 0).writeOverride(function);
 		// Re-form the function body so the case blocks fold in, following the new references
 		// (mirrors DSA). Best-effort: the override alone already recovers the switch.
 		new CreateFunctionCmd(null, entry, null, SourceType.ANALYSIS, false, true).applyTo(program);
+	}
+
+	/** Whether a function's name came from a person (or a symbol file) rather than analysis. */
+	private static boolean isUserOwned(Function function) {
+		Symbol symbol = function.getSymbol();
+		if (symbol == null) {
+			return false;
+		}
+		SourceType source = symbol.getSource();
+		return source == SourceType.USER_DEFINED || source == SourceType.IMPORTED;
 	}
 
 	private static boolean isAlreadyResolved(Program program, Instruction branch) {
