@@ -142,6 +142,17 @@ jobs:
       - name: Smoke test — language loads and disassembles (runtime cspec/pspec bind)
         run: bash tests/run_disasm_test.sh
 
+      # Operands whose bits are SPLIT across both words of a two-word instruction are
+      # rejoined in a disassembly action, and Ghidra's assembler works by INVERTING that
+      # expression. It can invert `|` over disjoint fields but not `+` -- and since the
+      # fields never overlap the two are numerically identical, so writing `+` leaves
+      # disassembly, emulation and the decompiler untouched and every step above still
+      # green. The only casualty is "Patch Instruction" and the WildcardAssembler, on the
+      # 22-bit pointer loads that are how this target names every peripheral. Nothing else
+      # in CI can see that, which is why it gets its own gate.
+      - name: Invariant — split immediates still assemble
+        run: bash tests/run_assembler_check.sh
+
       # The conditioning intrinsics (TMU_COND_OPERAND / FPU_MINMAX_FLUSH) are pcodeops,
       # so their behaviour lives in the compiled state modifier rather than the .sla. The
       # semantics test below needs it installed -- and the pspec names the class, so
