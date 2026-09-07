@@ -1,5 +1,10 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Nishanth Samala
+# Copyright the mwdmwd/ghidra-c28x contributors (https://github.com/mwdmwd/ghidra-c28x)
+#
+# Portions adapted from mwdmwd/ghidra-c28x (Apache-2.0): the SXM-governed extension
+# macros mext_value / mext / mov_acc_mext_shift below. See THIRD-PARTY.md.
+#
 # TMS320C28x instruction constructors.
 # Included by tms320c28x.slaspec.
 #
@@ -151,6 +156,46 @@ macro setNZ16(r) {
 macro setNZ32(r) {
     $(N) = (r s< 0);
     $(Z) = (r == 0);
+}
+
+# --- SXM-governed 16->32 extension (SPRU430F) --------------------------------
+# The MOV/ADD/SUB ACC,{loc16|#imm16}<<shift family extends its 16-bit operand
+# according to ST0.SXM: sign-extend when SXM=1, zero-extend when SXM=0. These
+# constructors used to hardcode one or the other -- most sext'd with the comment
+# "per SXM=1 (common case)", while the #imm16 forms zext'd -- so each was wrong
+# in whichever mode it did not assume. Measured on two production images, the
+# SXM=0 case is not the rare one: of the sign-extending instructions reached with
+# a known SXM state, 1180 of 2255 in a DIR image and 359 of 587 in a PMR image run
+# under CLRC SXM. Adapted from mwdmwd/ghidra-c28x (Apache-2.0); see THIRD-PARTY.md.
+#
+# Written as (zext | sext & mask) rather than a branch: sign extension only ever
+# contributes UPPER bits, so the two forms share their low 16 bits exactly, and
+# this shape lets the decompiler fold the whole thing away wherever SXM is known.
+macro mext_value(out, source) {
+    local sxm_mask:4 = 0 - zext($(SXM));
+    local zval:4 = zext(source);
+    local sval:4 = sext(source);
+    out = zval | (sval & sxm_mask);
+}
+
+# Snapshot the operand FIRST, so an architectural operand is evaluated exactly
+# once -- loc16 can be a post-increment addressing mode, and reading it twice
+# would step the pointer twice.
+macro mext(out, in) {
+    local source:2 = in;
+    mext_value(out, source);
+}
+
+# MOV ACC,loc16<<shift has an SXM-dependent upper half but an EXACT, SXM-
+# independent low half. Commit the full architectural result, then restate that
+# low half so ordinary 16-bit consumers see the invariant directly instead of
+# carrying the SXM term through every downstream expression.
+macro mov_acc_mext_shift(in, shift) {
+    local source:2 = in;
+    local full:4;
+    mext_value(full, source);
+    ACC = full << shift;
+    AL = source << shift;
 }
 
 # --- shared loc16 / loc32 addressing sub-tables (Table 5-1) --------------------
