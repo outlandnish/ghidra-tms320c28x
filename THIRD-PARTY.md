@@ -213,6 +213,24 @@ Files adapted so far:
   labels through the subsequent CMP/BF and `LB *XAR7`), and update N/Z; the SUB
   canonical variant adds `C=1` and N/Z updates for arithmetic-flag parity. The
   non-canonical (default) constructors are unchanged. See #18.
+- **`data/languages/tms320c28x.sinc`** (partial, the `mext_value` / `mext` /
+  `mov_acc_mext_shift` macros) and the `MOV` / `ADD` / `SUB ACC,{loc16|#imm16}<<shift`
+  constructors in **`_more.sinc`** and **`_ext56.sinc`** that call them — port of
+  mwdmwd's `cb3f290`. SPRU430F extends that family's 16-bit operand per `ST0.SXM`:
+  sign-extend at SXM=1, zero-extend at SXM=0. This module hardcoded one or the other
+  per constructor — most sign-extended, commented "per SXM=1 (common case)", while the
+  `#imm16` forms zero-extended — so each was wrong in whichever mode it did not assume.
+  Not a rare case: of the sign-extending instructions reached with a known SXM state,
+  **1180 of 2255** in a DIR image and **359 of 587** in a PMR image run under `CLRC SXM`
+  (`ghidra_scripts/SurveyIdioms.java`, #73). `mext_value` writes the mode-selected
+  extension as `zext | (sext & mask)` rather than a branch, which the decompiler folds
+  away wherever SXM is known; `mext` snapshots the operand first so a post-increment
+  `loc16` is evaluated exactly once; `mov_acc_mext_shift` additionally restates the
+  low half, which is identical under both modes, so 16-bit consumers do not carry the
+  SXM term. Local changes: the `<<#16` forms are deliberately NOT routed through the
+  macros — a 16-bit shift discards every bit extension could contribute, so the term
+  would only be folded away again — and the `switch_canonical=1` variants keep their
+  proven zero-extension. See #73.
 - **`data/languages/tms320c28x_rpt.sinc`** (new) and **`data/languages/tms320c28x.slaspec`**
   (partial: `RPTC` / `RB_RSTART` / `RB_RC` / `RB_RE` / `RB_RSIZE` / `RB_RA`
   register slots + `rpt_active` / `rptb_flag` / `rpt_phase` context bits) —

@@ -36,17 +36,21 @@
 # ADD ACC,loc16<<T   0x5623  (shift by T(3:0))
 :ADD ACCreg, loc16^"<<T"  is rpt_phase=1 & op16=0x5623 ; loc16 & ACCreg  {
     local sh:4 = zext(T:2) & 0xf;
-    ACC = ACC + (sext(loc16) << sh);
+    local b:4;
+    mext(b, loc16);
+    ACC = ACC + (b << sh);
 }
 # SUB ACC,loc16<<T   0x5627
 :SUB ACCreg, loc16^"<<T"  is rpt_phase=1 & op16=0x5627 ; loc16 & ACCreg  {
     local sh:4 = zext(T:2) & 0xf;
-    ACC = ACC - (sext(loc16) << sh);
+    local b:4;
+    mext(b, loc16);
+    ACC = ACC - (b << sh);
 }
 # MOV ACC,loc16<<T   0x5606
 :MOV ACCreg, loc16^"<<T"  is rpt_phase=1 & op16=0x5606 ; loc16 & ACCreg  {
     local sh:4 = zext(T:2) & 0xf;
-    ACC = sext(loc16) << sh;
+    mov_acc_mext_shift(loc16, sh);
 }
 # MOV ACC,loc16<<#1..15   word1=0x5603 ; word2 = 0000 SHFT LLLL LLLL  (2-word; SHFT
 # in word2 bits 8-11, loc16 in the low byte). The dominant missing opcode in the
@@ -57,8 +61,8 @@
 # instruction of a validated switch dispatch (see #18). The unsigned-selector semantics
 # make ACC exactly bounded by loc16's [0, 0xffff] range, which is what lets the
 # decompiler's Decompiler Switch Analysis prove the case-count bound reachable via the
-# subsequent CMP/BF and the LB *XAR7. With the default SXM=1 sign-extend the ACC value
-# carries an unrestricted upper half and the range check disappears. Adapted from
+# subsequent CMP/BF and the LB *XAR7. The default form extends per SXM, whose upper half
+# is therefore not a constant the range check can see through. Adapted from
 # mwdmwd/ghidra-c28x (Apache-2.0); see THIRD-PARTY.md.
 :MOV ACCreg, loc16^"<<#"^shft_hi4  is rpt_phase=1 & switch_canonical=1 & op16=0x5603 ; shft_hi4 & loc16 & ACCreg {
     local sh:4 = zext(shft_hi4:1);
@@ -67,7 +71,7 @@
 }
 :MOV ACCreg, loc16^"<<#"^shft_hi4  is rpt_phase=1 & op16=0x5603 ; shft_hi4 & loc16 & ACCreg {
     local sh:4 = zext(shft_hi4:1);
-    ACC = sext(loc16) << sh;
+    mov_acc_mext_shift(loc16, sh);
 }
 # ADD ACC,loc16<<#1..15   word1=0x5604 ; word2 = 0000 SHFT LLLL LLLL  (2-word; same
 # layout as MOV ACC,loc16<<# above). dis2000-confirmed (RWD image, word 0x5604).
@@ -84,7 +88,9 @@
 }
 :ADD ACCreg, loc16^"<<#"^shft_hi4  is rpt_phase=1 & op16=0x5604 ; shft_hi4 & loc16 & ACCreg {
     local sh:4 = zext(shft_hi4:1);
-    ACC = ACC + (sext(loc16) << sh);
+    local b:4;
+    mext(b, loc16);
+    ACC = ACC + (b << sh);
 }
 # ADDUL ACC,loc32    0x5653  (add unsigned 32)
 :ADDUL ACCreg, loc32 is rpt_phase=1 & op16=0x5653 ; loc32 & ACCreg  { ACC = ACC + loc32; }
