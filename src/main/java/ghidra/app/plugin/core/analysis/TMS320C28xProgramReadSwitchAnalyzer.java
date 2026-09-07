@@ -5,16 +5,20 @@
 // Decompiler Switch Analysis cannot enumerate. The shipped C28x firmware loads a switch
 // target from a program-memory .long table with a PAIRED PREAD:
 //
-//   MOVL XAR7,#table ; MOVL ACC,XAR7 ; ADDU ACC,@ARn ; MOVL XAR7,ACC
-//   PREAD @AL,*XAR7 ; ADDB XAR7,#1 ; PREAD @AH,*XAR7 ; MOVL XAR7,ACC ; LB *XAR7
+//   MOVL XAR7,#table ; MOVL ACC,@XAR7 ; [index fold] ; ADDU ACC,@ARn ; MOVL @XAR7,ACC
+//   PREAD @AL,*XAR7 ; ADDB XAR7,#1 ; PREAD @AH,*XAR7 ; MOVL @XAR7,ACC ; LB *XAR7
 //
 // The target is thus ACC = CONCAT22(load16, load16). DSA models that split load and gives
 // up ("Jumptable with 0 entries; treating indirect jump as call") even after the branch is
 // perfectly canonicalized to a single BRANCHIND -- verified against shipped C28x firmware
-// (at 0xa44e0) where a byte-identical NATIVE data-space dispatch (MOVL XAR7,*+XAR7[0])
-// recovers but the PREAD one never does. So instead of leaning on DSA, this analyzer reads
-// the validated .long table itself and installs a decompiler jump-table OVERRIDE
-// (JumpTable.writeOverride) with the recovered case targets.
+// where a byte-identical NATIVE data-space dispatch (MOVL XAR7,*+XAR7[0]) recovers but the
+// PREAD one never does. So instead of leaning on DSA, this analyzer reads the validated
+// .long table itself and installs a decompiler jump-table OVERRIDE (JumpTable.writeOverride)
+// with the recovered case targets.
+//
+// The optional index fold is the accumulate-indexed family of issue #66, whose selector is
+// scaled BEFORE it is bounded -- so the low bound is folded, pre-scaled, into the index
+// register rather than into ACC, and lands between the base copy and the accumulate.
 //
 // It runs after DSA (priority FUNCTION_ANALYSIS.after > CODE_ANALYSIS) so that dispatches
 // DSA already recovered on its own (the native forms) are left untouched, and only the
@@ -25,6 +29,8 @@
 // again, so the decompiler dead-code-eliminates it. The write is still shown in the
 // listing; surfacing it in the decompiler needs a side-effecting IFR model. See issue #29.
 package ghidra.app.plugin.core.analysis;
+
+import static ghidra.app.plugin.core.analysis.TMS320C28xSwitchShapes.*;
 
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -72,7 +78,10 @@ public class TMS320C28xProgramReadSwitchAnalyzer extends AbstractAnalyzer {
 	private static final String PROCESSOR_NAME = "TMS320C28x";
 	private static final int MAX_ENTRIES = 1024;
 	private static final long TABLE_ENTRY_WORDS = 2;
-	private static final long CODE_ADDRESS_MASK = 0x003fffffL;
+	// How far back of the table load the range guard may sit. The observed schedule puts two
+	// instructions in between (the scale and the index load); six leaves room for a variant
+	// with a few more, while still keeping the scan inside one straight-line run.
+	private static final int MAX_GUARD_DISTANCE = 6;
 
 	public TMS320C28xProgramReadSwitchAnalyzer() {
 		super(NAME, DESCRIPTION, AnalyzerType.INSTRUCTION_ANALYZER);
@@ -105,11 +114,16 @@ public class TMS320C28xProgramReadSwitchAnalyzer extends AbstractAnalyzer {
 			if (function == null) {
 				continue;
 			}
-			Address table = recoverProgramReadTable(branch);
-			if (table == null) {
+			Instruction tableInstruction = recoverProgramReadTable(branch);
+			if (tableInstruction == null) {
 				continue;
 			}
-			List<Address> targets = recoverTableTargets(program, table, branch);
+			Integer count = recoverCaseCount(tableInstruction);
+			if (count == null) {
+				continue;
+			}
+			Address table = tableAddress(tableInstruction, immediateTableBase(tableInstruction));
+			List<Address> targets = recoverTableTargets(program, table, branch, count);
 			if (targets == null) {
 				continue;
 			}
@@ -127,53 +141,128 @@ public class TMS320C28xProgramReadSwitchAnalyzer extends AbstractAnalyzer {
 
 	/**
 	 * Match the program-read dispatch tail ending at the {@code LB *XAR7} and return the
-	 * program-memory table base, or null if this is not a PREAD dispatch.
+	 * instruction that loads the table base, or null if this is not a PREAD dispatch.
 	 *
 	 * <pre>
 	 * MOVL XAR7,#table   (tableInstruction)
-	 * MOVL ACC,XAR7      (baseCopy)
+	 * MOVL ACC,@XAR7     (baseCopy)
+	 * SUBB XAR4,#2       (adjustment)    -- optional; see below
 	 * ADDU ACC,@ARn      (indexAdd)      -- unsigned, no shift; scale is folded into ARn
-	 * MOVL XAR7,ACC      (addressCopy)
+	 * MOVL @XAR7,ACC     (addressCopy)
 	 * PREAD @AL,*XAR7    (lowRead)
 	 * ADDB XAR7,#1       (increment)
 	 * PREAD @AH,*XAR7    (highRead)
-	 * MOVL XAR7,ACC      (finalCopy)
+	 * MOVL @XAR7,ACC     (finalCopy)
 	 * LB   *XAR7         (branch)
 	 * </pre>
+	 *
+	 * <p>The adjustment is the low-bound fold of the accumulate-indexed family (issue #66).
+	 * The index is scaled BEFORE it is bounded, so the immediate is pre-scaled and is applied
+	 * to the index register rather than to ACC -- and it does not move where the entries are
+	 * read from: the compiler subtracts {@code entrySize * lowestCase}, so the lowest in-range
+	 * selector addresses the immediate table base exactly, which is where the walk below
+	 * already starts. Only its presence has to be tolerated, and only on the register the
+	 * accumulate then sources -- {@code SUBB XAR4} against {@code ADDU ACC,@AR4} is the same
+	 * register in its 32-bit form.
 	 */
-	private static Address recoverProgramReadTable(Instruction branch) {
+	private static Instruction recoverProgramReadTable(Instruction branch) {
 		Instruction finalCopy = contiguousPrevious(branch);
 		Instruction highRead = contiguousPrevious(finalCopy);
 		Instruction increment = contiguousPrevious(highRead);
 		Instruction lowRead = contiguousPrevious(increment);
 		Instruction addressCopy = contiguousPrevious(lowRead);
 		Instruction indexAdd = contiguousPrevious(addressCopy);
-		Instruction baseCopy = contiguousPrevious(indexAdd);
-		Instruction tableInstruction = contiguousPrevious(baseCopy);
+		String index = unsignedAccumulateSource(indexAdd);
 		if (!isRegisterMove(finalCopy, "movl", "XAR7", "ACC") ||
 			!isPreadInto(highRead, "AH") ||
 			!isImmediateAdd(increment, "addb", "XAR7", 1) ||
 			!isPreadInto(lowRead, "AL") ||
-			!isRegisterMove(addressCopy, "movl", "XAR7", "ACC") ||
-			!isUnsignedAccAdd(indexAdd) ||
-			!isRegisterMove(baseCopy, "movl", "ACC", "XAR7")) {
+			!isRegisterMove(addressCopy, "movl", "XAR7", "ACC") || index == null) {
 			return null;
 		}
-		Scalar tableScalar = immediateTableBase(tableInstruction);
-		if (tableScalar == null) {
+
+		// The bound fold is absent from a zero-based switch, so its slot in the schedule
+		// holds the base copy instead.
+		Instruction baseCopy = contiguousPrevious(indexAdd);
+		if (isIndexAdjustment(baseCopy, index)) {
+			baseCopy = contiguousPrevious(baseCopy);
+		}
+		if (!isRegisterMove(baseCopy, "movl", "ACC", "XAR7")) {
 			return null;
 		}
-		return tableAddress(tableInstruction, tableScalar);
+		Instruction tableInstruction = contiguousPrevious(baseCopy);
+		return immediateTableBase(tableInstruction) == null ? null : tableInstruction;
+	}
+
+	/** An immediate add or subtract on {@code index}, in either its 16- or 32-bit form. */
+	private static boolean isIndexAdjustment(Instruction instruction, String index) {
+		return recoverWordImmediateDelta(instruction, index) != null ||
+			recoverWordImmediateDelta(instruction, "X" + index) != null;
 	}
 
 	/**
-	 * Read consecutive 2-word .long entries from {@code table} until one is not a valid code
-	 * address inside the branch's own memory block, and return the recovered case targets.
-	 * The count is data-driven (bounded by the guard the compiler emitted, which places
-	 * non-code immediately after the table); requires at least three distinct targets.
+	 * How many cases the range guard admits, or null when no guard proves a bound.
+	 *
+	 * <pre>
+	 * MOV  AH,@AL      ; the selector, copied so the fold does not destroy it
+	 * ADDB AH,#-low    ; low-bound fold (absent when zero-based)
+	 * CMPB AH,#high    ; the bound
+	 * SB   default,HI  ; above -&gt; default; falls through into the dispatch
+	 * </pre>
+	 *
+	 * <p>This bound is not optional. The table has no terminator, and reading entries until
+	 * one stops looking like a code address does not stop at the end of the table -- TI packs
+	 * these tables back to back, so the walk runs straight on into the NEXT switch's table and
+	 * every entry there is a perfectly good code address. Measured on shipped firmware: a
+	 * 14-case table read that way yields 27 cases, the extra 13 being another function's case
+	 * blocks. So the count comes from the guard, and an unguarded dispatch is declined.
+	 *
+	 * <p>The guard sits further back than in the data-space schedules -- the scale and the
+	 * index load stand between it and the table load -- so scan back over the straight-line
+	 * run rather than indexing a fixed slot.
+	 */
+	private static Integer recoverCaseCount(Instruction tableInstruction) {
+		Instruction current = contiguousPrevious(tableInstruction);
+		Instruction next = tableInstruction;
+		for (int steps = 0; steps < MAX_GUARD_DISTANCE && current != null; steps++) {
+			Address fallThrough = current.getFallThrough();
+			if (fallThrough == null || !fallThrough.equals(next.getMinAddress())) {
+				return null;
+			}
+			if (current.getFlowType().isJump() && current.getFlowType().isConditional()) {
+				return recoverBoundedCount(current);
+			}
+			next = current;
+			current = contiguousPrevious(current);
+		}
+		return null;
+	}
+
+	/**
+	 * The case count proved by {@code guard}, a conditional branch to the default path taken
+	 * when the selector is unsigned-above the compared bound.
+	 */
+	private static Integer recoverBoundedCount(Instruction guard) {
+		Instruction compare = contiguousPrevious(guard);
+		Scalar high = scalarOperand(compare, 1);
+		if (!"HI".equalsIgnoreCase(printedField(guard, 1)) || !isMnemonic(compare, "cmpb") ||
+			high == null) {
+			return null;
+		}
+		long count = high.getUnsignedValue() + 1;
+		return count < 2 || count > MAX_ENTRIES ? null : (int) count;
+	}
+
+	/**
+	 * Read the {@code count} 2-word .long entries at {@code table} and return the case
+	 * targets, or null unless EVERY one is a valid code address inside the branch's own
+	 * memory block. Requires at least three distinct targets.
+	 *
+	 * <p>All-or-nothing on purpose: the count comes from the guard, so an entry that is not
+	 * code means the recovered shape is not this table, not that the table ended early.
 	 */
 	private static List<Address> recoverTableTargets(Program program, Address table,
-			Instruction branch) {
+			Instruction branch, int count) {
 		Memory memory = program.getMemory();
 		MemoryBlock tableBlock = memory.getBlock(table);
 		MemoryBlock branchBlock = memory.getBlock(branch.getMinAddress());
@@ -182,32 +271,32 @@ public class TMS320C28xProgramReadSwitchAnalyzer extends AbstractAnalyzer {
 			return null;
 		}
 		int wordSize = table.getAddressSpace().getAddressableUnitSize();
-		List<Address> targets = new ArrayList<>();
+		List<Address> targets = new ArrayList<>(count);
 		Set<Long> distinct = new HashSet<>();
 		try {
-			for (int index = 0; index < MAX_ENTRIES; index++) {
+			for (int index = 0; index < count; index++) {
 				Address entry = table.add((long) index * TABLE_ENTRY_WORDS * wordSize);
 				if (!tableBlock.contains(entry) ||
 					!tableBlock.contains(entry.add((long) TABLE_ENTRY_WORDS * wordSize - 1))) {
-					break;
+					return null;
 				}
 				long low = memory.getShort(entry, false) & 0xffffL;
 				long high = memory.getShort(entry.add(wordSize), false) & 0xffffL;
 				long rawTarget = (high << 16) | low;
 				if ((rawTarget & ~CODE_ADDRESS_MASK) != 0) {
-					break;
+					return null;
 				}
 				Address target = wordAddress(table, rawTarget & CODE_ADDRESS_MASK);
 				MemoryBlock targetBlock = memory.getBlock(target);
 				if (targetBlock != branchBlock || !targetBlock.isExecute() ||
 					!targetBlock.isInitialized()) {
-					break;
+					return null;
 				}
 				targets.add(target);
 				distinct.add(rawTarget);
 			}
 		}
-		catch (MemoryAccessException exception) {
+		catch (MemoryAccessException | RuntimeException exception) {
 			return null;
 		}
 		return distinct.size() >= 3 ? targets : null;
@@ -250,113 +339,4 @@ public class TMS320C28xProgramReadSwitchAnalyzer extends AbstractAnalyzer {
 		return computedJumps >= 2;
 	}
 
-	// --- instruction matchers (mirrors of TMS320C28xSwitchAnalyzer's private helpers) ------
-
-	private static boolean isComputedXar7Branch(Instruction instruction) {
-		return isMnemonic(instruction, "lb") && instruction.getNumOperands() == 0 &&
-			instruction.toString().toUpperCase().endsWith("*XAR7") &&
-			instruction.getFlowType().isJump() && instruction.getFlowType().isComputed();
-	}
-
-	private static boolean isUnsignedAccAdd(Instruction instruction) {
-		// ADDU ACC,@ARn -- unsigned (zero-extended) add of a 16-bit AR into ACC.
-		return isMnemonic(instruction, "addu") && isRegisterOperand(instruction, 0, "ACC") &&
-			instruction != null && instruction.getNumOperands() == 2 &&
-			registerName(instruction, 1) != null && registerName(instruction, 1).startsWith("AR");
-	}
-
-	// PREAD @AH,*XAR7 renders as one operand (@AH) with "*XAR7" baked into the mnemonic print
-	// form (like LB *XAR7), so match the destination register and the "*XAR7" tail rather than
-	// a second XAR7 operand.
-	private static boolean isPreadInto(Instruction instruction, String destination) {
-		return isMnemonic(instruction, "pread") &&
-			isRegisterOperand(instruction, 0, destination) &&
-			instruction.toString().toUpperCase().endsWith("*XAR7");
-	}
-
-	// MOVL XAR7,#imm renders as a single scalar operand with "XAR7,#" in the mnemonic print form
-	// (XAR7 is a print literal here, not an operand), so read the table base from operand 0.
-	private static Scalar immediateTableBase(Instruction instruction) {
-		if (!isMnemonic(instruction, "movl") ||
-			!instruction.toString().toUpperCase().contains("XAR7,#")) {
-			return null;
-		}
-		return scalarOperand(instruction, 0);
-	}
-
-	private static Address tableAddress(Instruction tableInstruction, Scalar scalar) {
-		return wordAddress(tableInstruction.getAddress(), scalar.getUnsignedValue() & CODE_ADDRESS_MASK);
-	}
-
-	private static boolean isImmediateAdd(Instruction instruction, String mnemonic,
-			String destination, long value) {
-		Scalar scalar = scalarOperand(instruction, 1);
-		return isMnemonic(instruction, mnemonic) &&
-			isRegisterOperand(instruction, 0, destination) && scalar != null &&
-			scalar.getUnsignedValue() == value;
-	}
-
-	private static boolean isRegisterMove(Instruction instruction, String mnemonic,
-			String destination, String source) {
-		return isMnemonic(instruction, mnemonic) &&
-			isRegisterOperand(instruction, 0, destination) &&
-			isRegisterOperand(instruction, 1, source);
-	}
-
-	private static boolean isMnemonic(Instruction instruction, String mnemonic) {
-		return instruction != null && instruction.getMnemonicString().equalsIgnoreCase(mnemonic);
-	}
-
-	private static String registerName(Instruction instruction, int operand) {
-		if (instruction == null || operand >= instruction.getNumOperands()) {
-			return null;
-		}
-		Object[] objects = instruction.getOpObjects(operand);
-		if (objects.length == 1 &&
-			objects[0] instanceof ghidra.program.model.lang.Register register) {
-			return register.getName();
-		}
-		return null;
-	}
-
-	private static boolean isRegisterOperand(Instruction instruction, int operand,
-			String registerName) {
-		if (instruction == null || operand >= instruction.getNumOperands()) {
-			return false;
-		}
-		ghidra.program.model.lang.Register register = instruction.getRegister(operand);
-		if (register != null && register.getName().equalsIgnoreCase(registerName)) {
-			return true;
-		}
-		Object[] objects = instruction.getOpObjects(operand);
-		if (objects.length == 1 &&
-			objects[0] instanceof ghidra.program.model.lang.Register objectRegister &&
-			objectRegister.getName().equalsIgnoreCase(registerName)) {
-			return true;
-		}
-		return instruction.getDefaultOperandRepresentation(operand)
-			.equalsIgnoreCase("*" + registerName);
-	}
-
-	private static Scalar scalarOperand(Instruction instruction, int operand) {
-		return instruction == null || operand >= instruction.getNumOperands()
-				? null
-				: instruction.getScalar(operand);
-	}
-
-	private static Instruction contiguousPrevious(Instruction instruction) {
-		if (instruction == null) {
-			return null;
-		}
-		Instruction previous = instruction.getPrevious();
-		return previous != null && previous.getMaxAddress().next().equals(instruction.getMinAddress())
-				? previous
-				: null;
-	}
-
-	/** Convert an architectural C28 word address to Ghidra's byte-offset Address. */
-	private static Address wordAddress(Address basis, long wordOffset) {
-		int wordSize = basis.getAddressSpace().getAddressableUnitSize();
-		return basis.getAddressSpace().getAddress(Math.multiplyExact(wordOffset, wordSize));
-	}
 }

@@ -13,6 +13,8 @@
 // in MOVL XAR7,*+XAR7[0]) remain recognizable. See THIRD-PARTY.md.
 package ghidra.app.plugin.core.analysis;
 
+import static ghidra.app.plugin.core.analysis.TMS320C28xSwitchShapes.*;
+
 import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -67,7 +69,6 @@ public class TMS320C28xSwitchAnalyzer extends AbstractAnalyzer {
 	private static final String CONTEXT_NAME = "switch_canonical";
 	private static final int MAX_ENTRIES = 1024;
 	private static final int MAX_DISPATCH_INSTRUCTIONS = 20;
-	private static final long CODE_ADDRESS_MASK = 0x003fffffL;
 	private static final long TABLE_ENTRY_WORDS = 2;
 
 	public TMS320C28xSwitchAnalyzer() {
@@ -168,7 +169,7 @@ public class TMS320C28xSwitchAnalyzer extends AbstractAnalyzer {
 		}
 
 		Guard guard = recoverSoleUnsignedGuard(program, dispatch, monitor);
-		if (guard == null || !hasConsistentIndexArithmetic(dispatch.indexExpression, guard.low)) {
+		if (guard == null || !hasConsistentIndexArithmetic(dispatch, guard.low)) {
 			return null;
 		}
 		if (!hasExclusiveStraightLineDispatch(program, guard, dispatch)) {
@@ -202,6 +203,10 @@ public class TMS320C28xSwitchAnalyzer extends AbstractAnalyzer {
 			return candidate;
 		}
 		candidate = recoverNativeAr6Dispatch(branch);
+		if (candidate != null) {
+			return candidate;
+		}
+		candidate = recoverNativeAdduDispatch(branch);
 		if (candidate != null) {
 			return candidate;
 		}
@@ -397,6 +402,70 @@ public class TMS320C28xSwitchAnalyzer extends AbstractAnalyzer {
 			DispatchVariant.NATIVE_AR6_ZERO);
 	}
 
+	/**
+	 * Recover the accumulate-indexed schedule, as observed in shipped firmware:
+	 *
+	 * <pre>
+	 * MOV  ACC,@ARn &lt;&lt; #1   ; scale, in place -- AL is ACC's own low half
+	 * MOVZ ARn,@AL           ; index = the scaled value, read back out of AL
+	 * ADD  @ARn,#-2*low      ; pre-scaled low-bound adjust (absent when zero-based)
+	 * MOVL XAR7,#table
+	 * MOVL ACC,@XAR7
+	 * ADDU ACC,@ARn          ; unsigned accumulate
+	 * MOVL @XAR7,ACC
+	 * MOVL XAR7,*+XAR7[0]
+	 * LB   *XAR7
+	 * </pre>
+	 *
+	 * Three things separate this from the other native schedules. The scale writes
+	 * ACC and is consumed through AL, ACC's own low half, so the index is already
+	 * multiplied by the entry size before the bound adjustment -- which is therefore
+	 * pre-scaled, and applied to the index register rather than to ACC. And the
+	 * accumulate is ADDU, explicitly unsigned, so no SETC/CLRC SXM appears in the
+	 * schedule to anchor the extension mode; MOVZ and the unsigned guard carry that
+	 * proof instead. The canonicalized site is the scale, whose ordinary P-Code
+	 * sign-extends the selector under SXM.
+	 *
+	 * <p>The same family also occurs with a program-space table, ending in the paired
+	 * PREAD rather than the native load. {@link TMS320C28xProgramReadSwitchAnalyzer}
+	 * owns that form: its split load defeats decompiler switch analysis outright, so
+	 * canonicalizing it would not be enough and it installs a jump-table override.
+	 */
+	private static DispatchCandidate recoverNativeAdduDispatch(Instruction branch) {
+		Instruction load = contiguousPrevious(branch);
+		Instruction finalCopy = contiguousPrevious(load);
+		Instruction accumulate = contiguousPrevious(finalCopy);
+		Instruction baseCopy = contiguousPrevious(accumulate);
+		Instruction tableInstruction = contiguousPrevious(baseCopy);
+		String index = unsignedAccumulateSource(accumulate);
+		Scalar tableScalar = immediateTableBase(tableInstruction);
+		if (!isNativeLongwordLoad(load) ||
+			!isRegisterMove(finalCopy, "movl", "XAR7", "ACC") ||
+			!isRegisterMove(baseCopy, "movl", "ACC", "XAR7") ||
+			index == null || tableScalar == null) {
+			return null;
+		}
+
+		// The bound adjustment is absent from a zero-based switch, so its slot in the
+		// schedule holds the index load instead.
+		Instruction adjustmentInstruction = contiguousPrevious(tableInstruction);
+		Long adjustment = recoverWordImmediateDelta(adjustmentInstruction, index);
+		Instruction indexLoad = adjustment == null
+				? adjustmentInstruction
+				: contiguousPrevious(adjustmentInstruction);
+		Instruction scaleInstruction = contiguousPrevious(indexLoad);
+		String selector = scaledSelectorSource(scaleInstruction);
+		if (selector == null || !isMovzAccumulatorLow(indexLoad, index)) {
+			return null;
+		}
+
+		Address table = tableAddress(tableInstruction, tableScalar);
+		IndexExpression expression = new IndexExpression(scaleInstruction, selector,
+			TABLE_ENTRY_WORDS, adjustment == null ? 0 : adjustment.longValue());
+		return new DispatchCandidate(scaleInstruction, branch, table, expression,
+			DispatchVariant.NATIVE_ADDU);
+	}
+
 	private static DispatchCandidate recoverNativeDirectDispatch(Instruction branch) {
 		Instruction load = contiguousPrevious(branch);
 		Instruction add = contiguousPrevious(load);
@@ -558,11 +627,22 @@ public class TMS320C28xSwitchAnalyzer extends AbstractAnalyzer {
 		if (isMnemonic(compare, "cmpl")) {
 			return recoverUnsignedLongRange(guard, dispatch, defaultPath, compare, subtract);
 		}
-		if (!isMnemonic(compare, "cmpb") || !isRegisterOperand(compare, 0, "AL")) {
+		if (!isMnemonic(compare, "cmpb")) {
 			return null;
 		}
+		// The accumulate family bounds the selector in AH, having copied it there; every
+		// other schedule bounds it in AL. Keep AH exclusive to that family so no
+		// existing shape starts accepting a guard on a second, unrelated register.
+		boolean accumulateFamily = dispatch.variant == DispatchVariant.NATIVE_ADDU;
+		String guardRegister = "AL";
+		if (!isRegisterOperand(compare, 0, "AL")) {
+			if (!accumulateFamily || !isRegisterOperand(compare, 0, "AH")) {
+				return null;
+			}
+			guardRegister = "AH";
+		}
 
-		Long lowValue = recoverGuardLow(subtract);
+		Long lowValue = recoverGuardLow(subtract, guardRegister);
 		Scalar highScalar = scalarOperand(compare, 1);
 		if (lowValue == null || highScalar == null) {
 			return null;
@@ -577,10 +657,20 @@ public class TMS320C28xSwitchAnalyzer extends AbstractAnalyzer {
 		Instruction possibleCopy = contiguousPrevious(subtract);
 		Instruction guardStart = subtract;
 		boolean copiedSelector = isSelectorCopy(possibleCopy);
-		if (copiedSelector) {
+		if (accumulateFamily) {
+			// The bound is proved on a copy, so the copy is the only thing tying it to
+			// what the dispatch indexes on. Without it the range proves nothing.
+			if (!isRegisterMove(possibleCopy, "mov", guardRegister,
+				dispatch.indexExpression.sourceRegister)) {
+				return null;
+			}
 			guardStart = possibleCopy;
 		}
-		if (dispatch.indexExpression.sourceRegister.equals("AH") && !copiedSelector) {
+		else if (copiedSelector) {
+			guardStart = possibleCopy;
+		}
+		if (!accumulateFamily && dispatch.indexExpression.sourceRegister.equals("AH") &&
+			!copiedSelector) {
 			return null;
 		}
 		if (!hasExclusiveStraightLineGuard(guardStart, subtract, compare, guard)) {
@@ -673,9 +763,16 @@ public class TMS320C28xSwitchAnalyzer extends AbstractAnalyzer {
 		return null;
 	}
 
-	private static boolean hasConsistentIndexArithmetic(IndexExpression expression, long low) {
+	private static boolean hasConsistentIndexArithmetic(DispatchCandidate dispatch, long low) {
+		IndexExpression expression = dispatch.indexExpression;
 		if (expression.scaleWords != TABLE_ENTRY_WORDS) {
 			return false;
+		}
+		if (dispatch.variant == DispatchVariant.NATIVE_ADDU) {
+			// Scaled before the adjustment, so the immediate is pre-scaled. Keyed on the
+			// variant, not the register: the index register here is an ARn, which in the
+			// schedules below means an adjustment that has NOT been scaled.
+			return expression.adjustmentWords == -TABLE_ENTRY_WORDS * low;
 		}
 		long expectedAdjustment;
 		if (expression.sourceRegister.equals("AH") ||
@@ -824,54 +921,6 @@ public class TMS320C28xSwitchAnalyzer extends AbstractAnalyzer {
 		return false;
 	}
 
-	private static boolean isComputedXar7Branch(Instruction instruction) {
-		// "LB *XAR7" (opcode 0x7620) renders *XAR7 as a print literal in this module's
-		// SLEIGH, so the instruction carries zero operands -- distinct from the
-		// immediate long branch "LB <target>", which has one. Match the indirect form
-		// by mnemonic + operand-count + the "*XAR7" print form, and confirm the
-		// resolved computed-jump flow, rather than looking for XAR7 as operand 0
-		// (upstream's shape, which is absent here).
-		return isMnemonic(instruction, "lb") && instruction.getNumOperands() == 0 &&
-			instruction.toString().toUpperCase().endsWith("*XAR7") &&
-			instruction.getFlowType().isJump() && instruction.getFlowType().isComputed();
-	}
-
-	/**
-	 * {@code MOVL XAR7,*+XAR7[0]} -- the table entry load.
-	 *
-	 * <p>Matched on the printed fields: this module bakes the destination into the
-	 * display section, so the instruction reports ONE operand (the {@code *+XAR7[0]}
-	 * source) and the destination is not at operand 0 at all.
-	 */
-	private static boolean isNativeLongwordLoad(Instruction instruction) {
-		if (!isMnemonic(instruction, "movl") || !isPrintedRegister(instruction, 0, "XAR7")) {
-			return false;
-		}
-		Object[] objects = instruction.getOpObjects(instruction.getNumOperands() - 1);
-		if (objects.length != 2 || !(objects[0] instanceof Register register) ||
-			!(objects[1] instanceof Scalar offset)) {
-			return false;
-		}
-		return register.getName().equalsIgnoreCase("XAR7") && offset.getSignedValue() == 0;
-	}
-
-	/**
-	 * {@code MOVL XAR7,#table} -- the table base load. Printed-field matched for
-	 * the same reason as {@link #isNativeLongwordLoad}: only the immediate is a
-	 * real operand, so the base is not at operand 1.
-	 */
-	private static Scalar immediateTableBase(Instruction instruction) {
-		if (!isMnemonic(instruction, "movl") || !isPrintedRegister(instruction, 0, "XAR7")) {
-			return null;
-		}
-		return onlyScalarOperand(instruction);
-	}
-
-	private static Address tableAddress(Instruction tableInstruction, Scalar scalar) {
-		long tableOffset = scalar.getUnsignedValue() & CODE_ADDRESS_MASK;
-		return wordAddress(tableInstruction.getAddress(), tableOffset);
-	}
-
 	private static String indexSource(Instruction instruction) {
 		Scalar shift = scalarOperand(instruction, 2);
 		if (!isMnemonic(instruction, "mov") || !isRegisterOperand(instruction, 0, "ACC") ||
@@ -924,21 +973,20 @@ public class TMS320C28xSwitchAnalyzer extends AbstractAnalyzer {
 		return null;
 	}
 
-	private static Long recoverGuardLow(Instruction instruction) {
-		if (instruction == null || !isRegisterOperand(instruction, 0, "AL")) {
+	/** The lowest case of a guard that subtracts it off before an unsigned compare. */
+	private static Long recoverGuardLow(Instruction instruction, String register) {
+		Long delta = recoverWordImmediateDelta(instruction, register);
+		return delta == null || delta >= 0 ? null : -delta;
+	}
+
+	/** {@code MOV ACC,@ARn << #1} -- the in-place scale; yields the selector register. */
+	private static String scaledSelectorSource(Instruction instruction) {
+		Scalar shift = scalarOperand(instruction, 2);
+		if (!isMnemonic(instruction, "mov") || !isRegisterOperand(instruction, 0, "ACC") ||
+			shift == null || shift.getUnsignedValue() != 1) {
 			return null;
 		}
-		Scalar scalar = scalarOperand(instruction, 1);
-		if (scalar == null) {
-			return null;
-		}
-		if (isMnemonic(instruction, "add") && scalar.getSignedValue() < 0) {
-			return -scalar.getSignedValue();
-		}
-		if (isMnemonic(instruction, "sub") && scalar.getUnsignedValue() <= 0x7fff) {
-			return scalar.getUnsignedValue();
-		}
-		return null;
+		return auxiliaryRegisterOperand(instruction, 1);
 	}
 
 	/**
@@ -987,14 +1035,6 @@ public class TMS320C28xSwitchAnalyzer extends AbstractAnalyzer {
 			isRegisterOperand(instruction, 0, "ACC") &&
 			isRegisterOperand(instruction, 1, "AR6") && shift != null &&
 			shift.getUnsignedValue() == 1;
-	}
-
-	private static boolean isImmediateAdd(Instruction instruction, String mnemonic,
-			String destination, long value) {
-		Scalar scalar = scalarOperand(instruction, 1);
-		return isMnemonic(instruction, mnemonic) &&
-			isRegisterOperand(instruction, 0, destination) && scalar != null &&
-			scalar.getUnsignedValue() == value;
 	}
 
 	private static boolean isLslAccByOne(Instruction instruction) {
@@ -1048,59 +1088,6 @@ public class TMS320C28xSwitchAnalyzer extends AbstractAnalyzer {
 			isRegisterMove(instruction, "mov", "AL", "AH");
 	}
 
-	private static boolean isRegisterMove(Instruction instruction, String mnemonic,
-			String destination, String source) {
-		return isMnemonic(instruction, mnemonic) &&
-			isRegisterOperand(instruction, 0, destination) &&
-			isRegisterOperand(instruction, 1, source);
-	}
-
-	private static boolean isMnemonic(Instruction instruction, String mnemonic) {
-		return instruction != null && instruction.getMnemonicString().equalsIgnoreCase(mnemonic);
-	}
-
-	private static boolean isRegisterOperand(Instruction instruction, int operand,
-			String registerName) {
-		if (instruction == null || operand >= instruction.getNumOperands()) {
-			return false;
-		}
-		Register register = instruction.getRegister(operand);
-		if (register != null) {
-			return register.getName().equalsIgnoreCase(registerName);
-		}
-		// Register-valued loc32 subtables may expose the operand as dynamic even
-		// though the rendered operand and its sole object are the register itself.
-		Object[] objects = instruction.getOpObjects(operand);
-		if (objects.length == 1 && objects[0] instanceof Register objectRegister &&
-			objectRegister.getName().equalsIgnoreCase(registerName)) {
-			return true;
-		}
-		for (Object object : objects) {
-			if (object instanceof Register objectRegister &&
-				objectRegister.getName().equalsIgnoreCase(registerName)) {
-				return true;
-			}
-		}
-		// This module's SLEIGH renders some registers into the print form rather
-		// than exposing them as operand objects, so an operand can be present but
-		// carry nothing to match against: `MOVL ACC,@XAR7` reports two operands
-		// with an EMPTY object list on operand 0. Fall back to the rendered text,
-		// accepting the "@" register-direct and "*" indirect markers this module
-		// prints, so callers that matched via getRegister continue to work here.
-		String text = instruction.getDefaultOperandRepresentation(operand);
-		if (text == null) {
-			return false;
-		}
-		String bare = text.startsWith("@") || text.startsWith("*") ? text.substring(1) : text;
-		return bare.equalsIgnoreCase(registerName);
-	}
-
-	private static Scalar scalarOperand(Instruction instruction, int operand) {
-		return instruction == null || operand >= instruction.getNumOperands()
-				? null
-				: instruction.getScalar(operand);
-	}
-
 	private static boolean writesRegister(Instruction instruction, String registerName) {
 		if (instruction == null) {
 			return false;
@@ -1123,81 +1110,6 @@ public class TMS320C28xSwitchAnalyzer extends AbstractAnalyzer {
 		return instruction == null || operand >= instruction.getNumOperands()
 				? ""
 				: instruction.getDefaultOperandRepresentation(operand);
-	}
-
-	/**
-	 * The comma-separated fields of an instruction as printed, mnemonic removed.
-	 *
-	 * <p>Ghidra's operand numbering and the TI listing text only agree when every
-	 * printed field is backed by an operand. On this module they routinely do not,
-	 * because several constructors bake a register into their display section:
-	 * {@code MOVL XAR7,#0x8159a} prints two fields but exposes ONE operand (the
-	 * immediate), and {@code MOVL XAR7,*+XAR7[0]} prints two but exposes one (the
-	 * source). Predicates written against the schedules in the doc comments above
-	 * -- which are listing text -- have to index the text, not the operand array,
-	 * or they silently read the wrong field and never match.
-	 *
-	 * <p>Splitting on commas is safe for the operand forms admitted here; the only
-	 * multi-part field is a shift ({@code @AR6<<#0x1}), which carries no comma.
-	 */
-	private static String[] printedFields(Instruction instruction) {
-		if (instruction == null) {
-			return new String[0];
-		}
-		String text = instruction.toString();
-		String mnemonic = instruction.getMnemonicString();
-		if (text.regionMatches(true, 0, mnemonic, 0, mnemonic.length())) {
-			text = text.substring(mnemonic.length());
-		}
-		text = text.trim();
-		if (text.isEmpty()) {
-			return new String[0];
-		}
-		String[] fields = text.split(",");
-		for (int i = 0; i < fields.length; i++) {
-			fields[i] = fields[i].trim();
-		}
-		return fields;
-	}
-
-	/**
-	 * One printed field, with this module's {@code @} register-direct marker
-	 * stripped so {@code @XAR7} and {@code XAR7} compare equal.
-	 */
-	private static String printedField(Instruction instruction, int index) {
-		String[] fields = printedFields(instruction);
-		if (index < 0 || index >= fields.length) {
-			return "";
-		}
-		String field = fields[index];
-		return field.startsWith("@") ? field.substring(1) : field;
-	}
-
-	private static boolean isPrintedRegister(Instruction instruction, int index, String name) {
-		return printedField(instruction, index).equalsIgnoreCase(name);
-	}
-
-	/**
-	 * The sole scalar among an instruction's operands, or null when there is not
-	 * exactly one. Used where the printed field carrying the immediate is not at a
-	 * stable operand index because an earlier field is a display literal.
-	 */
-	private static Scalar onlyScalarOperand(Instruction instruction) {
-		if (instruction == null) {
-			return null;
-		}
-		Scalar found = null;
-		for (int i = 0; i < instruction.getNumOperands(); i++) {
-			Scalar scalar = instruction.getScalar(i);
-			if (scalar == null) {
-				continue;
-			}
-			if (found != null) {
-				return null;
-			}
-			found = scalar;
-		}
-		return found;
 	}
 
 	private static boolean flowsTo(Instruction instruction, Address destination) {
@@ -1234,16 +1146,6 @@ public class TMS320C28xSwitchAnalyzer extends AbstractAnalyzer {
 			address.compareTo(dispatch.branchInstruction.getMaxAddress()) <= 0;
 	}
 
-	private static Instruction contiguousPrevious(Instruction instruction) {
-		if (instruction == null) {
-			return null;
-		}
-		Instruction previous = instruction.getPrevious();
-		return previous != null && previous.getMaxAddress().next().equals(instruction.getMinAddress())
-				? previous
-				: null;
-	}
-
 	private static Instruction contiguousNext(Instruction instruction) {
 		if (instruction == null) {
 			return null;
@@ -1254,12 +1156,6 @@ public class TMS320C28xSwitchAnalyzer extends AbstractAnalyzer {
 				: null;
 	}
 
-	/** Convert an architectural C28 word address to Ghidra's byte-offset Address. */
-	private static Address wordAddress(Address basis, long wordOffset) {
-		int wordSize = basis.getAddressSpace().getAddressableUnitSize();
-		return basis.getAddressSpace().getAddress(Math.multiplyExact(wordOffset, wordSize));
-	}
-
 	private enum DispatchVariant {
 		PROGRAM_READ("program-read PREAD"),
 		PROGRAM_READ_SAVED_LONG("saved-selector program-read PREAD"),
@@ -1267,6 +1163,7 @@ public class TMS320C28xSwitchAnalyzer extends AbstractAnalyzer {
 		NATIVE_SAVED_LONG("saved-selector native-load"),
 		NATIVE_SAVED_P("P-saved fall-through native-load"),
 		NATIVE_AR6_ZERO("zero-based AR6-indexed native-load"),
+		NATIVE_ADDU("accumulate-indexed native-load"),
 		NATIVE_DIRECT("compact native-load");
 
 		private final String description;

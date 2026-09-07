@@ -63,5 +63,12 @@ $lib = Install-C28xModule -Ghidra $Ghidra -Module $Module
 $existing = Get-ChildItem $lib -Filter "*.jar" -File -ErrorAction SilentlyContinue
 $jarPath = if ($existing.Count -eq 1) { $existing[0].FullName } else { Join-Path $lib "TMS320C28x.jar" }
 & $jarTool --create --file $jarPath -C $out ghidra
+# A running Ghidra holds this jar open, and jar reports that as a FileSystemException on
+# stderr while still exiting through a path this script used to ignore -- leaving the OLD
+# jar in place and printing "Installed". Every measurement after that silently runs the
+# previous build. Fail loudly instead; the fix is to close Ghidra and re-run.
+if ($LASTEXITCODE -ne 0) {
+  throw "jar write failed (exit $LASTEXITCODE): $jarPath`nClose Ghidra -- it holds the jar open -- and re-run."
+}
 
 Write-Host "Installed $jarPath ($(($srcs).Count) sources) + languages. RESTART Ghidra to load it." -ForegroundColor Green
