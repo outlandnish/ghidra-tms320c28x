@@ -168,8 +168,9 @@ Files adapted so far:
   (`STF_TF = cndf`), though the encoding was independently confirmed against
   asm2000/dis2000. The `MOVST0` flag-mask decode (its own `movst0_flags` field
   plus the 256-entry `attach names` list) and the `ctx_fimm16` display fix for
-  the `MAXF32` / `MINF32` `#16FHi` immediates are *not* adapted — mwdmwd renders
-  neither — and are original to this module.
+  the `MAXF32` / `MINF32` `#16FHi` immediates are *not* adapted and are original
+  to this module. mwdmwd rendered neither when this was written; `7315850` has
+  since grown their own `MOVST0` mask rendering, arrived at separately.
 - **`data/languages/tms320c28x_ext56.sinc`** — *not adapted code*, noted for
   completeness: the `SETC` / `CLRC` mode-bit constructors (`OBJMODE`, `XF`, `OVC`,
   `M0M1MAP`) were wired to write the individual status registers introduced by the
@@ -344,7 +345,10 @@ Evaluated and **not** adopted:
   `LB *XAR7` in a production image: its dispatches are one AR6-indexed native-load
   (which the existing matcher handles once it can see the operands, #62) and three of
   an ADDU-accumulate family neither module recognizes (#66). `a290d6a`'s
-  namespace-lifecycle fix is orthogonal and still open.
+  namespace-lifecycle half does not apply either — it guards namespaces owned by their
+  canonicalizer, and this module's canonicalizer creates none. Its *discipline* (prove
+  ownership before replacing anything, preserve what the user owns, be able to revoke)
+  was adapted to the PREAD override pass instead; no code taken. See #72.
 - **`storage="class4"` input model** (`0ebb33e`) — solves the AL/AH/ACC overlap that
   this module already solves with explicit `join` pentries. Swapping would churn every
   ABI baseline for no measured gain.
@@ -355,6 +359,44 @@ Evaluated and **not** adopted:
 - **`TMS320C28ScalarAbiAnalyzer`** (`0ebb33e`) — functionally equivalent to this
   module's `TMS320C28xAbiAnalyzer` + `TMS320C28xAbiAllocator`, written independently.
   The two agree on every signature in the probe corpus.
+
+### The idiom-canonicalization analyzers (#75)
+
+Upstream carries a family of analyzers that each prove one compiler idiom and canonicalize
+it. Whether one earns its keep is a property of the image, not of the idea, so each was
+measured with [`ghidra_scripts/SurveyIdioms.java`](ghidra_scripts/SurveyIdioms.java) rather
+than argued about. Two independent production images: a **DIR** drive-inverter CPU2
+(159,216 instructions) and a **PMR** rear-motor inverter (77,473). Counts are DIR / PMR.
+
+- **`TMS320C28OvmReturnAnalyzer`** (`8c639a6`, `76b6fda`, `8901abd`) — the largest single
+  cluster upstream, ~700 lines across three commits, modelling OVM-zero return data flow,
+  ADDCL and shifted-P ADDL. `CLRC OVM` **3 / 3**, `SETC OVM` **0 / 0**. The PMR image was
+  probed specifically because saturation arithmetic was the plausible counter-case for a
+  motor controller; it is not used there either. Nothing to recover.
+- **`TMS320C28UnsignedDivisionAnalyzer`** (`d0f8b83`) — `SUBCUL` **12 / 11**, `SUBCU`
+  **5 / 3**, and **zero** runs of ≥4 in either image. TI emits 32 consecutive `SUBCUL` for
+  the inline 32-bit division idiom; these are scattered singles. Both images call the
+  runtime helper instead.
+- **`TMS320C28Asr64PairAnalyzer`** (`f33d2b8`) — `ASR64` **23 / 4**, adjacent pairs
+  **0 / 0**. The idiom is by definition a pair.
+- **`TMS320C28ConstantShiftAnalyzer`** (`679d5eb`) — `LSRL` **54 / 17**. Real but marginal;
+  reconsider if a corpus turns up where the count is material.
+- **ZALR as one full-width ACC write** (`5878e9c`) — `ZALR` **0 / 0**. Also already covered
+  by the `ACC:P` join work.
+- **Remove artificial CFG from common non-flow instructions** (`17d083b`) — not a problem
+  here. Of the 40 most common mnemonics, the instances whose p-code branches internally are
+  **90 of ~63,000** in DIR, well under 0.15%, and no base constructor for a common mnemonic
+  contains a branch at all. Those instances are consistent with the RPTB block-end wrapper
+  (103 `RPTB` in that image), where the loop-back is the deliberate hardware-loop model of
+  #19 — not the flag-update branches upstream removed.
+
+Convergent, so nothing to adopt:
+
+- **`33fe70b`** ("Keep RPTB loop-back addresses in word units") — the same defect this
+  module found and fixed independently; see the `RB_RSTART` note above.
+- **`7315850`** ("Render MOVST0 flag masks by name") — upstream has since grown the
+  `MOVST0` flag-mask rendering the FPU note above records as absent there. The two arrived
+  at it separately.
 
 Deferred (tracked as a follow-up):
 
