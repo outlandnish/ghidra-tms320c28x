@@ -483,7 +483,12 @@ macro unpackst1(in) {
 # SUBB SP,#7bit   1111 1110 1CCC CCCC
 :SUBB "SP", "#"sp7  is rpt_phase=1 & op_hi8=0xFE & loc_b7=1 & sp7  { SP = SP - sp7; }
 # MOVL ACC,P   0001 0110 1010 1100  (move P to ACC)
-:MOVL ACCreg, "P"  is rpt_phase=1 & op16=0x16AC & ACCreg  { ACC = P; }
+# MOVL ACC,P << PM. Paired on pm_shift like the ADDL/SUBL/CMPL forms in _mac.sinc.
+:MOVL ACCreg, "P"  is rpt_phase=1 & pm_shift=0 & op16=0x16AC & ACCreg  { ACC = P; }
+:MOVL ACCreg, "P"  is rpt_phase=1 & pm_shift=1 & op16=0x16AC & ACCreg  {
+    local v:4; pshift(v);
+    ACC = v;
+}
 
 # =============================================================================
 # Batch 6: MOVL XARn,loc32 / SUBB XARn,#7bit / MOV ACC,loc16<<#16 — the remaining
@@ -631,9 +636,19 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 # Also MISSING — the next truncation in CAN_postRxEvent (word 0x5703 = MOVH @3,P, in an
 # RPT/PREAD block-copy idiom). [loc16] = (P << PM) >> 16; PM (product-shift) not tracked
 # in decode, so model the common PM=0 case: store the high word PH.
-:MOVH loc16, "P"  is rpt_phase=1 & op_hi8=0x57 & loc16  { loc16 = PH; }
+# MOVH loc16,P stores the HIGH half of the PM-shifted product (SPRU430F p.269).
+:MOVH loc16, "P"  is rpt_phase=1 & pm_shift=0 & op_hi8=0x57 & loc16  { loc16 = PH; }
+:MOVH loc16, "P"  is rpt_phase=1 & pm_shift=1 & op_hi8=0x57 & loc16  {
+    local v:4; pshift(v);
+    loc16 = v(2);
+}
 # MOV loc16, P      0011 1111 LLLL LLLL  -- store low 16 bits of P (PM=0 modeled) to loc16.
-:MOV loc16, "P"   is rpt_phase=1 & op_hi8=0x3F & loc16  { loc16 = PL; }
+# MOV loc16,P stores the LOW half of the PM-shifted product (SPRU430F p.270).
+:MOV loc16, "P"   is rpt_phase=1 & pm_shift=0 & op_hi8=0x3F & loc16  { loc16 = PL; }
+:MOV loc16, "P"   is rpt_phase=1 & pm_shift=1 & op_hi8=0x3F & loc16  {
+    local v:4; pshift(v);
+    loc16 = v:2;
+}
 # MOVU ACC, loc16   0000 1110 LLLL LLLL  -- load ACC with zero-extended 16-bit word.
 :MOVU ACCreg, loc16  is rpt_phase=1 & op_hi8=0x0E & ACCreg & loc16  { ACC = zext(loc16); setNZ32(ACC); }
 # ADDCU ACC, loc16  0000 1100 LLLL LLLL  -- ACC = ACC + 0:[loc16] + C  (add unsigned w/ carry)

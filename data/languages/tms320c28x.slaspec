@@ -224,6 +224,16 @@ define context contextreg
   rpt_active = (3,3) noflow
   rptb_flag  = (4,4) noflow
   rpt_phase  = (5,5) noflow
+  # Set by TMS320C28xPmShiftAnalyzer where it has PROVED the decoded product-shift
+  # mode PM is non-zero on every path into a P-consuming instruction (see #74).
+  # The default (0) keeps the unshifted model this module has always used, which is
+  # correct for PM=0 -- the state the TI C runtime establishes at every function
+  # entry (SPRU514 Table 7-4) and the one that reaches the overwhelming majority of
+  # product uses. Measured: of 924 product-consuming instructions in a DIR image,
+  # 868 sit in functions containing no SPM at all and only 32 are reached with a
+  # non-zero PM; in a PMR image, 1 of 409. So the shift is the exception and is
+  # marked as such, rather than modelled everywhere and proved away.
+  pm_shift   = (6,6) noflow
   # --- DP-relative addressing resolution (bits 32..63 of the widened contextreg).
   # DP is TI's data-page pointer: a `@6bit` operand resolves at runtime to
   # (DP<<6)|6bit, giving a 22-bit address. The compiler emits `MOVW DP,#imm` (and
