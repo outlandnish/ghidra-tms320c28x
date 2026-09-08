@@ -2,20 +2,25 @@
 # SPDX-License-Identifier: Apache-2.0
 # Copyright 2026 Nishanth Samala
 #
-# Audit the C28x SLEIGH spec for ALU constructors that compute a result but set no flags.
-# Guards against re-introducing the class fixed by issue #90 (32 constructors across the
-# ADD/SUB/MOV/ADDL/SUBL/MOVB/ABS/ADDUL/ASRL/LSLL/LSRL/MAC/MPYS/NORM/QMPYL/SFR/SUBCU/
-# SUBCUL/ZALR families -- see the issue body for the audit method).
+# Audit the C28x SLEIGH spec for two classes of missing flag semantics:
 #
-# Exit non-zero on any un-annotated candidate. Constructors whose family is FLAGLESS BY SPRU430F
-# (there are none in this batch, but future ALU adds might qualify) can be exempted by adding a
-# `# flag-audit: none` end-of-line comment to the constructor's opening line.
+#   PASS 1 (issue #90 -- shipped): ALU constructors that WRITE ACC/AX with an
+#     arithmetic operator but WRITE NO FLAG at all. Original hole was 32
+#     constructors; guard against re-introducing it.
 #
-# Strategy: scan every top-level constructor for a mnemonic in ALU below; parse the p-code body
-# between the outer braces; flag ones that WRITE to ACC/AX with arithmetic and DON'T write a
-# flag ($(N)/$(Z)/$(C)/$(V)/setNZ*). Deliberately narrow: MOV loc16 forms, plain register loads
-# and control-register moves are NOT alu operations and stay out of the ALU set.
-import collections
+#   PASS 2 (issue #93): ALU constructors that WRITE ACC and SET $(V) but
+#     DON'T update OVC. OVC is the 6-bit signed overflow counter (ST0[15:10])
+#     that TI's math libraries read via SAT ACC. Missing OVC updates make
+#     saturation-aware code loop forever, same class as the SUBB fill-loop
+#     hole that motivated #90.
+#
+# Exit non-zero on any un-annotated candidate. To exempt a constructor:
+#   # flag-audit: none       -- flagless BY SPRU430F (pass 1 opt-out)
+#   # flag-audit-ovc: none   -- V-writer that spec explicitly leaves OVC alone
+#                              (e.g. CMP/CMPL, or the non-ACC OVC-affecting ops
+#                              where OVC is not touched per the general rule
+#                              "OVC is not affected by overflows in registers
+#                              other than ACC" -- SPRU430F 2.3)
 import glob
 import os
 import re
@@ -24,26 +29,36 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LANG = os.path.join(ROOT, 'data', 'languages')
 
-# Any assignment to N/Z/C/V/OVC/TC (bare or via $()), or a setNZ macro.
+# Match $(X) = ... but NOT $(X) == ... (which is a READ via equality).
 FLAG_WRITE = re.compile(
-    r'\$\((?:N|Z|C|V|OVC|TC|SXM|OVM)\)\s*=|setNZ\d*\s*\(|setflags')
+    r'\$\((?:N|Z|C|V|OVC|TC|SXM|OVM)\)\s*=(?!=)|setNZ\d*\s*\(|setflags')
+V_WRITE = re.compile(r'\$\(V\)\s*=(?!=)')
+OVC_WRITE = re.compile(
+    r'\bOVC\s*=|applyOvcSigned\s*\(|applyOvcUnsigned\s*\(')
+ACC_DEST = re.compile(r'(?:^|[{;])\s*ACC\s*=', re.M)
 DEST = re.compile(r'(?:^|[{;])\s*(ACC|AH|AL|AX)\s*=', re.M)
 ARITH = re.compile(r'=\s*[^;]*[-+&|^]|<<|>>')
 OPT_OUT = re.compile(r'#\s*flag-audit:\s*none')
+OPT_OUT_OVC = re.compile(r'#\s*flag-audit-ovc:\s*none')
 
-# Mnemonics whose defining act is an ALU-style compute. Extended as new instructions with
-# flag semantics are added; the guiding rule is "SPRU430F documents flag effects for it".
+# Mnemonics whose defining act is an ALU-style compute. Extended as new
+# instructions with flag semantics are added; the guiding rule is "SPRU430F
+# documents flag effects for it".
 ALU = set("""
-ADD ADDB ADDU ADDL ADDCU SUB SUBB SUBU SUBL SUBBL SUBCU SUBCUL SBBU
+ADD ADDB ADDU ADDL ADDCU ADDCL SUB SUBB SUBU SUBL SUBBL SUBCU SUBCUL SBBU
 AND OR XOR NOT NEG NEGL ABS ABSTC INC DEC CMP CMPL CMPB TEST
 ASR ASRL LSL LSLL LSR LSRL SFR SBF ROL ROR
 MOV MOVL MOVU MOVB MOVH ZALR SAT SAT64 NORM FLIP CSB
-MAC MPY MPYB MPYU MPYS QMPYL IMPYL ADDUL
+MAC MPY MPYB MPYU MPYS QMPYL IMPYL ADDUL SUBUL
 """.split())
 
 
 def parse_constructors(path):
-    """Yield (mnemonic, line_no, head_line, body_text) for each top-level constructor."""
+    """Yield (mnemonic, line_no, head_line, body_text, preamble) per ctor.
+
+    `preamble` is the contiguous block of `#` comment lines immediately above
+    the constructor -- opt-out markers can live there as well as on the head.
+    """
     lines = open(path).read().split('\n')
     i = 0
     while i < len(lines):
@@ -52,6 +67,11 @@ def parse_constructors(path):
             i += 1
             continue
         mn = m.group(1)
+        # walk back over the leading comment block
+        pre_start = i
+        while pre_start > 0 and lines[pre_start - 1].lstrip().startswith('#'):
+            pre_start -= 1
+        preamble = '\n'.join(lines[pre_start:i])
         depth, chunk, j, started = 0, [], i, False
         while j < len(lines):
             chunk.append(lines[j])
@@ -64,40 +84,73 @@ def parse_constructors(path):
         text = '\n'.join(chunk)
         head = chunk[0]
         body = text[text.find('{'):] if '{' in text else ''
-        yield mn, i + 1, head, body
+        yield mn, i + 1, head, body, preamble
         i = j + 1
 
 
 def audit():
-    hits = []
+    """Return (pass1_hits, pass2_hits, scanned)."""
+    pass1 = []
+    pass2 = []
     scanned = 0
-    for path in sorted(glob.glob(os.path.join(LANG, '*.sinc'))) + \
-                sorted(glob.glob(os.path.join(LANG, '*.slaspec'))):
-        for mn, ln, head, body in parse_constructors(path):
+    paths = sorted(glob.glob(os.path.join(LANG, '*.sinc'))) + \
+        sorted(glob.glob(os.path.join(LANG, '*.slaspec')))
+    for path in paths:
+        for mn, ln, head, body, pre in parse_constructors(path):
             scanned += 1
             if mn not in ALU:
                 continue
-            if OPT_OUT.search(head):
-                continue
-            if FLAG_WRITE.search(body):
-                continue
-            if not (DEST.search(body) and ARITH.search(body)):
-                continue
-            hits.append((mn, os.path.basename(path), ln, head.strip()))
-    return hits, scanned
+            has_flag = bool(FLAG_WRITE.search(body))
+            has_v = bool(V_WRITE.search(body))
+            has_ovc = bool(OVC_WRITE.search(body))
+            writes_acc = bool(ACC_DEST.search(body))
+            writes_dest = bool(DEST.search(body))
+            has_arith = bool(ARITH.search(body))
+            fname = os.path.basename(path)
+            head_s = head.strip()
+            hp = head + '\n' + pre  # search head + preceding comment block
+            if not has_flag and writes_dest and has_arith:
+                if not OPT_OUT.search(hp):
+                    pass1.append((mn, fname, ln, head_s))
+            # Pass 2: V-writer on ACC that does not touch OVC.
+            if has_v and writes_acc and not has_ovc:
+                if not OPT_OUT_OVC.search(hp):
+                    pass2.append((mn, fname, ln, head_s))
+    return pass1, pass2, scanned
+
+
+def report(hits, title, remedy):
+    print(f'flag_audit: FAIL -- {title}')
+    print(remedy + '\n')
+    for mn, f, ln, head in hits:
+        print(f'  {mn:6s} {f}:{ln}\n    {head[:100]}')
+    print(f'\n{len(hits)} candidate(s).')
 
 
 def main():
-    hits, scanned = audit()
-    if not hits:
-        print(f'flag_audit: OK ({scanned} constructors scanned, 0 candidates)')
+    pass1, pass2, scanned = audit()
+    if not pass1 and not pass2:
+        print(f'flag_audit: OK ({scanned} constructors scanned, '
+              f'0 pass-1 and 0 pass-2 candidates)')
         return 0
-    print('flag_audit: FAIL -- ALU-family constructors write ACC/AX with no flag write.')
-    print('If the instruction is flagless BY SPRU430F, add `# flag-audit: none` on the')
-    print('constructor\'s opening line; otherwise fix the missing flag semantics.\n')
-    for mn, f, ln, head in hits:
-        print(f'  {mn:6s} {f}:{ln}\n    {head[:100]}')
-    print(f'\n{len(hits)} candidate(s); {scanned} constructors scanned.')
+    if pass1:
+        report(
+            pass1,
+            'ALU-family constructors write ACC/AX with no flag write.',
+            "If the instruction is flagless BY SPRU430F, add `# flag-audit: "
+            "none`\non the constructor's opening line; otherwise fix the "
+            "missing flag semantics.")
+        print()
+    if pass2:
+        report(
+            pass2,
+            'ALU-family constructors write ACC and set $(V) but do NOT touch '
+            'OVC.',
+            "Add applyOvcSigned(ACC) / applyOvcUnsigned() after the V write; "
+            "OR add\n`# flag-audit-ovc: none` if SPRU430F Table 2-5 explicitly"
+            " excludes the\ninstruction from OVC accounting (e.g. CMP, CMPL, "
+            "or non-ACC-destination forms).")
+    print(f'\n{scanned} constructors scanned.')
     return 1
 
 
