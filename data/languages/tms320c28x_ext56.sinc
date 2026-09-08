@@ -44,6 +44,7 @@
     $(V) = scarry(ACC, addend);
     ACC = ACC + addend;
     setNZ32(ACC);
+    applyOvcSigned(ACC);
 }
 # SUB ACC,loc16<<T   0x5627. SPRU430F: N,Z,C(inverted borrow),V.
 :SUB ACCreg, loc16^"<<T"  is rpt_phase=1 & op16=0x5627 ; loc16 & ACCreg  {
@@ -55,6 +56,7 @@
     $(V) = sborrow(ACC, subend);
     ACC = ACC - subend;
     setNZ32(ACC);
+    applyOvcSigned(ACC);
 }
 # MOV ACC,loc16<<T   0x5606
 :MOV ACCreg, loc16^"<<T"  is rpt_phase=1 & op16=0x5606 ; loc16 & ACCreg  {
@@ -104,24 +106,41 @@
     $(V) = scarry(ACC, addend);
     ACC = ACC + addend;
     setNZ32(ACC);
+    applyOvcSigned(ACC);
 }
-# ADDUL ACC,loc32    0x5653  (add unsigned 32). SPRU430F: N,Z,C,V (also OVCU, which we
-# don't model here -- same as OVC on the other add/sub forms).
+# ADDUL ACC,loc32    0x5653  (add unsigned 32). SPRU430F: N,Z,C,V; Table 2-5 groups
+# ADDUL under "Unsigned Instructions" -- OVC increments on unsigned carry (C=1), not
+# on signed overflow direction. Bounded by OVM.
 :ADDUL ACCreg, loc32 is rpt_phase=1 & op16=0x5653 ; loc32 & ACCreg  {
     local b:4 = loc32;
     $(C) = carry(ACC, b);
     $(V) = scarry(ACC, b);
     ACC = ACC + b;
     setNZ32(ACC);
+    applyOvcUnsigned();
 }
-# SUBUL ACC,loc32    0x5655
-:SUBUL ACCreg, loc32 is rpt_phase=1 & op16=0x5655 ; loc32 & ACCreg  { ACC = ACC - loc32; }
+# SUBUL ACC,loc32    0x5655  (subtract unsigned 32). SPRU430F: N,Z,C(inverted borrow),V.
+# Table 2-5 lists SUBUL under "Signed Subtraction Instructions" -- OVC is updated on
+# SIGNED overflow direction of the result, same as SUBL, not on unsigned borrow.
+:SUBUL ACCreg, loc32 is rpt_phase=1 & op16=0x5655 ; loc32 & ACCreg  {
+    local b:4 = loc32;
+    $(C) = !(ACC < b);
+    $(V) = sborrow(ACC, b);
+    ACC = ACC - b;
+    setNZ32(ACC);
+    applyOvcSigned(ACC);
+}
 # SUBBL ACC,loc32    0x5654  (subtract 32-bit plus inverse borrow: ACC = ACC - loc32 - ~C).
 # dis2000-confirmed (word 0x5654); the borrow-chain counterpart of SUBUL. Reached via a
 # branch shadow in FUN_0008e3d7 — the fall-through sweep missed it.
 :SUBBL ACCreg, loc32 is rpt_phase=1 & op16=0x5654 ; loc32 & ACCreg  {
-    local nborrow:4 = zext($(C) == 0);   # ~C as 0/1
-    ACC = ACC - loc32 - nborrow;
+    local nborrow:4 = zext($(C) == 0);   # ~C as 0/1  (borrow-in)
+    local b:4 = loc32 + nborrow;         # combined subtrahend
+    $(C) = !(ACC < b);
+    $(V) = sborrow(ACC, b);
+    ACC = ACC - b;
+    setNZ32(ACC);
+    applyOvcSigned(ACC);
 }
 # ADDCL ACC,loc32   0x5640  (add 32-bit value plus carry to ACC). dis2000-confirmed (DIR).
 :ADDCL ACCreg, loc32 is rpt_phase=1 & op16=0x5640 ; loc32 & ACCreg  {
@@ -129,9 +148,32 @@
     $(C) = carry(ACC, loc32);
     ACC = ACC + loc32 + cin;
 }
-# MOVU loc16,OVC    0x5628  (store the unsigned overflow counter OVC -> [loc16]). OVC
-# (ST0[10,6]) isn't tracked; store 0 so the op writes loc16 + flow continues. 2-word.
-:MOVU loc16, "OVC" is rpt_phase=1 & op16=0x5628 ; loc16  { loc16 = 0; }
+# MOVU loc16,OVC    0x5628 : loc16  (STORE the 6-bit OVC into low bits of [loc16];
+# upper 10 bits of the target are zeroed). Was writing literal 0 -- fixed to write the
+# actual counter now that OVC is modeled. SPRU430F: `[loc16(15:6)]=0; [loc16(5:0)]=OVC`.
+:MOVU loc16, "OVC" is rpt_phase=1 & op16=0x5628 ; loc16  {
+    loc16 = zext(OVC) & 0x3f;
+}
+# MOV loc16,OVC     0x5629 : loc16  (STORE OVC into the UPPER 6 bits of [loc16], lower
+# 10 bits zeroed). Signed-store counterpart of MOVU above. Missing from prior spec.
+# SPRU430F: `[loc16(15:10)]=OVC; [loc16(9:0)]=0`. N/Z on @AX destinations only per
+# manual, and the AX loc16 lands here via the shared loc16 sub-table -- setNZ16 is
+# safe regardless because @AX writes update the AX view first.
+:MOV loc16, "OVC"  is rpt_phase=1 & op16=0x5629 ; loc16  {
+    loc16 = (zext(OVC) & 0x3f) << 10;
+}
+# MOV OVC,loc16     0x5602 : loc16  (LOAD OVC from the UPPER 6 bits of [loc16]).
+# SPRU430F: `OVC = [loc16(15:10)]`. Missing from prior spec.
+:MOV "OVC", loc16  is rpt_phase=1 & op16=0x5602 ; loc16  {
+    local v:2 = loc16 >> 10;
+    OVC = v:1;
+}
+# MOVU OVC,loc16    0x5662 : loc16  (LOAD OVC from the LOWER 6 bits of [loc16]).
+# SPRU430F: `OVC = [loc16(5:0)]`. Missing from prior spec.
+:MOVU "OVC", loc16 is rpt_phase=1 & op16=0x5662 ; loc16  {
+    local v:2 = loc16 & 0x3f;
+    OVC = v:1;
+}
 # MOV TL,#0   0x5656  (clear the lower half of XT; XT high half = T preserved). 1-word.
 :MOV "TL", "#0"  is rpt_phase=1 & op16=0x5656  { XT = XT & 0xffff0000; }
 # ADDUL P,loc32      0x5657
@@ -187,7 +229,30 @@
 # =============================================================================
 # SAT64 ACC:P  0x563e  (signed-saturate the 64-bit ACC:P value into ACC's 32-bit
 # range). Modelled as an ACC touch, matching the file's SAT ACC (0xFF57) convention.
-:SAT64 "ACC:P"  is rpt_phase=1 & op16=0x563e { ACC = ACC; }
+# SAT64 ACC:P   0101 0110 0011 1110  (saturate 64-bit ACC:P per OVC; clear OVC).
+# SPRU430F 6.x mirrors SAT ACC but on the concatenated 64-bit value:
+#   OVC > 0 -> ACC:P = 0x7FFF FFFF FFFF FFFF; V = 1
+#   OVC < 0 -> ACC:P = 0x8000 0000 0000 0000; V = 1
+#   OVC = 0 -> ACC:P unchanged;                V = 0
+#   OVC = 0 in all cases. C cleared. N/Z reflect the combined 64-bit value.
+:SAT64 "ACC:P"  is rpt_phase=1 & op16=0x563e {
+    local ovc_s:1 = OVC;
+    $(V) = (ovc_s != 0);
+    $(C) = 0;
+    if (ovc_s s<= 0) goto <not_pos>;
+    ACC = 0x7FFFFFFF;
+    P   = 0xFFFFFFFF;
+    goto <done>;
+    <not_pos>
+    if (ovc_s s>= 0) goto <done>;
+    ACC = 0x80000000;
+    P   = 0x00000000;
+    <done>
+    OVC = 0;
+    # N reflects bit 31 of ACC (high half sign); Z is the combined 64-bit zero test.
+    $(N) = (ACC s< 0);
+    $(Z) = (ACC == 0) && (P == 0);
+}
 # NORM ACC,<ind>  1-word; the low byte is the loc16 addressing selector for the
 # indirect forms (*, *++, *--, *0++, *0--). NORM normalizes ACC + adjusts T + modifies
 # the AR; decode-only here (the AR post-modify/exponent update is not modelled).
@@ -288,7 +353,15 @@
 :SETC "XF"      is rpt_phase=1 & op16=0x5626 { XF = 1; }
 :CLRC "XF"      is rpt_phase=1 & op16=0x561b { XF = 0; }
 :CLRC "OVC"     is rpt_phase=1 & op16=0x565c { OVC = 0; }        # = ZAP OVC
-:ZAPA           is rpt_phase=1 & op16=0x5633 { ACC = 0; P = 0; }
+# ZAPA   0101 0110 0011 0011  (zero ACC, P AND OVC). SPRU430F: "Zero the ACC and P
+# registers as well as the overflow counter (OVC)." Prior body cleared ACC and P but
+# not OVC -- ran counter to the instruction's purpose (a preamble to saturating loops
+# like the QMACL example in the manual). N/Z semantics: the SPRU430F "Flags and Modes
+# Affected" table for ZAPA reads N=set, Z=cleared (verbatim); this appears inverted
+# vs. what the ACC=0 result would imply, so N/Z are left unset here rather than
+# encoded either way -- if a firmware site actually depends on N/Z after ZAPA, wire
+# per what real hardware does, not the manual text.
+:ZAPA           is rpt_phase=1 & op16=0x5633 { ACC = 0; P = 0; OVC = 0; }
 # More 0x56 mode/config bits (dis2000-confirmed; in the PCS reset/init routine at 0x947fc).
 :SETC "CNF"     is rpt_phase=1 & op16=0x5612 { }                 # map block B0 to program space (decode-only)
 :SETC "M0M1MAP" is rpt_phase=1 & op16=0x561a { M0M1MAP = 1; }    # = C28MAP (boot mode bit)
