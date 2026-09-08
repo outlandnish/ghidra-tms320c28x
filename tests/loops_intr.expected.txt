@@ -1,0 +1,19 @@
+# LOOPZ / LOOPNZ / INTR fixture (issue #114).
+# LOOPZ was previously missing entirely (op_hi8=0x2C was mis-claimed by a phantom
+# MOV IERreg,loc16 constructor); LOOPNZ existed at op_hi8=0x2E but had a `{ }`
+# decode-only body; the INTR family was missing entirely. Verified against
+# TI's own asm2000 + dis2000 (see run_disasm_test comments). The CCCC->mnemonic
+# mapping for INTR INTx (0..13 -> INT1..INT14, 14 -> DLOGINT, 15 -> RTOSINT)
+# was confirmed empirically via asm2000. dis2000 abbreviates EMUINT to "EMU";
+# we render the full spec mnemonic.
+0x0	012c3412	LOOPZ @0x1,#0x1234
+0x2	022ccdab	LOOPZ @0x2,#0xabcd
+0x4	032e0100	LOOPNZ @0x3,#0x1
+0x6	042e00ff	LOOPNZ @0x4,#0xff00
+0x8	1000	INTR INT1
+0x9	1600	INTR INT7
+0xa	1d00	INTR INT14
+0xb	1e00	INTR DLOGINT
+0xc	1f00	INTR RTOSINT
+0xd	1676	INTR NMI
+0xe	1c76	INTR EMUINT

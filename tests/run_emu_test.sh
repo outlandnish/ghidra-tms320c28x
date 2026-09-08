@@ -61,6 +61,7 @@ cp "$module/ghidra_scripts/EmuNegAbsTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuCmpLogicBitTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuMovAccFlagsTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuLeftoverFamilyTest.java" "$tmp/scripts/"
+cp "$module/ghidra_scripts/EmuLoopTest.java" "$tmp/scripts/"
 cp "$module/tests/fpu_flags.bin" "$module/tests/fpu_cond.bin" "$tmp/"
 
 fail=0
@@ -104,6 +105,7 @@ run_suite EmuNegAbsTest fpu_flags.bin         # issue #106: NEG/ABS/NEGTC/ABSTC 
 run_suite EmuCmpLogicBitTest fpu_flags.bin    # issue #108: Compare/Logical/Bit-manip audit
 run_suite EmuMovAccFlagsTest fpu_flags.bin    # issue #110: MOV family N/Z audit (macro + @ACC/@AX splits)
 run_suite EmuLeftoverFamilyTest fpu_flags.bin # issue #112: INC/DEC C + NORM ext56 forms
+run_suite EmuLoopTest fpu_flags.bin           # issue #114: LOOPZ / LOOPNZ N/Z semantics
 
 if [ "$fail" -eq 0 ]; then
   echo "emulation semantics: OK"
