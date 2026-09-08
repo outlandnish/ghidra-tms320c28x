@@ -1059,10 +1059,25 @@ macro arp_xar_ptr(p) {
 :MOV loc16, AXb0, "COND"  is rpt_phase=1 & op_hi8=0x56 & op_lo71=0b0010101 & AXb0 ; loc16  { loc16 = AXb0; }
 # MOV loc16,ACC<<#2..8  0101 0110 0010 1101 : 0000 0SHF LLLL LLLL  (save low word of
 # ACC<<SHF). SHF in word2 bits 8-10; store the low word of the shifted ACC.
+# SPRU430F p.259: N/Z conditioned on the destination -- set from AX only when loc16=@AX.
+# @AH/@AL specialisations (issue #110). loc_full8 lives on word 2 in this 2-word encoding.
+:MOV "@AH", "ACC<<#2..8"  is rpt_phase=1 & op16=0x562d ; ctx_AMODE=0 & loc_full8=0b10101000 & shft_hi4  {
+    local v:4 = ACC << zext(shft_hi4:1); AH = v:2; setNZ16(AH);
+}
+:MOV "@AL", "ACC<<#2..8"  is rpt_phase=1 & op16=0x562d ; ctx_AMODE=0 & loc_full8=0b10101001 & shft_hi4  {
+    local v:4 = ACC << zext(shft_hi4:1); AL = v:2; setNZ16(AL);
+}
 :MOV loc16, "ACC<<#2..8"  is rpt_phase=1 & op16=0x562d ; loc16 & shft_hi4  {
     local v:4 = ACC << zext(shft_hi4:1); loc16 = v:2;
 }
 # MOVH loc16,ACC<<#2..8  0101 0110 0010 1111 : 0000 0SHF LLLL LLLL  (save high word).
+# @AH/@AL specialisations (issue #110); same rationale as MOV loc16,ACC<<# above.
+:MOVH "@AH", "ACC<<#2..8"  is rpt_phase=1 & op16=0x562f ; ctx_AMODE=0 & loc_full8=0b10101000 & shft_hi4  {
+    local v:4 = ACC << zext(shft_hi4:1); AH = v(2); setNZ16(AH);
+}
+:MOVH "@AL", "ACC<<#2..8"  is rpt_phase=1 & op16=0x562f ; ctx_AMODE=0 & loc_full8=0b10101001 & shft_hi4  {
+    local v:4 = ACC << zext(shft_hi4:1); AL = v(2); setNZ16(AL);
+}
 :MOVH loc16, "ACC<<#2..8"  is rpt_phase=1 & op16=0x562f ; loc16 & shft_hi4  {
     local v:4 = ACC << zext(shft_hi4:1); loc16 = v(2);
 }
