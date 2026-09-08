@@ -82,6 +82,9 @@ define token instr16 (16)
     p_ff2     = (0,1)       # ff   HIGH 2 bits of RfH for MPYF32||ADDF32 (LSW: 0100 00ff)
     shft_hi4  = (8,11)      # SHFT in word2 of MOV ACC,loc16<<#1..15 (0000 SHFT LLLLLLLL)
     imm8_hi   = (8,15)      # high byte of word2 (MOVB loc16,#8bit,COND: CCCC CCCC LLLLLLLL)
+    xar7_mode = (8,15)      # DMAC / QMACL / IMACL word-2 pointer selector:
+                            # 0xC7 = *XAR7, 0x87 = *XAR7++  (SPRU430F ch.6). The low
+                            # byte of that same word is the standard loc32 field.
     p_re_hi   = (0,0)       # e    high bit of ReH for that parallel form
     rptb_sel  = (7,7)       # RPTB form select (LSW 1011 0101 Rbbb bbbb): 0=loc16, 1=#RC
     rptb_rsz  = (0,6)       # RPTB block size RSIZE (low 7 bits of the LSW)

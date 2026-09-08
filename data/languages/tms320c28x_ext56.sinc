@@ -338,6 +338,122 @@
     applyOvcUnsigned();
     local a:8 = sext(XT); local m:8 = sext(loc32); local r:8 = a * m; P = r:4;
 }
+# =============================================================================
+# DMAC / QMACL / IMACL — 32-bit MAC forms with two syntax variants each. Word 2
+# looks like <mode:8> <loc32:8>: the low byte is the standard loc32 field, while
+# the HIGH byte distinguishes *XAR7 (0xC7) from *XAR7++ (0x87). Encodings were
+# confirmed by cl2000 -c on a small .asm and dis2000 -a round-trip on the .obj
+# across all six variants + several loc32 modes; see tests/mac_ext56.
+#
+# Word-addressable memory: `*[ram]:4 XAR7` reads 4 bytes = 2 words at word
+# address XAR7. Post-increment XAR7 by 2 (two word-addresses) because each
+# reads a 32-bit value from program memory. SPRU430F's IMACL page says
+# "post-increment ... by 1" (vs "by 2" for DMAC/QMACL); we treat the "1" as
+# a documentation typo and increment IMACL by 2 as well. Reasoning:
+#   (a) SPRU430 has no revision newer than F -- the discrepancy is unfixed
+#       in TI's current documentation, so it isn't a known-and-fixed typo
+#       waiting to be pulled in;
+#   (b) all three fetch a 32-bit operand from program memory using *XAR7++,
+#       and every other 32-bit program-memory post-increment on the C28x
+#       advances by 2 words;
+#   (c) a "by 1" post-inc would leave XAR7 pointing into the MIDDLE of the
+#       just-consumed 32-bit datum -- not a useful primitive for any MAC
+#       loop, so no compiler or hand-written library would target it.
+# Confidence ~85% per docs alone; closes to 100% only with a silicon test or
+# TI errata. See issue #102 for the follow-up if a firmware witness or
+# hardware test comes back.
+#
+# Flags per SPRU430F on the ACC ± P step:
+#   DMAC   0x564B ; word2 mode|loc32  N/Z/C/V + signed OVC (ACC gets high×high)
+#   QMACL  0x564F ; word2 mode|loc32  N/Z/C/V + signed OVC
+#   IMACL  0x564D ; word2 mode|loc32  N/Z/C/V + UNSIGNED OVCU (adds P as unsigned)
+# For DMAC, ACC and P both accumulate; flag effects on ACC only per manual.
+# =============================================================================
+:DMAC "ACC:P,"loc32",*XAR7"  is rpt_phase=1 & op16=0x564B ; xar7_mode=0xC7 & loc32 {
+    local xt:4  = loc32;
+    local tmp:4 = *[ram]:4 XAR7;
+    local xt_hi:2  = xt(2);   local xt_lo:2  = xt:2;
+    local tmp_hi:2 = tmp(2);  local tmp_lo:2 = tmp:2;
+    local a:4 = sext(xt_hi);  local mh:4 = sext(tmp_hi);
+    local addend:4 = a * mh;
+    $(C) = carry(ACC, addend);
+    $(V) = scarry(ACC, addend);
+    ACC = ACC + addend;
+    setNZ32(ACC);
+    applyOvcSigned(ACC);
+    local b:4 = sext(xt_lo);  local ml:4 = sext(tmp_lo);
+    P = P + (b * ml);
+}
+:DMAC "ACC:P,"loc32",*XAR7++"  is rpt_phase=1 & op16=0x564B ; xar7_mode=0x87 & loc32 {
+    local xt:4  = loc32;
+    local tmp:4 = *[ram]:4 XAR7;
+    local xt_hi:2  = xt(2);   local xt_lo:2  = xt:2;
+    local tmp_hi:2 = tmp(2);  local tmp_lo:2 = tmp:2;
+    local a:4 = sext(xt_hi);  local mh:4 = sext(tmp_hi);
+    local addend:4 = a * mh;
+    $(C) = carry(ACC, addend);
+    $(V) = scarry(ACC, addend);
+    ACC = ACC + addend;
+    setNZ32(ACC);
+    applyOvcSigned(ACC);
+    local b:4 = sext(xt_lo);  local ml:4 = sext(tmp_lo);
+    P = P + (b * ml);
+    XAR7 = XAR7 + 2;   # post-increment (2 word-addresses = 32 bits)
+}
+:QMACL "P,"loc32",*XAR7"  is rpt_phase=1 & op16=0x564F ; xar7_mode=0xC7 & loc32 {
+    local b:4 = P;
+    $(C) = carry(ACC, b);
+    $(V) = scarry(ACC, b);
+    ACC = ACC + b;
+    setNZ32(ACC);
+    applyOvcSigned(ACC);
+    local a:8   = sext(loc32);
+    local tmp:4 = *[ram]:4 XAR7;
+    local m:8   = sext(tmp);
+    local r:8   = (a * m) >> 32;
+    P = r:4;
+}
+:QMACL "P,"loc32",*XAR7++"  is rpt_phase=1 & op16=0x564F ; xar7_mode=0x87 & loc32 {
+    local b:4 = P;
+    $(C) = carry(ACC, b);
+    $(V) = scarry(ACC, b);
+    ACC = ACC + b;
+    setNZ32(ACC);
+    applyOvcSigned(ACC);
+    local a:8   = sext(loc32);
+    local tmp:4 = *[ram]:4 XAR7;
+    local m:8   = sext(tmp);
+    local r:8   = (a * m) >> 32;
+    P = r:4;
+    XAR7 = XAR7 + 2;
+}
+:IMACL "P,"loc32",*XAR7"  is rpt_phase=1 & op16=0x564D ; xar7_mode=0xC7 & loc32 {
+    local b:4 = P;
+    $(C) = carry(ACC, b);
+    $(V) = scarry(ACC, b);
+    ACC = ACC + b;
+    setNZ32(ACC);
+    applyOvcUnsigned();
+    local a:8   = sext(loc32);
+    local tmp:4 = *[ram]:4 XAR7;
+    local m:8   = sext(tmp);
+    local r:8   = a * m;
+    P = r:4;   # low 32 bits (PM=0 modeled)
+}
+:IMACL "P,"loc32",*XAR7++"  is rpt_phase=1 & op16=0x564D ; xar7_mode=0x87 & loc32 {
+    local b:4 = P;
+    $(C) = carry(ACC, b);
+    $(V) = scarry(ACC, b);
+    ACC = ACC + b;
+    setNZ32(ACC);
+    applyOvcUnsigned();
+    local a:8   = sext(loc32);
+    local tmp:4 = *[ram]:4 XAR7;
+    local m:8   = sext(tmp);
+    local r:8   = a * m;
+    P = r:4;
+    XAR7 = XAR7 + 2;
+}
 # Square-and-accumulate (MAC-style; 2-word, loc16 in word2). dis2000-confirmed.
 # SQRA: ACC += P (PM=0); T=[loc16]; P = T*T.  SQRS: ACC -= P; T=[loc16]; P = T*T.
 # SPRU430F: N/Z/C/V + OVC on the ACC += P (SQRA) / ACC -= P (SQRS) step.

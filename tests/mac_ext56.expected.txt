@@ -23,6 +23,12 @@
 #       MPYU   ACC,T,@Var      ; 0x36    (sibling; N/Z fix)
 #       MPYXU  P,T,@Var        ; 0x32    (sibling audit)
 #       MPYXU  ACC,T,@Var      ; 0x30    (sibling; N/Z fix)
+#       DMAC ACC:P,@Var,*XAR7 / *XAR7++             ; 0x564B  <-- Group C
+#       QMACL P,@Var,*XAR7   / *XAR7++              ; 0x564F  <-- Group C
+#       IMACL P,@Var,*XAR7   / *XAR7++              ; 0x564D  <-- Group C
+#       DMAC / QMACL / IMACL with non-DP loc32      ; mode-5 loc32 rows -- proves the
+#                                                   ; xar7_mode|loc32 pattern doesn't
+#                                                   ; conflict with loc_mode5 sibling
 #   Var .word 0
 0x0	46560000	QMPYAL P,XT,@0x0
 0x2	45560000	QMPYSL P,XT,@0x0
@@ -40,3 +46,12 @@
 0x13	0036	MPYU ACC,T,@0x0
 0x14	0032	MPYXU P,T,@0x0
 0x15	0030	MPYXU ACC,T,@0x0
+0x16	4b5600c7	DMAC ACC:P,@0x0,*XAR7
+0x18	4b560087	DMAC ACC:P,@0x0,*XAR7++
+0x1a	4f5600c7	QMACL P,@0x0,*XAR7
+0x1c	4f560087	QMACL P,@0x0,*XAR7++
+0x1e	4d5600c7	IMACL P,@0x0,*XAR7
+0x20	4d560087	IMACL P,@0x0,*XAR7++
+0x22	4b5680c7	DMAC ACC:P,*XAR0++,*XAR7
+0x24	4f568087	QMACL P,*XAR0++,*XAR7++
+0x26	4d56d387	IMACL P,*+XAR3[0x2],*XAR7++
