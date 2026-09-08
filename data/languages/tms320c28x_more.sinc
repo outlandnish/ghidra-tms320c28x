@@ -588,10 +588,16 @@ macro unpackst1(in) {
 :SUBB "SP", "#"sp7  is rpt_phase=1 & op_hi8=0xFE & loc_b7=1 & sp7  { SP = SP - sp7; }
 # MOVL ACC,P   0001 0110 1010 1100  (move P to ACC)
 # MOVL ACC,P << PM. Paired on pm_shift like the ADDL/SUBL/CMPL forms in _mac.sinc.
-:MOVL ACCreg, "P"  is rpt_phase=1 & pm_shift=0 & op16=0x16AC & ACCreg  { ACC = P; }
+# SPRU430F p.299: N/Z set from ACC unconditionally after the load. Was flag-silent
+# on both pm_shift halves -- issue #110.
+:MOVL ACCreg, "P"  is rpt_phase=1 & pm_shift=0 & op16=0x16AC & ACCreg  {
+    ACC = P;
+    setNZ32(ACC);
+}
 :MOVL ACCreg, "P"  is rpt_phase=1 & pm_shift=1 & op16=0x16AC & ACCreg  {
     local v:4; pshift(v);
     ACC = v;
+    setNZ32(ACC);
 }
 
 # =============================================================================
@@ -833,12 +839,33 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 }
 # MOVH loc16, ACC<<1   1011 0011 LLLL LLLL  -- store high word of (ACC<<1) to loc16.
 # dis2000-confirmed (DIR image, op_hi8=0xB3). loc16 = bits 16..31 of (ACC<<1).
+# SPRU430F: N/Z conditioned on the destination -- set from AX only when loc16=@AX.
+# Same PREAD-style @AH/@AL split as tms320c28x_more.sinc:396. Issue #110.
+:MOVH "@AH", "ACC<<1"  is rpt_phase=1 & op_hi8=0xB3 & ctx_AMODE=0 & loc_full8=0b10101000  {
+    local v:4 = ACC << 1; AH = v(2); setNZ16(AH);
+}
+:MOVH "@AL", "ACC<<1"  is rpt_phase=1 & op_hi8=0xB3 & ctx_AMODE=0 & loc_full8=0b10101001  {
+    local v:4 = ACC << 1; AL = v(2); setNZ16(AL);
+}
 :MOVH loc16, "ACC<<1"  is rpt_phase=1 & op_hi8=0xB3 & loc16  { local v:4 = ACC << 1; loc16 = v(2); }
 # MOVH loc16, P     0101 0111 LLLL LLLL  -- store high 16 bits of P to loc16.
 # Also MISSING — the next truncation in CAN_postRxEvent (word 0x5703 = MOVH @3,P, in an
 # RPT/PREAD block-copy idiom). [loc16] = (P << PM) >> 16; PM (product-shift) not tracked
 # in decode, so model the common PM=0 case: store the high word PH.
 # MOVH loc16,P stores the HIGH half of the PM-shifted product (SPRU430F p.269).
+# @AH/@AL specialisations set N/Z per spec (issue #110).
+:MOVH "@AH", "P"  is rpt_phase=1 & pm_shift=0 & op_hi8=0x57 & ctx_AMODE=0 & loc_full8=0b10101000  {
+    AH = PH; setNZ16(AH);
+}
+:MOVH "@AL", "P"  is rpt_phase=1 & pm_shift=0 & op_hi8=0x57 & ctx_AMODE=0 & loc_full8=0b10101001  {
+    AL = PH; setNZ16(AL);
+}
+:MOVH "@AH", "P"  is rpt_phase=1 & pm_shift=1 & op_hi8=0x57 & ctx_AMODE=0 & loc_full8=0b10101000  {
+    local v:4; pshift(v); AH = v(2); setNZ16(AH);
+}
+:MOVH "@AL", "P"  is rpt_phase=1 & pm_shift=1 & op_hi8=0x57 & ctx_AMODE=0 & loc_full8=0b10101001  {
+    local v:4; pshift(v); AL = v(2); setNZ16(AL);
+}
 :MOVH loc16, "P"  is rpt_phase=1 & pm_shift=0 & op_hi8=0x57 & loc16  { loc16 = PH; }
 :MOVH loc16, "P"  is rpt_phase=1 & pm_shift=1 & op_hi8=0x57 & loc16  {
     local v:4; pshift(v);
@@ -846,6 +873,19 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 }
 # MOV loc16, P      0011 1111 LLLL LLLL  -- store low 16 bits of P (PM=0 modeled) to loc16.
 # MOV loc16,P stores the LOW half of the PM-shifted product (SPRU430F p.270).
+# @AH/@AL specialisations set N/Z per spec (issue #110).
+:MOV "@AH", "P"   is rpt_phase=1 & pm_shift=0 & op_hi8=0x3F & ctx_AMODE=0 & loc_full8=0b10101000  {
+    AH = PL; setNZ16(AH);
+}
+:MOV "@AL", "P"   is rpt_phase=1 & pm_shift=0 & op_hi8=0x3F & ctx_AMODE=0 & loc_full8=0b10101001  {
+    AL = PL; setNZ16(AL);
+}
+:MOV "@AH", "P"   is rpt_phase=1 & pm_shift=1 & op_hi8=0x3F & ctx_AMODE=0 & loc_full8=0b10101000  {
+    local v:4; pshift(v); AH = v:2; setNZ16(AH);
+}
+:MOV "@AL", "P"   is rpt_phase=1 & pm_shift=1 & op_hi8=0x3F & ctx_AMODE=0 & loc_full8=0b10101001  {
+    local v:4; pshift(v); AL = v:2; setNZ16(AL);
+}
 :MOV loc16, "P"   is rpt_phase=1 & pm_shift=0 & op_hi8=0x3F & loc16  { loc16 = PL; }
 :MOV loc16, "P"   is rpt_phase=1 & pm_shift=1 & op_hi8=0x3F & loc16  {
     local v:4; pshift(v);
