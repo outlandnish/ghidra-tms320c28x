@@ -1,0 +1,27 @@
+# Trap instructions. Encodings verified against TI's own asm2000 (which assembles all
+# three mnemonics) and dis2000 (which prints them back): ITRAP0 -> 0x0000,
+# ITRAP1 -> 0xffff, TRAP #n -> 0x0020 | n for n = 0..31 (SPRU430F p.440,
+# "0000 0000 001C CCCC").
+#
+# ITRAP0 / ITRAP1 are not in SPRU430F's instruction tables -- they are what the hardware
+# does with an unallocated opcode -- but they are the two FILL patterns (0x0000 zero-fill,
+# 0xffff erased flash), so leaving them undecodable put a <UNDEF> wherever a listing ran
+# into padding. Decoding them took a 16K-word DIR firmware-parity range from 7 mismatches
+# to 0.
+#
+# Both are TERMINAL: the illegal-instruction trap vectors through ILLEGAL and never
+# reaches the following word, which is also what stops a fill region being swallowed as
+# code. TRAP #n falls through, because its handler returns with IRET.
+#
+# The vector operand renders in hex where TI's dis2000 prints decimal (#0x1f vs #31); the
+# harness strips "0x" before comparing, and the firmware parity check compares mnemonics.
+0x0	0000	ITRAP0
+0x1	ffff	ITRAP1
+0x2	2000	TRAP #0x0
+0x3	2100	TRAP #0x1
+0x4	2300	TRAP #0x3
+0x5	2a00	TRAP #0xa
+0x6	3300	TRAP #0x13
+0x7	3f00	TRAP #0x1f
+0x8	0100	ABORTI
+0x9	2176	IDLE

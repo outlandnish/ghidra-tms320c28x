@@ -35,6 +35,12 @@
 #                   MSW -- the opposite order from the #16FHi immediates, and getting
 #                   it backwards silently moves RND32 onto NI. Assembled by asm2000
 #                   from TI mnemonics (`SETFLG RNDF32=1` -> e610 0200).
+#   traps        -- ITRAP0 / ITRAP1 / TRAP #n. The two illegal-instruction words are
+#                   the FILL patterns (0x0000 zero-fill, 0xffff erased flash), so leaving
+#                   them undecodable put a <UNDEF> wherever a listing ran into padding --
+#                   all 7 remaining mismatches over a 16K-word DIR parity range. Both are
+#                   terminal, which is what stops a fill region being swallowed as code.
+#                   Encodings verified against TI's own asm2000 and dis2000.
 #   cla_all      -- the WHOLE CLA instruction set, on the separate CLA language: every
 #                   one of the 79 encoded forms, all five addressing modes and the
 #                   delayed branches. Built from tests/cla_all.asm by
@@ -74,7 +80,7 @@ lang="$module/data/languages"
 tmp=$(mktemp -d -t c28x-test-XXXXXX)
 trap 'rm -rf "$tmp"' EXIT
 
-CASES="addr_modes fpu_display fpu_parallel fpu_flags c2xlp cla_all"
+CASES="addr_modes fpu_display fpu_parallel fpu_flags c2xlp cla_all traps"
 
 # Cases not named here run on the core C28x language.
 processor_for() {
