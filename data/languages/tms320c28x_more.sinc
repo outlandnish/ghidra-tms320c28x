@@ -353,7 +353,8 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 # Batch 2: common store/stack/program-memory ops found breaking real code runs.
 # =============================================================================
 # OR loc16, AX     1001 100A LLLL LLLL  (A bit -> AL/AH)
-:OR loc16, AX     is rpt_phase=1 & op_hi7=0x4C & loc16 & AX  { loc16 = loc16 | AX; }
+# SPRU430F: N/Z from the result at [loc16]. Was flag-silent -- see issue #108.
+:OR loc16, AX     is rpt_phase=1 & op_hi7=0x4C & loc16 & AX  { loc16 = loc16 | AX; setNZ16(loc16); }
 # AND loc16, AX    1100 000A LLLL LLLL  (store-side AND: [loc16] &= AX). Was MISSING —
 # the truncation point in CAN_rxDispatch (0x9595c = 0xC092). N/Z set per SPRU430F.
 :AND loc16, AX    is rpt_phase=1 & op_hi7=0x60 & loc16 & AX  { loc16 = loc16 & AX; setNZ16(loc16); }
@@ -420,12 +421,11 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 # =============================================================================
 # ADD loc16,#16bit   0000 1000 LLLL LLLL : iiii
 :ADD loc16, "#"imm16  is rpt_phase=1 & op_hi8=0x08 & loc16 ; imm16  { loc16 = loc16 + imm16:2; }
-# AND loc16,#16bit   0001 1000 LLLL LLLL : iiii
-:AND loc16, "#"imm16  is rpt_phase=1 & op_hi8=0x18 & loc16 ; imm16  { loc16 = loc16 & imm16:2; }
-# OR loc16,#16bit    0001 1010 LLLL LLLL : iiii
-:OR loc16, "#"imm16   is rpt_phase=1 & op_hi8=0x1A & loc16 ; imm16  { loc16 = loc16 | imm16:2; }
-# XOR loc16,#16bit   0001 1100 LLLL LLLL : iiii
-:XOR loc16, "#"imm16  is rpt_phase=1 & op_hi8=0x1C & loc16 ; imm16  { loc16 = loc16 ^ imm16:2; }
+# AND/OR/XOR loc16,#16bit   0001 1sss LLLL LLLL : iiii  (store-side R-M-W). N/Z from
+# result per SPRU430F. Were flag-silent -- see issue #108.
+:AND loc16, "#"imm16  is rpt_phase=1 & op_hi8=0x18 & loc16 ; imm16  { loc16 = loc16 & imm16:2; setNZ16(loc16); }
+:OR loc16, "#"imm16   is rpt_phase=1 & op_hi8=0x1A & loc16 ; imm16  { loc16 = loc16 | imm16:2; setNZ16(loc16); }
+:XOR loc16, "#"imm16  is rpt_phase=1 & op_hi8=0x1C & loc16 ; imm16  { loc16 = loc16 ^ imm16:2; setNZ16(loc16); }
 # XPREAD loc16,*(pma)  1010 1100 MMMM MMMM : pma  (program-mem read, single-word form)
 # Destination-conditioned N/Z, same SPRU430F rule as PREAD above: flags only when the destination
 # is an accumulator half, hence the @AH / @AL split. Repeated forms in tms320c28x_rpt.sinc.
@@ -919,7 +919,8 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 }
 
 # XOR loc16, AX   1111 001A LLLL LLLL  -- store-side XOR (loc ^= AX). A bit -> AL/AH.
-:XOR loc16, AX  is rpt_phase=1 & op_hi7=0x79 & loc16 & AX  { loc16 = loc16 ^ AX; }
+# SPRU430F: N/Z from the result at [loc16]. Was flag-silent -- see issue #108.
+:XOR loc16, AX  is rpt_phase=1 & op_hi7=0x79 & loc16 & AX  { loc16 = loc16 ^ AX; setNZ16(loc16); }
 
 # =============================================================================
 # Batch 11: more top misses from the byte-swapped F28377D production firmware sweep.
