@@ -42,9 +42,15 @@ V_WRITE = re.compile(r'\$\(V\)\s*=(?!=)')
 OVC_WRITE = re.compile(
     r'\bOVC\s*=|applyOvcSigned\s*\(|applyOvcUnsigned\s*\(|'
     r'applyOvcuBorrow\s*\(')
-ACC_DEST = re.compile(r'(?:^|[{;])\s*ACC\s*=', re.M)
+# Sub-table alias names for the accumulator halves. `ACCreg`, `AXb0`, `AXb4`
+# resolve to ACC/AH/AL at Sleigh-compile time (see tms320c28x.sinc lines
+# 341/354-355/358-359). A DEST regex that omits them silently exempts every
+# shift, MPY, and MPYB constructor -- exactly the hole that let issue #104
+# open. Keep this alternation in sync when new attach-variables aliases land.
+ACC_DEST = re.compile(r'(?:^|[{;])\s*(?:ACC|ACCreg)\s*=', re.M)
 P_DEST   = re.compile(r'(?:^|[{;])\s*P\s*=', re.M)
-DEST = re.compile(r'(?:^|[{;])\s*(ACC|AH|AL|AX)\s*=', re.M)
+DEST = re.compile(
+    r'(?:^|[{;])\s*(ACC|AH|AL|AX|ACCreg|AXb0|AXb4)\s*=', re.M)
 ARITH = re.compile(r'=\s*[^;]*[-+&|^]|<<|>>|\w\s*\*\s*\w')
 OPT_OUT = re.compile(r'#\s*flag-audit:\s*none')
 OPT_OUT_OVC = re.compile(r'#\s*flag-audit-ovc:\s*none')
@@ -55,7 +61,7 @@ OPT_OUT_OVC = re.compile(r'#\s*flag-audit-ovc:\s*none')
 ALU = set("""
 ADD ADDB ADDU ADDL ADDCU ADDCL SUB SUBB SUBU SUBL SUBBL SUBCU SUBCUL SBBU
 AND OR XOR NOT NEG NEGL ABS ABSTC INC DEC CMP CMPL CMPB TEST
-ASR ASRL LSL LSLL LSR LSRL SFR SBF ROL ROR
+ASR ASR64 ASRL LSL LSL64 LSLL LSR LSR64 LSRL SFR ROL ROR
 MOV MOVL MOVU MOVB MOVH ZALR SAT SAT64 NORM FLIP CSB
 MAC MPY MPYA MPYB MPYS MPYU MPYXU
 QMPYL QMPYUL QMPYXUL QMPYAL QMPYSL
