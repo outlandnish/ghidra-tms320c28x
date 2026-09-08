@@ -46,6 +46,7 @@ cp "$module/ghidra_scripts/EmuLcTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuZalrTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuAluStoreTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuAddbAccFlagsTest.java" "$tmp/scripts/"
+cp "$module/ghidra_scripts/EmuSubbAccFlagsTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuPreadFlagsTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuPreadRepeatTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuC2xlpTest.java" "$tmp/scripts/"
@@ -77,6 +78,7 @@ run_suite EmuLcTest fpu_flags.bin   # LC/LRET software-stack call, RPC untouched
 run_suite EmuZalrTest fpu_flags.bin # ZALR single ACC store; no firmware site covers it
 run_suite EmuAluStoreTest fpu_flags.bin     # store-side loc16,AX ALU trio (issue #56)
 run_suite EmuAddbAccFlagsTest fpu_flags.bin # ADDB ACC,#8bit Z/N/C/V (host-driven)
+run_suite EmuSubbAccFlagsTest fpu_flags.bin # SUBB ACC,#8bit Z/C  (the fill-loop hole)
 run_suite EmuPreadFlagsTest fpu_flags.bin   # PREAD loc16,*XAR7 N/Z (host-driven)
 run_suite EmuPreadRepeatTest fpu_flags.bin  # RPT||PREAD *XAR7 shadow (state modifier)
 run_suite EmuC2xlpTest fpu_flags.bin        # C2xLP 0x3F page + XCALL/XRET software stack

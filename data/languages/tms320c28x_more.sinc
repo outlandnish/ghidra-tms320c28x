@@ -188,9 +188,32 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 
 # --- ALU additions -----------------------------------------------------------
 # SUBU ACC, loc16   0000 0001 LLLL LLLL   (subtract unsigned)
-:SUBU ACCreg, loc16  is rpt_phase=1 & op_hi8=0x01 & ACCreg & loc16  { ACC = ACC - zext(loc16); }
+# SPRU430F: Z/N set from the result, C CLEARED on borrow (set otherwise), V on overflow. Same
+# flag-hole class as the ADDB note below -- see SUBB for how it was caught.
+:SUBU ACCreg, loc16  is rpt_phase=1 & op_hi8=0x01 & ACCreg & loc16  {
+    local b:4 = zext(loc16);
+    $(C) = !(ACC < b);
+    $(V) = sborrow(ACC, b);
+    ACC = ACC - b;
+    setNZ32(ACC);
+}
 # SUBB ACC, #8bit   0001 1001 CCCC CCCC
-:SUBB ACCreg, "#"imm8  is rpt_phase=1 & op_hi8=0x19 & ACCreg & imm8  { ACC = ACC - zext(imm8:1); }
+# Flags used to be missing entirely here (the body was just the subtract), exactly the hole the
+# ADDB note below describes -- and this one is worse, because SPRU430F's own example for this
+# instruction is the decrement idiom: `MOVL ACC,@VarA ; SUBB ACC,#1`. TI's C runtime builds its
+# word-fill loop out of it: `SUBB ACC,#1 ; MOV *XAR6++,AR5 ; SB loop,NEQ`. With no Z update the
+# branch reads a stale flag and the loop NEVER TERMINATES regardless of the counter -- so
+# EmulateStartup could not replay startup on any image whose runtime uses that fill, spinning
+# until the step budget died and then materializing 666k words of garbage RAM. Disassembly
+# parity is structurally blind to it: mnemonic and operands were always right. Guarded by
+# EmuSubbAccFlagsTest.
+:SUBB ACCreg, "#"imm8  is rpt_phase=1 & op_hi8=0x19 & ACCreg & imm8  {
+    local b:4 = zext(imm8:1);
+    $(C) = !(ACC < b);
+    $(V) = sborrow(ACC, b);
+    ACC = ACC - b;
+    setNZ32(ACC);
+}
 # ADDB ACC, #8bit   0000 1001 CCCC CCCC
 # Flags matter here and used to be missing entirely (the body was just the add). SPRU430F has this
 # form affecting Z/N/C/V like any other ACC add, and the C runtime leans on it: TI's startup tests a
