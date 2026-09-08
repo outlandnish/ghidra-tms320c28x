@@ -262,6 +262,25 @@ macro applyOvcuBorrow() {
     OVC = OVC - zext($(C) == 0);                 # -1 on borrow, 0 otherwise
 }
 
+# --- OVM-driven saturation for NEG/ABS overflow (SPRU430F) --------------------
+# NEG/ABS/NEG64 on the signed-minimum input wraps to itself under two's-complement
+# arithmetic -- which IS the OVM=0 result SPRU430F specifies. Under OVM=1 the
+# result must instead saturate to signed max. Callers must have already set
+# $(V) = 1 on the overflow case; these macros read V and OVM to decide whether
+# to overwrite the naturally-wrapped result. Branchless masking so the decompiler
+# constant-folds where OVM/V are visible.
+macro applyOvmSaturate32(acc) {
+    local should_sat:1 = $(V) & $(OVM);
+    local sat_mask:4 = 0 - zext(should_sat);
+    acc = (0x7FFFFFFF & sat_mask) | (acc & ~sat_mask);
+}
+macro applyOvmSaturate64AccP() {
+    local should_sat:1 = $(V) & $(OVM);
+    local sat_mask:4 = 0 - zext(should_sat);
+    ACC = (0x7FFFFFFF & sat_mask) | (ACC & ~sat_mask);
+    P   = (0xFFFFFFFF & sat_mask) | (P   & ~sat_mask);
+}
+
 # --- shared loc16 / loc32 addressing sub-tables (Table 5-1) --------------------
 # The loc field is the low byte of the opcode word; the locfield token in the
 # addr include overlays op_lo8's bits. Included before the instructions that use it.

@@ -137,9 +137,15 @@
 # flag-audit-ovc: none -- SPRU430F Table 2-5 does NOT list NEG in any OVC-affecting
 # category; its Flags and Modes Affected table lists N,Z,C,V,OVM only. V=1 only on the
 # 0x80000000 edge case; OVC is a counter for accumulate loops, not single-edge signaling.
+# SPRU430F ch. 6 p.334: N/Z/C/V + OVM saturation. C=1 iff result==0 (the odd-looking
+# "carry-set-on-zero" convention). V=1 iff input==0x80000000; OVM=1 then saturates
+# ACC to 0x7FFFFFFF (positive max), OVM=0 wraps to 0x80000000 (natural two's-complement).
+# Was missing C and OVM saturation -- see issue #106.
 :NEG ACCreg   is rpt_phase=1 & op16=0xFF54 & ACCreg  {
     $(V) = (ACC == 0x80000000);
     ACC = -ACC;
+    applyOvmSaturate32(ACC);
+    $(C) = (ACC == 0);
     setNZ32(ACC);
 }
 # NOT ACC           1111 1111 0101 0101

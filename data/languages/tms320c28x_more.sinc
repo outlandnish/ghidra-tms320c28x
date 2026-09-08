@@ -932,15 +932,18 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 # --- 0xFF-prefix fixed/shift forms ------------------------------------------
 # ABS ACC          1111 1111 0101 0110  (ACC = |ACC|). SPRU430F: N/Z from result,
 # C cleared, V set if the input was 0x80000000 (the one value with no positive counterpart).
-# OVM-driven saturation not modeled -- same simplification as NEG ACC (see alu.sinc).
 # flag-audit-ovc: none -- SPRU430F Table 2-5 does not list ABS in any OVC-affecting
 # category; the instruction's own flag table lists only N,Z,C,V,OVM.
+# SPRU430F ch. 6 p.369: N/Z/C/V + OVM saturation. C is always cleared. V=1 iff
+# input==0x80000000; OVM=1 saturates ACC to 0x7FFFFFFF (positive max), OVM=0 wraps.
+# Was missing OVM saturation -- see issue #106.
 :ABS "ACC"   is rpt_phase=1 & op16=0xFF56 {
     $(V) = (ACC == 0x80000000);
     $(C) = 0;
     if (ACC s>= 0) goto <positive>;
     ACC = -ACC;
     <positive>
+    applyOvmSaturate32(ACC);
     setNZ32(ACC);
 }
 # MOVL P,ACC       1111 1111 0101 1010
