@@ -154,6 +154,9 @@
 //   c28x.reg.pieProfile  (path)               PIE vector-identity JSON; defaults to the one in
 //                                             data/device_profiles matching the language variant
 //   c28x.reg.noRootDispatched (bool)          don't register runtime-dispatched functions as roots
+//   c28x.reg.noFlashTables (bool)             skip the CONST flash function-pointer table pass
+//   c28x.reg.minFlashTable (int, default 4)   known function entries a flash table must contain
+//   c28x.reg.flashTableFrac (dbl, default .75) fraction of its non-null slots that must be entries
 //   c28x.reg.noLabels    (bool)               don't label descriptors
 //   c28x.reg.dryRun      (bool)               report only, change nothing
 //
@@ -436,7 +439,7 @@ public class MarkComponentRegistry extends GhidraScript {
      */
     void convergePasses(int maxBack, int window, boolean createFns, int liveBefore) {
         int maxRounds = Integer.getInteger("c28x.reg.rounds", 4);
-        int based = 0, strided = 0, hooks = 0, pie = 0, rooted = 0, rounds = 0;
+        int based = 0, strided = 0, hooks = 0, pie = 0, rooted = 0, flashT = 0, rounds = 0;
         int[] mkT = new int[1];
         for (int round = 1; round <= maxRounds; round++) {
             rounds = round;
@@ -476,6 +479,13 @@ public class MarkComponentRegistry extends GhidraScript {
                 println(String.format("runtime-dispatched entry points registered: %d", k));
                 rooted += k; n += k;
             }
+            // Flash const tables last: anything the passes above connected by a real call edge is
+            // skipped here, so this only ever picks up what nothing else could reach.
+            if (!Boolean.getBoolean("c28x.reg.noFlashTables")) {
+                println("");
+                int k = rootFlashPointerTables(createFns);
+                flashT += k; n += k;
+            }
             // A round that added no edge, rooted nothing and created no function cannot make the
             // next one find anything either.
             if (n == 0 && fm.getFunctionCount() == fnsBefore) break;
@@ -486,8 +496,9 @@ public class MarkComponentRegistry extends GhidraScript {
         int total = fm.getFunctionCount();
         println("");
         println(String.format("%d round(s): %d base, %d strided-table, %d hook edge(s); %d PIE +"
-            + " %d runtime-dispatched root(s); %d function(s) created at table entries",
-            rounds, based, strided, hooks, pie, rooted, mkT[0]));
+            + " %d runtime-dispatched + %d flash-const-table root(s); %d function(s) created at"
+            + " table entries",
+            rounds, based, strided, hooks, pie, rooted, flashT, mkT[0]));
         println(String.format("reachable: %d -> %d of %d  (%.1f%% -> %.1f%%, %+d)",
             liveBefore, liveAfter, total,
             100.0 * liveBefore / total, 100.0 * liveAfter / total, liveAfter - liveBefore));
@@ -1773,6 +1784,99 @@ public class MarkComponentRegistry extends GhidraScript {
                     + "whose own root is an interrupt vector absent from this dump.\n"
                     + "Registered as an entry point so reachability reflects what actually runs.");
         }
+        return rooted;
+    }
+
+    /**
+     * CONST function-pointer tables that live in FLASH.
+     *
+     * rootRuntimeDispatched above scans RAM only, because it was written for pointers .cinit
+     * PLANTS at runtime. But a `const` dispatch table is never copied anywhere -- the linker
+     * leaves it in flash and the code indexes it in place -- so nothing ever roots it. Measured on
+     * two images, that is where most of the "unreachable, DATA REFS ONLY" bucket actually points:
+     * 246 of 297 pointer sites on the 12603 DIR, 311 of 521 on the gen-53, in contiguous runs up
+     * to 75 entries long. Each unrooted table strands everything its handlers call, which is why
+     * the orphaned bucket dwarfs the data-refs-only one.
+     *
+     * Proved before it is used, so this cannot invent edges: a run is only a table if it is
+     * >= minEntries slots at stride 2 (32-bit pointers in a word-addressed space) and at least
+     * flashTableFrac of its non-null slots ALREADY land exactly on a known function entry. Nulls
+     * are tolerated inside a run (a sparse handler table), never counted as evidence for one.
+     * Only then are the slots rooted -- and a slot is skipped if anything calls or jumps to it,
+     * so a handler the registry pass already connected is left alone.
+     */
+    int rootFlashPointerTables(boolean createFns) {
+        int minEntries = Integer.getInteger("c28x.reg.minFlashTable", 4);
+        double minFrac = Double.parseDouble(System.getProperty("c28x.reg.flashTableFrac", "0.75"));
+        int rooted = 0, tables = 0;
+        Set<Long> consumed = new HashSet<>();
+
+        for (MemoryBlock b : mem.getBlocks()) {
+            if (!b.isInitialized()) continue;
+            long lo = b.getStart().getOffset() / 2, hi = b.getEnd().getOffset() / 2;
+            if (!inFlash(lo)) continue;
+            for (long w = lo; w + 1 <= hi; w++) {
+                if (consumed.contains(w)) continue;
+                long v = word32(w);
+                if (v <= 0 || !inFlash(v) || fnAt(v) == null) continue;   // must START on evidence
+
+                // Extend at stride 2 for as long as slots stay plausible.
+                List<Long> slots = new ArrayList<>();
+                int entries = 0, nonNull = 0;
+                long p = w;
+                while (p + 1 <= hi) {
+                    long val = word32(p);
+                    if (val == 0) { slots.add(p); p += 2; continue; }        // padding inside a table
+                    if (val < 0 || !inFlash(val)) break;
+                    boolean isEntry = fnAt(val) != null;
+                    if (!isEntry && fm.getFunctionContaining(wa(val)) != null) break;  // mid-function
+                    slots.add(p);
+                    nonNull++;
+                    if (isEntry) entries++;
+                    p += 2;
+                }
+                if (entries < minEntries || nonNull == 0
+                        || (double) entries / nonNull < minFrac) {
+                    continue;
+                }
+                tables++;
+                println(String.format("  flash table @%05x: %d slot(s), %d known entry(s)",
+                        w, slots.size(), entries));
+                for (long slot : slots) {
+                    consumed.add(slot);
+                    long val = word32(slot);
+                    if (val <= 0 || !inFlash(val)) continue;
+                    Function f = fnAt(val);
+                    if (f == null) {
+                        if (!createFns || fm.getFunctionContaining(wa(val)) != null) continue;
+                        if (!makeFunction(val)) continue;
+                        f = fnAt(val);
+                        if (f == null) continue;
+                    }
+                    boolean called = false;
+                    for (Reference r : rm.getReferencesTo(f.getEntryPoint())) {
+                        RefType t = r.getReferenceType();
+                        if (t.isCall() || t.isJump()) { called = true; break; }
+                    }
+                    if (called) continue;
+                    if (currentProgram.getSymbolTable().isExternalEntryPoint(f.getEntryPoint())) continue;
+                    rooted++;
+                    if (dry) continue;
+                    currentProgram.getSymbolTable().addExternalEntryPoint(f.getEntryPoint());
+                    if (getPlateComment(f.getEntryPoint()) == null)
+                        setPlateComment(f.getEntryPoint(),
+                            "Entry point reached through a CONST function-pointer table in flash "
+                            + "(MarkComponentRegistry).\nIts address sits at " + Long.toHexString(slot)
+                            + ", in a proved table of " + slots.size() + " slot(s), and nothing in "
+                            + "the image calls it directly -- it is indexed at runtime by a "
+                            + "dispatcher.\nRegistered as an entry point so reachability reflects "
+                            + "what actually runs.");
+                }
+                w = p;   // skip past the table we just consumed
+            }
+        }
+        println(String.format("flash const-table roots: %d table(s), %d entry point(s) registered",
+                tables, rooted));
         return rooted;
     }
 
