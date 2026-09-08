@@ -66,11 +66,12 @@
     loc16 = IER;
 }
 
-# MOV IER, loc16    is 0010 1100 LLLL LLLL (load IER) -- verify hi byte
-:MOV IERreg, loc16  is rpt_phase=1 & op_hi8=0x2C & IERreg & loc16  {
-    IER = loc16;
-}
-
+# MOV IER, loc16 is 0010 0011 LLLL LLLL (op_hi8=0x23), NOT 0x2C -- the correct
+# constructor lives in tms320c28x_more.sinc:372. Op 0x2C is LOOPZ (SPRU430F p.224),
+# which was previously mis-decoded as `MOV @loc,IER` at every peripheral-wait site
+# in real firmware because this phantom constructor won the pattern match. Deleted
+# per issue #114. The "-- verify hi byte" comment on the prior line was the author's
+# own TODO marker that decayed.
 # MOV loc16, ARn    0111 1nnn LLLL LLLL   -- store low 16 of XARn (n=0..7)
 # Top 5 bits = 01111 = 0x0F; bits 8..10 = arsel3 (attached to AR0..AR7).
 :MOV loc16, arsel3  is rpt_phase=1 & op_hi5=0x0F & loc16 & arsel3  {

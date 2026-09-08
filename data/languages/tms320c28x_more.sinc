@@ -410,9 +410,32 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 :PWRITE "*XAR7", loc16  is rpt_phase=1 & op_hi8=0x26 & loc16  {
     *[ram]:2 XAR7 = loc16;
 }
-# LOOPNZ loc16,#16bit  0010 1110 LLLL LLLL : iiii...  (decode-only loop)
-:LOOPNZ loc16, "#"imm16  is rpt_phase=1 & op_hi8=0x2E & loc16 ; imm16  { }
-# LOOPZ loc16,#16bit   (0010 1010? no -- check) -- skip, POP uses 0x2a
+# LOOPZ  loc16,#16bit  0010 1100 LLLL LLLL : iiii   (SPRU430F p.224)
+# LOOPNZ loc16,#16bit  0010 1110 LLLL LLLL : iiii   (SPRU430F p.222)
+#
+# The 5-cycle poll loop family: repeatedly AND [loc16] with the mask and stay put
+# until the AND result changes polarity. LOOPZ loops while AND == 0, LOOPNZ loops
+# while AND != 0. Modeled as `if (loop-condition) goto inst_start`, so both the
+# disassembler and the emulator see the self-loop that the manual describes; N/Z
+# are always set from the AND result per spec, even on the exiting iteration.
+#
+# LOOPZ was previously MISSING (op 0x2C was claimed by the phantom MOV IERreg,loc16
+# in tms320c28x_mov.sinc:70, which was on the wrong opcode -- correct MOV IER,loc16
+# is at op_hi8=0x23 in this file). LOOPNZ existed but had a `{ }` decode-only body,
+# so every peripheral-wait idiom silently ran with the previous compare's stale
+# N/Z. Fixed in issue #114.
+:LOOPZ loc16, "#"imm16  is rpt_phase=1 & op_hi8=0x2C & loc16 ; imm16  {
+    local v:2 = loc16;
+    local r:2 = v & imm16:2;
+    setNZ16(r);
+    if (r == 0) goto inst_start;
+}
+:LOOPNZ loc16, "#"imm16  is rpt_phase=1 & op_hi8=0x2E & loc16 ; imm16  {
+    local v:2 = loc16;
+    local r:2 = v & imm16:2;
+    setNZ16(r);
+    if (r != 0) goto inst_start;
+}
 
 # =============================================================================
 # Batch 3: immediate-to-memory ALU (2-word) + XPREAD single-word form.

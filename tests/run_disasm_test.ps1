@@ -55,7 +55,7 @@ param(
   [string]$Ghidra = $env:GHIDRA_INSTALL_DIR,
   [string]$Module = (Split-Path -Parent $PSScriptRoot),
   [string[]]$Cases = @("addr_modes", "fpu_display", "fpu_parallel", "fpu_flags", "c2xlp",
-                       "cla_all", "traps", "mac_ext56", "shifts", "bitops")
+                       "cla_all", "traps", "mac_ext56", "shifts", "bitops", "loops_intr")
 )
 # Cases not listed here run on the core C28x language.
 $ProcessorOf = @{ "cla_all" = "TMS320C28x:LE:32:cla" }
