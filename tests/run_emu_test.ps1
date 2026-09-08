@@ -58,6 +58,7 @@ Copy-Item "$Module\ghidra_scripts\EmuShiftAuditTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuNegAbsTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuCmpLogicBitTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuMovAccFlagsTest.java" "$ws\scripts\" -Force
+Copy-Item "$Module\ghidra_scripts\EmuLeftoverFamilyTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\tests\fpu_flags.bin" "$ws\" -Force
 Copy-Item "$Module\tests\fpu_cond.bin" "$ws\" -Force
 
@@ -109,6 +110,7 @@ Invoke-Suite "EmuShiftAuditTest" "fpu_flags.bin"      # issue #104: AX + 64-bit 
 Invoke-Suite "EmuNegAbsTest" "fpu_flags.bin"          # issue #106: NEG/ABS/NEGTC/ABSTC + OVM saturation
 Invoke-Suite "EmuCmpLogicBitTest" "fpu_flags.bin"     # issue #108: Compare/Logical/Bit-manip audit
 Invoke-Suite "EmuMovAccFlagsTest" "fpu_flags.bin"     # issue #110: MOV family N/Z audit (macro + @ACC/@AX splits)
+Invoke-Suite "EmuLeftoverFamilyTest" "fpu_flags.bin"  # issue #112: INC/DEC C + NORM ext56 forms
 
 if ($fail -eq 0) { Write-Host "emulation semantics: OK" -ForegroundColor Green }
 else { exit 1 }

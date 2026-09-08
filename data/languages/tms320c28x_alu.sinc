@@ -123,16 +123,22 @@
 # INC / DEC of a 16-bit memory/register location
 # =============================================================================
 # INC loc16         0000 1010 LLLL LLLL
+# SPRU430F p.246: N/Z/C/V. C = carry-out of the 16-bit +1 (only when 0xFFFF wraps to 0).
+# Was missing C -- issue #112.
 :INC loc16   is rpt_phase=1 & op_hi8=0x0A & loc16  {
     local v:2 = loc16;
+    $(C) = carry(v, 1:2);
     $(V) = scarry(v, 1:2);
     v = v + 1;
     loc16 = v;
     setNZ16(v);
 }
 # DEC loc16         0000 1011 LLLL LLLL
+# SPRU430F p.222: N/Z/C/V. C convention is C=1 on no-borrow, C=0 on borrow (matches
+# the SUB family). The 16-bit -1 only borrows when v==0. Was missing C -- issue #112.
 :DEC loc16   is rpt_phase=1 & op_hi8=0x0B & loc16  {
     local v:2 = loc16;
+    $(C) = (v != 0);
     $(V) = sborrow(v, 1:2);
     v = v - 1;
     loc16 = v;
