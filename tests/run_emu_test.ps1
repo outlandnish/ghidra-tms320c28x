@@ -44,6 +44,7 @@ Copy-Item "$Module\ghidra_scripts\EmuLcTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuZalrTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuAluStoreTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuAddbAccFlagsTest.java" "$ws\scripts\" -Force
+Copy-Item "$Module\ghidra_scripts\EmuSubbAccFlagsTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuPreadFlagsTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuPreadRepeatTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuC2xlpTest.java" "$ws\scripts\" -Force
@@ -74,6 +75,7 @@ Invoke-Suite "EmuLcTest" "fpu_flags.bin"   # LC/LRET software-stack call, RPC un
 Invoke-Suite "EmuZalrTest" "fpu_flags.bin" # ZALR single ACC store; no firmware site covers it
 Invoke-Suite "EmuAluStoreTest" "fpu_flags.bin"     # store-side loc16,AX ALU trio (issue #56)
 Invoke-Suite "EmuAddbAccFlagsTest" "fpu_flags.bin" # ADDB ACC,#8bit Z/N/C/V (host-driven)
+Invoke-Suite "EmuSubbAccFlagsTest" "fpu_flags.bin" # SUBB ACC,#8bit Z/C  (the fill-loop hole)
 Invoke-Suite "EmuPreadFlagsTest" "fpu_flags.bin"   # PREAD loc16,*XAR7 N/Z (host-driven)
 Invoke-Suite "EmuPreadRepeatTest" "fpu_flags.bin"  # RPT||PREAD *XAR7 shadow (state modifier)
 Invoke-Suite "EmuC2xlpTest" "fpu_flags.bin"        # C2xLP 0x3F page + XCALL/XRET software stack

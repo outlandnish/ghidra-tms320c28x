@@ -72,17 +72,26 @@ public class EmulateStartup extends GhidraScript {
     // arg is read separately below and is unaffected.
     // Clear first: system properties are JVM-global and survive between script runs in one Ghidra
     // session, so a flag passed once would stay set for every later run in that session.
+    // Clear only what a PREVIOUS RUN OF THIS SCRIPT promoted, though -- not every c28x.emu.*
+    // property. A blanket clear also destroys a genuine JVM -D, which is the only way to set
+    // these on Windows: analyzeHeadless.bat truncates a script argument at its first '=', so
+    // docs/C28X_IMAGE_SETUP.md tells you to pass them through JAVA_TOOL_OPTIONS instead. Wiping
+    // those made every documented -Dc28x.emu.* override silently no-op there.
+    private static final Set<String> PROMOTED = new HashSet<>();
+
     void promoteDashDArgs() {
-        for (String k : new ArrayList<>(System.getProperties().stringPropertyNames()))
-            if (k.startsWith("c28x.emu.")) System.clearProperty(k);
+        for (String k : PROMOTED) System.clearProperty(k);
+        PROMOTED.clear();
         String[] args = getScriptArgs();
         if (args == null) return;
         for (String a : args) {
             if (a == null || !a.startsWith("-D")) continue;
             String kv = a.substring(2);
             int eq = kv.indexOf('=');
-            if (eq > 0) System.setProperty(kv.substring(0, eq), kv.substring(eq + 1));
-            else if (!kv.isEmpty()) System.setProperty(kv, "true");
+            String k = eq > 0 ? kv.substring(0, eq) : kv;
+            if (k.isEmpty()) continue;
+            System.setProperty(k, eq > 0 ? kv.substring(eq + 1) : "true");
+            PROMOTED.add(k);
         }
     }
 
@@ -96,6 +105,7 @@ public class EmulateStartup extends GhidraScript {
         boolean apply = false;
         for (String a : getScriptArgs()) if (a.equalsIgnoreCase("apply")) apply = true;
         long maxSteps = Long.getLong("c28x.emu.maxSteps", 2000000L);
+        int spinLimit = Integer.getInteger("c28x.emu.spinLimit", 200000);
         boolean enterIndirect = Boolean.getBoolean("c28x.emu.enterIndirect");
         String ramPat = System.getProperty("c28x.emu.ramBlocks", "(?i).*(RAM|MSGRAM).*");
 
@@ -173,10 +183,28 @@ public class EmulateStartup extends GhidraScript {
             // `MOV @SP,#imm` overwrites this within a few instructions anyway.
             emu.writeRegister("SP", 0x500L);
 
+            // Visit counts, so a run that does not reach the handoff can say WHERE it went
+            // instead of only that it ran out of budget. A startup replay that overruns is
+            // almost always parked in one tight loop -- a poll on a peripheral status bit the
+            // emulator does not model will never fall through, and no budget rescues it.
+            java.util.HashMap<Long, Integer> visits = new java.util.HashMap<>();
+
             while (true) {
                 long pc = emu.readRegister("PC").longValue() & 0xFFFFFFFFL;
                 if (stopAt.contains(pc)) { stopReason = "reached the application @" + Long.toHexString(pc); break; }
                 if (steps >= maxSteps) { stopReason = "step budget (" + maxSteps + ") exhausted"; break; }
+
+                // Spin guard. A startup that overruns is parked in one loop, and burning the
+                // whole budget to say only "exhausted" wastes a minute and names nothing. A
+                // count loop whose bound came out of RAM the replay has not written yet reads
+                // 0, wraps to 0xFFFFFFFF and runs ~4 billion times -- so any single address
+                // reached this often is stuck, not busy.
+                int n = visits.merge(pc, 1, Integer::sum);
+                if (n >= spinLimit) {
+                    stopReason = "spinning at " + Long.toHexString(pc) + " (" + n
+                        + " visits) -- loop bound never reached";
+                    break;
+                }
 
                 // Decide whether to step OVER this instruction rather than into it.
                 Instruction ins = insAt(pc);
@@ -208,6 +236,33 @@ public class EmulateStartup extends GhidraScript {
             println(String.format("stopped: %s  (%d steps, %d direct calls stepped over, %d indirect)",
                 stopReason, steps, skipped, indirectSkipped));
 
+            if (!stopReason.startsWith("startup handed off") && !stopReason.startsWith("reached the")) {
+                // Name the hot loop. The contiguous run of top addresses IS the spin, and the
+                // instruction at its head is what to skip or stop at on the next run.
+                java.util.List<java.util.Map.Entry<Long, Integer>> hot =
+                    new ArrayList<>(visits.entrySet());
+                hot.sort((x, y) -> y.getValue() - x.getValue());
+                println("hottest addresses (a tight cluster here is the loop it never left):");
+                for (int i = 0; i < Math.min(8, hot.size()); i++) {
+                    long a = hot.get(i).getKey();
+                    Instruction ins = insAt(a);
+                    Function f = fm.getFunctionContaining(wa(a));
+                    println(String.format("  %05x  x%-9d %-28s %s", a, hot.get(i).getValue(),
+                        ins == null ? "?" : ins.toString(), f == null ? "" : f.getName()));
+                }
+                println("distinct addresses executed: " + visits.size());
+                // Name the concrete remedy rather than leaving the reader to work it out: the
+                // function containing the hot address is what to step over on the next run.
+                if (!hot.isEmpty()) {
+                    Function stuck = fm.getFunctionContaining(wa(hot.get(0).getKey()));
+                    if (stuck != null) {
+                        println("to step over it:  -Dc28x.emu.skip=0x"
+                            + Long.toHexString(stuck.getEntryPoint().getOffset() / 2)
+                            + "   (" + stuck.getName() + ")");
+                    }
+                }
+            }
+
             // --- harvest ------------------------------------------------------------------
             AddressSetView written = emu.getTrackedMemoryWriteSet();
             if (written == null || written.isEmpty()) {
@@ -233,8 +288,31 @@ public class EmulateStartup extends GhidraScript {
                 println(String.format("  %05x..%05x  %5d words  %s", s, s + n - 1, n,
                     b == null ? "?" : b.getName()));
             }
+            // A replay that never reached the handoff has NOT finished initializing RAM. At best
+            // the state is mid-.cinit; at worst the run is spinning on a peripheral the emulator
+            // does not model, and the recorded write set is the same few regions rewritten
+            // thousands of times. Materializing that is far worse than materializing nothing,
+            // because the garbage then feeds disassembly and the reference graph: measured on a
+            // gen32 DIR image, applying a budget-exhausted replay wrote 666,662 words (more than
+            // the device HAS of RAM) and took reachability from 81% to 8.2%.
+            boolean cleanStop = stopReason.startsWith("startup handed off")
+                    || stopReason.startsWith("reached the application");
+            if (!cleanStop) {
+                println("\nWARNING: the replay did not reach the application handoff.");
+                println("  " + stopReason);
+                println("  The write set above is a PARTIAL or runaway startup state, not the RAM"
+                        + " image the firmware actually reaches.");
+            }
             if (!apply) {
                 println("\nDRY RUN -- nothing written. Re-run with the script argument `apply` to materialize.");
+                return;
+            }
+            if (!Boolean.getBoolean("c28x.emu.applyIncomplete") && !cleanStop) {
+                println("\nREFUSING TO APPLY -- nothing written.");
+                println("  Raise the budget with -Dc28x.emu.maxSteps, name the handoff with");
+                println("  -Dc28x.emu.stopAt=0xWORD, or step over what blocks it with");
+                println("  -Dc28x.emu.skip=0xWORD. To materialize the partial state anyway, pass");
+                println("  -Dc28x.emu.applyIncomplete=true.");
                 return;
             }
 
