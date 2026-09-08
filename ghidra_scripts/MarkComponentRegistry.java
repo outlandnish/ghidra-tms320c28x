@@ -1449,7 +1449,13 @@ public class MarkComponentRegistry extends GhidraScript {
         for (MemoryBlock b : mem.getBlocks()) {
             if (!b.isInitialized()) continue;
             long s = b.getStart().getOffset() / 2, e = b.getEnd().getOffset() / 2;
-            if (s < 0x80000L) continue;                       // the initializer lives in flash
+            // The initializer is usually an uncompressed .const array in flash -- but not when the
+            // image ships an LZSS copy table. Then it exists in flash only in COMPRESSED form,
+            // invisible to a code-address scan, and appears whole only after EmulateStartup replays
+            // the firmware's own decompressor into RAM. Scanning flash only missed it on exactly
+            // the two images (of 20) that compress: both then found it in GS RAM, 224 entries at
+            // 93% default fill with entry 0 = _c_int00, i.e. the same signature verified below.
+            // Uninitialized RAM is skipped above, so a run here means a materialize step has run.
             for (long w = s; w + 1 <= e; w++) {
                 if (word32(w) != cint) continue;              // anchor: entry 0 = the reset vector
                 int len = 0;
