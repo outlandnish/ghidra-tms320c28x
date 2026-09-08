@@ -433,6 +433,21 @@ Convergent, so nothing to adopt:
 - **`7315850`** ("Render MOVST0 flag masks by name") — upstream has since grown the
   `MOVST0` flag-mask rendering the FPU note above records as absent there. The two arrived
   at it separately.
+- **`d488358` + `0009e3a`** ("Fix Ghidra assembly of split `imm22` / FPU `imm16`
+  immediates") — their fix is to join disjoint fields with `|` instead of `+`, because the
+  assembler solves an operand by INVERTING the disassembly action and cannot invert `+`.
+  Every join in this module already used `|`. Measured before concluding that: **38,584
+  encodings assemble correctly and all 744 out-of-range operands are rejected**, across
+  both families and both hex and decimal spellings.
+
+  What was missing was any test holding it there — `|` and `+` are numerically identical
+  over disjoint fields, so the swap is invisible to disassembly, emulation and the
+  decompiler. Breaking one `imm22` join and one FPU join costs 186 and 512 encodings plus
+  6 round trips here, and nothing else in `tests/` moves at all. So their *test* is what
+  got adopted, as [`ghidra_scripts/AssembleRoundTrip.java`](ghidra_scripts/AssembleRoundTrip.java)
+  driven by `tests/run_assembler_check.{sh,ps1}`, rewritten for this repo's harness layout
+  (PyGhidra standalone → headless Java script) and extended with a round trip through our
+  own disassembler, which their matrix does not cover. No code taken. See #76.
 
 Deferred (tracked as a follow-up):
 
