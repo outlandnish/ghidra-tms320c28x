@@ -45,6 +45,9 @@ work that is captured here.
 
 ## Phase 1 — recover the source images (read-only, GUI may stay open)
 
+> Phases 1 and 2 are one-time. Once the dumps and the content-matched provenance mapping are
+> kept somewhere durable, later migrations reuse them and start at Phase 3.
+
 You need the original `.bin` for each program. Staged copies go missing, and rebuilding one from
 its original packaging is **unsafe** when several releases ship a file with the same name.
 
@@ -99,6 +102,25 @@ pass B   -process <name>                    (auto-analysis runs here)
 
 Stage each dump under the **target program name** first — headless names the program after the
 file it imports.
+
+### The second migration collides with itself
+
+The first migration is safe because it *renames*: the new programs land at new paths, so the old
+ones are still there to merge from. Every migration after that starts from names the previous one
+already made canonical — so the import target **is** the program it supersedes, and `-overwrite`
+destroys the analysis before Phase 4 can read it.
+
+Move the old ones aside first, then import into the freed names:
+
+```
+RenamePrograms <listFile> [apply]     # "projectPath|newName" per line, dry run by default
+```
+
+Suffix with the module state they came from (`__pre115`), not `_old` — after two rounds you want
+to know *which* module a leftover was analysed on. Phase 6 then deletes the suffixed ones.
+
+Rename **before** importing but **after** exporting annotations, so the exported files are keyed
+to the canonical paths the new programs will occupy.
 
 **Install the language and the modifier jar as a matched pair from the same commit**, and run
 `run_disasm_test`, `run_phase_check` and `run_emu_test` before starting. A jar from a different
@@ -177,6 +199,9 @@ RemoveEmptyFolders <listFile> [apply]     # allow-listed, dry run by default
 Both take an **explicit list** rather than a pattern, so what is removed is reviewable before
 and auditable after. A program still open in a tool refuses to delete; close it and retry.
 
+On a re-migration this is the `__pre<n>` set renamed aside in Phase 3, and the folders are
+already correct — so there is usually nothing for `RemoveEmptyFolders` to do.
+
 Removing folders the deletion emptied is part of the job. Removing folders that were *already*
 empty is the project owner's call, not a side effect — hence the allow list.
 
@@ -215,6 +240,7 @@ steps and 21,453 words.
 - [ ] Phase 0 — annotations + `.gdt` exported for every program in scope
 - [ ] Phase 1 — sources dumped; technique validated against one known-good staged image
 - [ ] Phase 2 — provenance pinned by content; mapping recorded
+- [ ] re-migration only: old programs renamed aside, so the import cannot overwrite them
 - [ ] language + jar installed as a matched pair; disasm / phase / emu suites pass
 - [ ] `$USER_HOME/ghidra_scripts` diffed against the repo
 - [ ] Phase 3 — pilot one image, read the log, then batch
