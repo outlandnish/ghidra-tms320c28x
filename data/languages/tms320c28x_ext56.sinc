@@ -281,13 +281,28 @@
     $(Z) = (ACC == 0) && (P == 0);
 }
 # NORM ACC,<ind>  1-word; the low byte is the loc16 addressing selector for the
-# indirect forms (*, *++, *--, *0++, *0--). NORM normalizes ACC + adjusts T + modifies
-# the AR; decode-only here (the AR post-modify/exponent update is not modelled).
-:NORM "ACC,*"     is rpt_phase=1 & op16=0x5624 { }
-:NORM "ACC,*++"   is rpt_phase=1 & op16=0x565a { }
-:NORM "ACC,*--"   is rpt_phase=1 & op16=0x5620 { }
-:NORM "ACC,*0++"  is rpt_phase=1 & op16=0x5677 { }
-:NORM "ACC,*0--"  is rpt_phase=1 & op16=0x5630 { }
+# indirect forms (*, *++, *--, *0++, *0--). NORM normalizes ACC + adjusts an AR
+# (ARP-implicit for these forms). SPRU430F pseudo-code (issue #112):
+#   if ACC != 0 and (bit31 XOR bit30 == 0): ACC <<= 1, TC = 0
+#   else:                                    TC = 1
+#   N/Z reflect ACC after
+# AR post-modify not modelled (ARP tracking would be needed for the * forms).
+# Same body shape as :NORM "ACC,"loc_areg++/-- in tms320c28x_more.sinc:778/789.
+macro normAcc() {
+    local b31:4 = (ACC >> 31) & 1;
+    local b30:4 = (ACC >> 30) & 1;
+    local shift:1 = (ACC != 0) && (b31 == b30);
+    $(TC) = !shift;
+    if (!shift) goto <norm_done>;
+    ACC = ACC << 1;
+    <norm_done>
+    setNZ32(ACC);
+}
+:NORM "ACC,*"     is rpt_phase=1 & op16=0x5624 { normAcc(); }
+:NORM "ACC,*++"   is rpt_phase=1 & op16=0x565a { normAcc(); }
+:NORM "ACC,*--"   is rpt_phase=1 & op16=0x5620 { normAcc(); }
+:NORM "ACC,*0++"  is rpt_phase=1 & op16=0x5677 { normAcc(); }
+:NORM "ACC,*0--"  is rpt_phase=1 & op16=0x5630 { normAcc(); }
 
 # =============================================================================
 # 32x32 multiplies (IMPYL/QMPYL family) -- real semantics into ACC or P.
