@@ -238,11 +238,14 @@ macro applyOvcSigned(res) {
     OVC = OVC + (delta & apply_mask);
 }
 
-# Unsigned add variant: OVC += 1 on unsigned carry (C=1) unless OVM suppresses.
-# Only used by ADDUL / ADDUL P / IMPYAL / IMACL per Table 2-5.
+# Unsigned add variant: OVC += 1 on unsigned carry (C=1). Used by ADDUL /
+# ADDUL P / IMPYAL / IMACL per Table 2-5. NOTE: unlike signed OVC, SPRU430F
+# is explicit that "The OVM mode does not affect the OVCU counter" (see the
+# OVCU row in ADDUL/IMPYAL "Flags and Modes" tables), so this macro does
+# NOT gate on $(OVM). The earlier version did -- caught while auditing the
+# IMPY*L/QMPY*L multiply family for #97.
 macro applyOvcUnsigned() {
-    local apply:1 = $(C) & (~$(OVM));
-    OVC = OVC + apply;                           # +1 or +0
+    OVC = OVC + $(C);                            # +1 or +0
 }
 
 # --- shared loc16 / loc32 addressing sub-tables (Table 5-1) --------------------
