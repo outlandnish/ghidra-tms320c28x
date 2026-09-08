@@ -213,12 +213,17 @@ macro pshift(out) {
     out = (right & neg) | (left & ~neg);
 }
 
+# SPRU430F p.255 / p.253 (MOV ACC,loc16<<#0..16 and MOV ACC,#16bit<<#0..15): after the
+# shift-and-load, N reflects bit 31 of ACC and Z reflects ACC==0. All four callers used
+# to leave N/Z untouched -- issue #110. The switch_canonical variant in
+# tms320c28x_ext56.sinc already sets N/Z inline, so it is unaffected.
 macro mov_acc_mext_shift(in, shift) {
     local source:2 = in;
     local full:4;
     mext_value(full, source);
     ACC = full << shift;
     AL = source << shift;
+    setNZ32(ACC);
 }
 
 # --- OVC / OVCU accounting (SPRU430F 2.3, Table 2-5) --------------------------

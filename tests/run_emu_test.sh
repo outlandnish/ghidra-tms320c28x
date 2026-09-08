@@ -59,6 +59,7 @@ cp "$module/ghidra_scripts/EmuMacOvcTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuShiftAuditTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuNegAbsTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuCmpLogicBitTest.java" "$tmp/scripts/"
+cp "$module/ghidra_scripts/EmuMovAccFlagsTest.java" "$tmp/scripts/"
 cp "$module/tests/fpu_flags.bin" "$module/tests/fpu_cond.bin" "$tmp/"
 
 fail=0
@@ -100,6 +101,7 @@ run_suite EmuMacOvcTest fpu_flags.bin         # issue #95: MAC-family + ADDC/SBB
 run_suite EmuShiftAuditTest fpu_flags.bin     # issue #104: AX + 64-bit shift N/Z/C, LSL/SFR ACC,T + ROR ACC
 run_suite EmuNegAbsTest fpu_flags.bin         # issue #106: NEG/ABS/NEGTC/ABSTC + OVM saturation
 run_suite EmuCmpLogicBitTest fpu_flags.bin    # issue #108: Compare/Logical/Bit-manip audit
+run_suite EmuMovAccFlagsTest fpu_flags.bin    # issue #110: MOV family N/Z audit (macro + @ACC/@AX splits)
 
 if [ "$fail" -eq 0 ]; then
   echo "emulation semantics: OK"

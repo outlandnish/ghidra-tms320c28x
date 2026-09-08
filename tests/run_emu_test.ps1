@@ -57,6 +57,7 @@ Copy-Item "$Module\ghidra_scripts\EmuMacOvcTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuShiftAuditTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuNegAbsTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuCmpLogicBitTest.java" "$ws\scripts\" -Force
+Copy-Item "$Module\ghidra_scripts\EmuMovAccFlagsTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\tests\fpu_flags.bin" "$ws\" -Force
 Copy-Item "$Module\tests\fpu_cond.bin" "$ws\" -Force
 
@@ -64,10 +65,20 @@ $fail = 0
 function Invoke-Suite([string]$Script, [string]$Fixture) {
   Write-Host "=== $Script ==="
   Push-Location $ws
-  $raw = & "$Ghidra\support\analyzeHeadless.bat" "$ws\proj" "e_$Script" `
-    -import "$ws\$Fixture" -processor "TMS320C28x:LE:32:default" `
-    -scriptPath "$ws\scripts" -postScript "$Script.java" -noanalysis -overwrite 2>&1
-  Pop-Location
+  # JDK 25 emits sun.misc.Unsafe deprecation warnings on stderr which trip
+  # `$ErrorActionPreference = Stop`; loosen it around the native invocation so
+  # a single warning does not abort the whole suite loop. Same pattern used by
+  # run_disasm_test.ps1.
+  $prevEA = $ErrorActionPreference
+  $ErrorActionPreference = "Continue"
+  try {
+    $raw = & "$Ghidra\support\analyzeHeadless.bat" "$ws\proj" "e_$Script" `
+      -import "$ws\$Fixture" -processor "TMS320C28x:LE:32:default" `
+      -scriptPath "$ws\scripts" -postScript "$Script.java" -noanalysis -overwrite 2>&1
+  } finally {
+    $ErrorActionPreference = $prevEA
+    Pop-Location
+  }
   $raw | Select-String "$Script.java> (PASS|FAIL)" | ForEach-Object { $_.ToString() }
   if (-not ($raw | Select-String "$Script.java> PASS")) {
     Write-Host "--- $Script did not pass; full analyzeHeadless output follows ---" -ForegroundColor Red
@@ -97,6 +108,7 @@ Invoke-Suite "EmuMacOvcTest" "fpu_flags.bin"          # issue #95: MAC-family + 
 Invoke-Suite "EmuShiftAuditTest" "fpu_flags.bin"      # issue #104: AX + 64-bit shift N/Z/C, LSL/SFR ACC,T + ROR ACC
 Invoke-Suite "EmuNegAbsTest" "fpu_flags.bin"          # issue #106: NEG/ABS/NEGTC/ABSTC + OVM saturation
 Invoke-Suite "EmuCmpLogicBitTest" "fpu_flags.bin"     # issue #108: Compare/Logical/Bit-manip audit
+Invoke-Suite "EmuMovAccFlagsTest" "fpu_flags.bin"     # issue #110: MOV family N/Z audit (macro + @ACC/@AX splits)
 
 if ($fail -eq 0) { Write-Host "emulation semantics: OK" -ForegroundColor Green }
 else { exit 1 }

@@ -165,10 +165,20 @@
     T = loc16;
 }
 
-# MOVP T,loc16      0001 0110 LLLL LLLL   -- T = loc16; ACC = P (load T, move product)
+# MOVP T,loc16      0001 0110 LLLL LLLL   -- T = loc16; ACC = P<<PM (load T, move shifted product)
 # loc!=0xAC: that one encoding is MOVL ACC,P << PM (in tms320c28x_more.sinc as MOVL ACC,"P").
-:MOVP Treg, loc16  is rpt_phase=1 & op_hi8=0x16 & loc_full8!=0xAC & Treg & loc16  {
+# SPRU430F p.308: this is documented as an ALIAS for MOVL ACC,P<<PM with loc16=@T -- so both
+# the PM shift and the N/Z flags on ACC must match the alias. Prior body just did `ACC = P`
+# with no shift and no flags (issue #110). pm_shift split parallels MOVL ACC,P in _more.sinc.
+:MOVP Treg, loc16  is rpt_phase=1 & pm_shift=0 & op_hi8=0x16 & loc_full8!=0xAC & Treg & loc16  {
     ACC = P;
+    setNZ32(ACC);
+    T = loc16;
+}
+:MOVP Treg, loc16  is rpt_phase=1 & pm_shift=1 & op_hi8=0x16 & loc_full8!=0xAC & Treg & loc16  {
+    local v:4; pshift(v);
+    ACC = v;
+    setNZ32(ACC);
     T = loc16;
 }
 
