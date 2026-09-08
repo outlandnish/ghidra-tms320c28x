@@ -97,11 +97,20 @@
 # =============================================================================
 
 # MOVL ACC, loc32   0000 0110 LLLL LLLL
+# SPRU430F p.298: N/Z set from ACC after the load. Was flag-silent -- issue #110.
 :MOVL ACCreg, loc32  is rpt_phase=1 & op_hi8=0x06 & ACCreg & loc32  {
     ACC = loc32;
+    setNZ32(ACC);
 }
 
 # MOVL loc32, ACC   0001 1110 LLLL LLLL
+# SPRU430F p.300: N/Z set only when destination is @ACC (the store is a no-op on the
+# register alias, but flags reflect ACC). Same PREAD-style @AH/@AL split idiom as
+# tms320c28x_more.sinc:396. Encoding of @ACC = loc_full8 0b10101001 in the loc32 space
+# (tms320c28x_addr.sinc:191). Issue #110.
+:MOVL "@ACC", ACCreg  is rpt_phase=1 & op_hi8=0x1E & ctx_AMODE=0 & loc_full8=0b10101001 & ACCreg  {
+    setNZ32(ACC);
+}
 :MOVL loc32, ACCreg  is rpt_phase=1 & op_hi8=0x1E & loc32 & ACCreg  {
     loc32 = ACC;
 }
