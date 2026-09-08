@@ -251,6 +251,17 @@ macro applyOvcUnsigned() {
     OVC = OVC + $(C);                            # +1 or +0
 }
 
+# Unsigned subtract variant: OVC -= 1 on unsigned BORROW. The C flag on
+# subtracts follows TI's inverted convention (set on NO borrow, cleared on
+# borrow), so borrow-in is `$(C) == 0`. Used by SUBUL ACC and SUBUL P per
+# their individual "Flags and Modes" tables in SPRU430F ch. 6, which are
+# explicit about OVCU decrementing on unsigned borrow -- resolving the
+# ambiguity Table 2-5 introduces by grouping SUBUL under "Signed
+# Subtraction" (see #98). OVM does NOT gate OVCU, same as applyOvcUnsigned.
+macro applyOvcuBorrow() {
+    OVC = OVC - zext($(C) == 0);                 # -1 on borrow, 0 otherwise
+}
+
 # --- shared loc16 / loc32 addressing sub-tables (Table 5-1) --------------------
 # The loc field is the low byte of the opcode word; the locfield token in the
 # addr include overlays op_lo8's bits. Included before the instructions that use it.
