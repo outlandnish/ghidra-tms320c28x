@@ -33,19 +33,28 @@
 :SUBL loc32, ACCreg  is rpt_phase=1 & op16=0x5641 ; loc32 & ACCreg  { loc32 = loc32 - ACC; }
 # SUBRL loc32,ACC    0x5649  (reverse subtract: loc = ACC - loc)
 :SUBRL loc32, ACCreg is rpt_phase=1 & op16=0x5649 ; loc32 & ACCreg  { loc32 = ACC - loc32; }
-# ADD ACC,loc16<<T   0x5623  (shift by T(3:0))
+# ADD ACC,loc16<<T   0x5623  (shift by T(3:0)). SPRU430F: N,Z,C,V per the 32-bit add
+# of ACC + (mext(loc16) << sh) -- same as the plain ADD ACC,loc16 sibling.
 :ADD ACCreg, loc16^"<<T"  is rpt_phase=1 & op16=0x5623 ; loc16 & ACCreg  {
     local sh:4 = zext(T:2) & 0xf;
     local b:4;
     mext(b, loc16);
-    ACC = ACC + (b << sh);
+    local addend:4 = b << sh;
+    $(C) = carry(ACC, addend);
+    $(V) = scarry(ACC, addend);
+    ACC = ACC + addend;
+    setNZ32(ACC);
 }
-# SUB ACC,loc16<<T   0x5627
+# SUB ACC,loc16<<T   0x5627. SPRU430F: N,Z,C(inverted borrow),V.
 :SUB ACCreg, loc16^"<<T"  is rpt_phase=1 & op16=0x5627 ; loc16 & ACCreg  {
     local sh:4 = zext(T:2) & 0xf;
     local b:4;
     mext(b, loc16);
-    ACC = ACC - (b << sh);
+    local subend:4 = b << sh;
+    $(C) = !(ACC < subend);
+    $(V) = sborrow(ACC, subend);
+    ACC = ACC - subend;
+    setNZ32(ACC);
 }
 # MOV ACC,loc16<<T   0x5606
 :MOV ACCreg, loc16^"<<T"  is rpt_phase=1 & op16=0x5606 ; loc16 & ACCreg  {
@@ -90,10 +99,21 @@
     local sh:4 = zext(shft_hi4:1);
     local b:4;
     mext(b, loc16);
-    ACC = ACC + (b << sh);
+    local addend:4 = b << sh;
+    $(C) = carry(ACC, addend);
+    $(V) = scarry(ACC, addend);
+    ACC = ACC + addend;
+    setNZ32(ACC);
 }
-# ADDUL ACC,loc32    0x5653  (add unsigned 32)
-:ADDUL ACCreg, loc32 is rpt_phase=1 & op16=0x5653 ; loc32 & ACCreg  { ACC = ACC + loc32; }
+# ADDUL ACC,loc32    0x5653  (add unsigned 32). SPRU430F: N,Z,C,V (also OVCU, which we
+# don't model here -- same as OVC on the other add/sub forms).
+:ADDUL ACCreg, loc32 is rpt_phase=1 & op16=0x5653 ; loc32 & ACCreg  {
+    local b:4 = loc32;
+    $(C) = carry(ACC, b);
+    $(V) = scarry(ACC, b);
+    ACC = ACC + b;
+    setNZ32(ACC);
+}
 # SUBUL ACC,loc32    0x5655
 :SUBUL ACCreg, loc32 is rpt_phase=1 & op16=0x5655 ; loc32 & ACCreg  { ACC = ACC - loc32; }
 # SUBBL ACC,loc32    0x5654  (subtract 32-bit plus inverse borrow: ACC = ACC - loc32 - ~C).
@@ -189,6 +209,7 @@
 }
 :QMPYL ACCreg, XTreg, loc32  is rpt_phase=1 & op16=0x5663 ; loc32 & ACCreg & XTreg {
     local a:8 = sext(XT); local b:8 = sext(loc32); local r:8 = (a * b) >> 32; ACC = r:4;  # high 32
+    setNZ32(ACC);  # SPRU430F: N,Z only (this is the sign/zero of the Q30 high half)
 }
 :QMPYL Preg, XTreg, loc32    is rpt_phase=1 & op16=0x5667 ; loc32 & Preg & XTreg {
     local a:8 = sext(XT); local b:8 = sext(loc32); local r:8 = (a * b) >> 32; P = r:4;  # high 32 -> P
@@ -230,6 +251,7 @@
 # rewrite can get wrong; ZALR has no site in either measured image, so nothing else does.
 :ZALR ACCreg, loc16  is rpt_phase=1 & op16=0x5613 ; loc16 & ACCreg {
     ACC = (zext(loc16) << 16) | 0x8000;
+    setNZ32(ACC);  # SPRU430F: N,Z from ACC after the load
 }
 
 # =============================================================================
@@ -533,9 +555,34 @@ macro arp_xar_ptr(p) {
 }
 
 # --- 0x56-prefix 64/long shifts (single-word, fixed sub-opcode) --------------
-:LSLL "ACC,T"   is rpt_phase=1 & op16=0x563b { local s:4 = zext(T) & 0x1f; ACC = ACC << s; }
-:LSRL "ACC,T"   is rpt_phase=1 & op16=0x5622 { local s:4 = zext(T) & 0x1f; ACC = ACC >> s; }
-:ASRL "ACC,T"   is rpt_phase=1 & op16=0x5610 { local s:4 = zext(T) & 0x1f; ACC = ACC s>> s; }
+# SPRU430F: N/Z from ACC after; C=0 if T[4:0]==0, else last bit shifted out of ACC.
+:LSLL "ACC,T"   is rpt_phase=1 & op16=0x563b {
+    local s:4 = zext(T) & 0x1f;
+    $(C) = 0;
+    if (s == 0) goto <done>;
+    $(C) = ((ACC >> (32 - s)) & 1) != 0;
+    <done>
+    ACC = ACC << s;
+    setNZ32(ACC);
+}
+:LSRL "ACC,T"   is rpt_phase=1 & op16=0x5622 {
+    local s:4 = zext(T) & 0x1f;
+    $(C) = 0;
+    if (s == 0) goto <done>;
+    $(C) = ((ACC >> (s - 1)) & 1) != 0;
+    <done>
+    ACC = ACC >> s;
+    setNZ32(ACC);
+}
+:ASRL "ACC,T"   is rpt_phase=1 & op16=0x5610 {
+    local s:4 = zext(T) & 0x1f;
+    $(C) = 0;
+    if (s == 0) goto <done>;
+    $(C) = ((ACC >> (s - 1)) & 1) != 0;
+    <done>
+    ACC = ACC s>> s;
+    setNZ32(ACC);
+}
 
 # =============================================================================
 # Batch 15 (2026-06-23): 0x56-family gaps from the prologue-seeded truncation
@@ -634,8 +681,15 @@ macro arp_xar_ptr(p) {
 }
 # SUBCUL ACC,loc32  0101 0110 0001 0111 : loc32  (conditional 32-bit subtract step;
 # divide primitive). Modeled as the plain subtract (the conditional-restore detail
-# isn't tracked); keeps dataflow + flow continuing.
-:SUBCUL ACCreg, loc32  is rpt_phase=1 & op16=0x5617 ; loc32 & ACCreg  { ACC = ACC - loc32; }
+# and the P register updates per SPRU430F aren't tracked); keeps dataflow + flow going.
+# Flags follow the simplified body: N,Z from ACC after, C inverted-borrow like SUB.
+# Full pseudo-code (temp = ACC<<1 + P[31] - [loc32]; ACC:P shift dance) is issue-tracked.
+:SUBCUL ACCreg, loc32  is rpt_phase=1 & op16=0x5617 ; loc32 & ACCreg  {
+    local b:4 = loc32;
+    $(C) = !(ACC < b);
+    ACC = ACC - b;
+    setNZ32(ACC);
+}
 # MOVX TL,loc16  0101 0110 0010 0001 : 0000 0000 LLLL LLLL  (sign-extend [loc16] into
 # the low half of XT; high half = sign). XT low 16 = loc16, T (high) = sign-extend.
 :MOVX "TL", loc16  is rpt_phase=1 & op16=0x5621 ; loc16  { XT = sext(loc16); }

@@ -26,11 +26,16 @@
 }
 
 # MPYS P,T,loc16    0001 0011 LLLL LLLL   -- ACC -= P<<PM (PM=0 modeled); then P = T*loc16
+# SPRU430F: N,Z,C(inverted borrow),V from the ACC -= P step.
 :MPYS Preg, Treg, loc16  is rpt_phase=1 & op_hi8=0x13 & Preg & Treg & loc16  {
-    ACC = ACC - P;
+    local b:4 = P;
+    $(C) = !(ACC < b);
+    $(V) = sborrow(ACC, b);
+    ACC = ACC - b;
+    setNZ32(ACC);
     local a:4 = sext(T);
-    local b:4 = sext(loc16);
-    P = a * b;
+    local m:4 = sext(loc16);
+    P = a * m;
 }
 
 # MPY ACC,loc16,#16bit  0011 0100 LLLL LLLL : iiii iiii iiii iiii  (2-word)
@@ -88,12 +93,16 @@
 # The second word is the low 16 bits of a program-memory address (0:pma). We model
 # the accumulate of the previous product and the new product load.
 :MAC Preg, loc16, "*"imm16  is rpt_phase=1 & op_hi8=0x14 & Preg & loc16 ; imm16  {
-    ACC = ACC + P;
+    local b:4 = P;
+    $(C) = carry(ACC, b);
+    $(V) = scarry(ACC, b);
+    ACC = ACC + b;
+    setNZ32(ACC);
     local pma:4 = zext(imm16:2);
     local pv:2 = *[ram]:2 pma;
     local a:4 = sext(loc16);
-    local b:4 = sext(pv);
-    P = a * b;
+    local mb:4 = sext(pv);
+    P = a * mb;
 }
 
 # MOVA T,loc16      0001 0000 LLLL LLLL   -- T = loc16; ACC += P (load T, add prev product)
@@ -150,17 +159,37 @@
 # the same trap documented for rpt_phase in the slaspec.
 
 # ADDL ACC,P << PM   0001 0000 1010 1100
-:ADDL "ACC,P << PM"  is rpt_phase=1 & pm_shift=0 & op16=0x10AC  { ACC = ACC + P; }
+# SPRU430F: N,Z,C,V per the 32-bit add. Same flag shape as CMPL ACC,P<<PM below,
+# with ACC actually updated afterward.
+:ADDL "ACC,P << PM"  is rpt_phase=1 & pm_shift=0 & op16=0x10AC  {
+    local b:4 = P;
+    $(C) = carry(ACC, b);
+    $(V) = scarry(ACC, b);
+    ACC = ACC + b;
+    setNZ32(ACC);
+}
 :ADDL "ACC,P << PM"  is rpt_phase=1 & pm_shift=1 & op16=0x10AC  {
-    local v:4; pshift(v);
-    ACC = ACC + v;
+    local b:4; pshift(b);
+    $(C) = carry(ACC, b);
+    $(V) = scarry(ACC, b);
+    ACC = ACC + b;
+    setNZ32(ACC);
 }
 
-# SUBL ACC,P << PM   0001 0001 1010 1100
-:SUBL "ACC,P << PM"  is rpt_phase=1 & pm_shift=0 & op16=0x11AC  { ACC = ACC - P; }
+# SUBL ACC,P << PM   0001 0001 1010 1100. SPRU430F: N,Z,C(inverted borrow),V.
+:SUBL "ACC,P << PM"  is rpt_phase=1 & pm_shift=0 & op16=0x11AC  {
+    local b:4 = P;
+    $(C) = !(ACC < b);
+    $(V) = sborrow(ACC, b);
+    ACC = ACC - b;
+    setNZ32(ACC);
+}
 :SUBL "ACC,P << PM"  is rpt_phase=1 & pm_shift=1 & op16=0x11AC  {
-    local v:4; pshift(v);
-    ACC = ACC - v;
+    local b:4; pshift(b);
+    $(C) = !(ACC < b);
+    $(V) = sborrow(ACC, b);
+    ACC = ACC - b;
+    setNZ32(ACC);
 }
 
 # CMPL ACC,P << PM   1111 1111 0101 1001   -- compare only; ACC unchanged

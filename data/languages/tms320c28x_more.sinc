@@ -124,10 +124,14 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 :MOVB AX^".LSB", loc16  is rpt_phase=1 & op_hi7=0x63 & AX & loc_mode5!=0b10010 & loc_mode5!=0b10011 & loc16  {
     local b:2 = loc16 & 0xFF;
     AX = b;
+    setNZ16(AX);
 }
 # MOVB AX.MSB, loc16   0011 100A LLLL LLLL  -- load MSB of AX, LSB left unchanged.
+# SPRU430F: after the byte load N/Z reflect the FULL AX (both bytes), so they are testable
+# even when only one half changes -- see the MOVB AX,#8bit sibling for the same pattern.
 :MOVB AX^".MSB", loc16  is rpt_phase=1 & op_hi7=0x1C & AX & loc_mode5!=0b10010 & loc_mode5!=0b10011 & loc16  {
     AX = (AX & 0x00FF) | ((loc16 & 0xFF) << 8);
+    setNZ16(AX);
 }
 # MOVB loc16, AX.LSB   0011 110A LLLL LLLL  -- store low byte of AX into loc16.
 # (Spec writes only 8 bits of loc16, the other byte by address parity; we approximate
@@ -166,24 +170,28 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
     local wv:2 = *[ram]:2 (ba >> 1);
     local sh:2 = zext(ba:1 & 1) << 3;
     AX = (wv >> sh) & 0xFF;
+    setNZ16(AX);
 }
 :MOVB AX^".LSB", "*+"loc_areg"[AR1]"  is rpt_phase=1 & op_hi7=0x63 & AX & ctx_AMODE=0 & loc_mode5=0b10011 & loc_areg {
     local ba:4 = (loc_areg << 1) + zext(AR1);
     local wv:2 = *[ram]:2 (ba >> 1);
     local sh:2 = zext(ba:1 & 1) << 3;
     AX = (wv >> sh) & 0xFF;
+    setNZ16(AX);
 }
 :MOVB AX^".MSB", "*+"loc_areg"[AR0]"  is rpt_phase=1 & op_hi7=0x1C & AX & ctx_AMODE=0 & loc_mode5=0b10010 & loc_areg {
     local ba:4 = (loc_areg << 1) + zext(AR0);
     local wv:2 = *[ram]:2 (ba >> 1);
     local sh:2 = zext(ba:1 & 1) << 3;
     AX = (AX & 0x00FF) | (((wv >> sh) & 0xFF) << 8);
+    setNZ16(AX);
 }
 :MOVB AX^".MSB", "*+"loc_areg"[AR1]"  is rpt_phase=1 & op_hi7=0x1C & AX & ctx_AMODE=0 & loc_mode5=0b10011 & loc_areg {
     local ba:4 = (loc_areg << 1) + zext(AR1);
     local wv:2 = *[ram]:2 (ba >> 1);
     local sh:2 = zext(ba:1 & 1) << 3;
     AX = (AX & 0x00FF) | (((wv >> sh) & 0xFF) << 8);
+    setNZ16(AX);
 }
 
 # --- ALU additions -----------------------------------------------------------
@@ -245,9 +253,14 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
     local num:8 = zext(ACC) << 1;
     local den:8 = zext(loc16) << 16;
     local temp:8 = num - den;
+    # SPRU430F: C is CLEARED when the 33-bit temp borrows (num<den), else SET.
+    # V and OVC are documented as unaffected. N/Z reflect the FINAL ACC (both branches).
+    $(C) = !(num < den);
     ACC = ACC << 1;                 # else: ACC <<= 1
-    if (temp s<= 0) goto inst_next;
+    if (temp s<= 0) goto <done>;
     ACC = temp:4 + 1;               # then: ACC = temp[31:0] + 1
+    <done>
+    setNZ32(ACC);
 }
 
 # --- multiply additions ------------------------------------------------------
@@ -563,8 +576,10 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 # Shifting by 16 discards every bit extension could have contributed, so this form and
 # its ADD/SUB siblings below are SXM-independent by construction -- deliberately NOT
 # routed through mext, which would add an SXM term the decompiler then has to fold away.
+# SPRU430F: MOV ACC,loc16<<# sets N,Z only (no C, V).
 :MOV ACCreg, loc16^"<<#16"  is rpt_phase=1 & op_hi8=0x25 & ACCreg & loc16 {
     local v:4 = zext(loc16); ACC = v << 16;
+    setNZ32(ACC);
 }
 
 # =============================================================================
@@ -639,10 +654,34 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
     setNZ32(ACC);
 }
 # NORM ACC,XARn++/--   1111 1111 0111 Xnnn  (normalize ACC, post-inc/dec XARn; X=bit3
-# selects ++/--, nnn=ARn via loc_areg). The normalize-shift isn't tracked; model the AR
-# post-modify and write ACC so dataflow + flow continue. Was the truncation behind 0xff77.
-:NORM "ACC,"loc_areg^"++"  is rpt_phase=1 & op_hi8=0xFF & op_lo765=0b011 & norm_pm=1 & loc_areg { ACC = ACC; loc_areg = loc_areg + 1; }
-:NORM "ACC,"loc_areg^"--"  is rpt_phase=1 & op_hi8=0xFF & op_lo765=0b011 & norm_pm=0 & loc_areg { ACC = ACC; loc_areg = loc_areg + (-1); }
+# selects ++/--, nnn=ARn via loc_areg). Was the truncation behind 0xff77.
+#
+# SPRU430F pseudo-code: if ACC != 0 and (bit31 XOR bit30 == 0) then ACC <<= 1, TC = 0,
+# XARn post-modifies; else TC = 1 and XARn is NOT modified. N/Z reflect ACC after.
+# The prior model always stepped XARn and left ACC unchanged; both were wrong per spec
+# and left TC unset -- the flag most code using NORM actually consumes.
+:NORM "ACC,"loc_areg^"++"  is rpt_phase=1 & op_hi8=0xFF & op_lo765=0b011 & norm_pm=1 & loc_areg {
+    local b31:4 = (ACC >> 31) & 1;
+    local b30:4 = (ACC >> 30) & 1;
+    local shift:1 = (ACC != 0) && (b31 == b30);
+    $(TC) = !shift;
+    if (!shift) goto <done>;
+    ACC = ACC << 1;
+    loc_areg = loc_areg + 1;
+    <done>
+    setNZ32(ACC);
+}
+:NORM "ACC,"loc_areg^"--"  is rpt_phase=1 & op_hi8=0xFF & op_lo765=0b011 & norm_pm=0 & loc_areg {
+    local b31:4 = (ACC >> 31) & 1;
+    local b30:4 = (ACC >> 30) & 1;
+    local shift:1 = (ACC != 0) && (b31 == b30);
+    $(TC) = !shift;
+    if (!shift) goto <done>;
+    ACC = ACC << 1;
+    loc_areg = loc_areg + (-1);
+    <done>
+    setNZ32(ACC);
+}
 
 # =============================================================================
 # Batch 9: final rts-validation gaps — MOV ACC,#16bit<<#shift, CMPB AX,#8bit.
@@ -768,10 +807,16 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 }
 
 # --- 0xFF-prefix fixed/shift forms ------------------------------------------
-# ABS ACC          1111 1111 0101 0110   (ACC = |ACC|; decode-only on the V/sat edge)
+# ABS ACC          1111 1111 0101 0110  (ACC = |ACC|). SPRU430F: N/Z from result,
+# C cleared, V set if the input was 0x80000000 (the one value with no positive counterpart).
+# OVM-driven saturation not modeled -- same simplification as NEG ACC (see alu.sinc).
 :ABS "ACC"   is rpt_phase=1 & op16=0xFF56 {
-    if (ACC s>= 0) goto inst_next;
+    $(V) = (ACC == 0x80000000);
+    $(C) = 0;
+    if (ACC s>= 0) goto <positive>;
     ACC = -ACC;
+    <positive>
+    setNZ32(ACC);
 }
 # MOVL P,ACC       1111 1111 0101 1010
 :MOVL "P", ACCreg  is rpt_phase=1 & op16=0xFF5A & ACCreg { P = ACC; }
@@ -787,10 +832,15 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 :SPM "-5"  is rpt_phase=1 & op16=0xFF6E { $(PM) = -5; }
 :SPM "-6"  is rpt_phase=1 & op16=0xFF6F { $(PM) = -6; }
 # ADD ACC,#16bit<<#0..15   1111 1111 0001 SHFT : iiii iiii iiii iiii  (2-word)
+# SPRU430F: N,Z,C,V per the 32-bit add of ACC + (mext(#imm16) << s).
 :ADD ACCreg, "#"imm16^"<<#"^shft4  is rpt_phase=1 & op_hi8=0xFF & loc_hi4=0b0001 & shft4 & ACCreg ; imm16 {
     local v:4; local s:4 = zext(shft4:1);
     mext(v, imm16:2);
-    ACC = ACC + (v << s);
+    local addend:4 = v << s;
+    $(C) = carry(ACC, addend);
+    $(V) = scarry(ACC, addend);
+    ACC = ACC + addend;
+    setNZ32(ACC);
 }
 # LSL ACC,#1..16   1111 1111 0011 SHFT  (logical shift left ACC; SHFT=0 -> 16). Single
 # word. C = last bit shifted out (= ACC bit 32-sh, pre-shift); N/Z from the result.
@@ -802,8 +852,19 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 }
 # SFR ACC,#1..16   1111 1111 0100 SHFT  (shift ACC right; SHFT=0 -> 16). Single word.
 # Reuse the shcount subtable (= shft4+1) used by the AX immediate shifts.
+#
+# SPRU430F: SFR is SXM-governed -- arithmetic (sign-fill) right shift when SXM=1,
+# logical (zero-fill) when SXM=0. N/Z from the ACC result; C = last bit shifted out.
+# The prior body always did the logical form, dropping the sign for SXM=1 sites, and
+# wrote no flags -- both fixed here.
 :SFR ACCreg, "#"shcount  is rpt_phase=1 & op_hi8=0xFF & loc_hi4=0b0100 & ACCreg & shcount {
-    ACC = ACC >> shcount;
+    local sh:4 = zext(shcount);
+    $(C) = ((ACC >> (sh - 1)) & 1) != 0;
+    local sxm_mask:4 = 0 - zext($(SXM));  # all-1s when SXM=1, 0 when SXM=0
+    local arith:4 = ACC s>> sh;
+    local logic:4 = ACC >> sh;
+    ACC = (arith & sxm_mask) | (logic & ~sxm_mask);
+    setNZ32(ACC);
 }
 # SUB ACC,#16bit<<#0..15   1111 1111 0000 SHFT : iiii  (2-word; counterpart to the
 # ADD ACC,#16bit<<# at 0xFF1x). 0xff00/0xff0f etc.
@@ -824,7 +885,11 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 :SUB ACCreg, "#"imm16^"<<#"^shft4  is rpt_phase=1 & op_hi8=0xFF & loc_hi4=0b0000 & shft4 & ACCreg ; imm16 {
     local v:4; local s:4 = zext(shft4:1);
     mext(v, imm16:2);
-    ACC = ACC - (v << s);
+    local subend:4 = v << s;
+    $(C) = !(ACC < subend);
+    $(V) = sborrow(ACC, subend);
+    ACC = ACC - subend;
+    setNZ32(ACC);
 }
 # NOT AX   1111 1111 0101 111A  (complement AL/AH; A=bit0).
 :NOT AXb0  is rpt_phase=1 & op_hi8=0xFF & op_lo71=0b0101111 & AXb0  { AXb0 = ~AXb0; setNZ16(AXb0); }
@@ -862,13 +927,21 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 }
 # ADD ACC, loc16 <<#16   0000 0101 LLLL LLLL  (single word; add loc<<16 to ACC).
 :ADD ACCreg, loc16^"<<#16"  is rpt_phase=1 & op_hi8=0x05 & ACCreg & loc16 {
-    local v:4 = zext(loc16) << 16; ACC = ACC + v;
+    local v:4 = zext(loc16) << 16;
+    $(C) = carry(ACC, v);
+    $(V) = scarry(ACC, v);
+    ACC = ACC + v;
+    setNZ32(ACC);
 }
 # SUB ACC, loc16 <<#16   0000 0100 LLLL LLLL  (single word; subtract loc<<16 from ACC).
 # Completes the ACC,loc16<<#16 family (MOV=0x25, ADD=0x05 above; SUB=0x04 was the
 # missing sibling). dis2000-confirmed: 0x044e = SUB ACC,*-SP[14]<<16.
 :SUB ACCreg, loc16^"<<#16"  is rpt_phase=1 & op_hi8=0x04 & ACCreg & loc16 {
-    local v:4 = zext(loc16) << 16; ACC = ACC - v;
+    local v:4 = zext(loc16) << 16;
+    $(C) = !(ACC < v);
+    $(V) = sborrow(ACC, v);
+    ACC = ACC - v;
+    setNZ32(ACC);
 }
 # CMP loc16, #16bitSigned   0001 1011 LLLL LLLL : iiii  (2-word; flags only).
 :CMP loc16, "#"simm16  is rpt_phase=1 & op_hi8=0x1B & loc16 ; simm16 {
