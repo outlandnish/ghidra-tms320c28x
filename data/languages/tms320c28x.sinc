@@ -218,6 +218,33 @@ macro mov_acc_mext_shift(in, shift) {
     AL = source << shift;
 }
 
+# --- OVC / OVCU accounting (SPRU430F 2.3, Table 2-5) --------------------------
+# OVC is the 6-bit signed overflow counter at ST0[15:10]. OVCU is not a separate
+# register -- it is the SAME counter named differently for unsigned ops. Range
+# -32..+31 (wraps at boundaries); reset value is 0. OVM=1 suppresses updates
+# entirely (the OVM path saturates ACC instead, which is a separate hole).
+#
+# Called AFTER V (signed) or C (unsigned) has been set on the current
+# instruction. `res` is the ACC value AFTER the op -- the sign of the wrapped
+# result tells the OVERFLOW DIRECTION: negative result = wrapped from +MAX
+# (positive overflow, OVC += 1); non-negative result = wrapped from -MIN
+# (negative overflow, OVC -= 1). Branchless so the decompiler can constant-fold
+# when OVM and V are visible.
+macro applyOvcSigned(res) {
+    local apply:1 = $(V) & (~$(OVM));           # 1 iff we should update OVC
+    local pos_ovf:1 = (res s< 0);                # 1 iff +ve overflow direction
+    local delta:1 = (pos_ovf << 1) - 1:1;        # +1 (pos) or -1 (neg), signed 1B
+    local apply_mask:1 = 0:1 - apply;            # 0xff or 0
+    OVC = OVC + (delta & apply_mask);
+}
+
+# Unsigned add variant: OVC += 1 on unsigned carry (C=1) unless OVM suppresses.
+# Only used by ADDUL / ADDUL P / IMPYAL / IMACL per Table 2-5.
+macro applyOvcUnsigned() {
+    local apply:1 = $(C) & (~$(OVM));
+    OVC = OVC + apply;                           # +1 or +0
+}
+
 # --- shared loc16 / loc32 addressing sub-tables (Table 5-1) --------------------
 # The loc field is the low byte of the opcode word; the locfield token in the
 # addr include overlays op_lo8's bits. Included before the instructions that use it.

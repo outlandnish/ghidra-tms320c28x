@@ -90,6 +90,7 @@
     $(V) = scarry(ACC, b);
     ACC = ACC + b;
     setNZ32(ACC);
+    applyOvcSigned(ACC);
 }
 # SUBL ACC, loc32   0000 0011 LLLL LLLL
 :SUBL ACCreg, loc32 is rpt_phase=1 & op_hi8=0x03 & ACCreg & loc32  {
@@ -98,6 +99,7 @@
     $(V) = sborrow(ACC, b);
     ACC = ACC - b;
     setNZ32(ACC);
+    applyOvcSigned(ACC);
 }
 # CMPL ACC, loc32   0000 1111 LLLL LLLL
 :CMPL ACCreg, loc32 is rpt_phase=1 & op_hi8=0x0F & ACCreg & loc32  {
@@ -132,6 +134,9 @@
 # NEG / NOT of ACC (single-word, FF-prefixed)
 # =============================================================================
 # NEG ACC           1111 1111 0101 0100
+# flag-audit-ovc: none -- SPRU430F Table 2-5 does NOT list NEG in any OVC-affecting
+# category; its Flags and Modes Affected table lists N,Z,C,V,OVM only. V=1 only on the
+# 0x80000000 edge case; OVC is a counter for accumulate loops, not single-edge signaling.
 :NEG ACCreg   is rpt_phase=1 & op16=0xFF54 & ACCreg  {
     $(V) = (ACC == 0x80000000);
     ACC = -ACC;

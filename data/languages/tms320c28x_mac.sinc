@@ -33,6 +33,7 @@
     $(V) = sborrow(ACC, b);
     ACC = ACC - b;
     setNZ32(ACC);
+    applyOvcSigned(ACC);
     local a:4 = sext(T);
     local m:4 = sext(loc16);
     P = a * m;
@@ -98,6 +99,7 @@
     $(V) = scarry(ACC, b);
     ACC = ACC + b;
     setNZ32(ACC);
+    applyOvcSigned(ACC);
     local pma:4 = zext(imm16:2);
     local pv:2 = *[ram]:2 pma;
     local a:4 = sext(loc16);
@@ -167,6 +169,7 @@
     $(V) = scarry(ACC, b);
     ACC = ACC + b;
     setNZ32(ACC);
+    applyOvcSigned(ACC);
 }
 :ADDL "ACC,P << PM"  is rpt_phase=1 & pm_shift=1 & op16=0x10AC  {
     local b:4; pshift(b);
@@ -174,6 +177,7 @@
     $(V) = scarry(ACC, b);
     ACC = ACC + b;
     setNZ32(ACC);
+    applyOvcSigned(ACC);
 }
 
 # SUBL ACC,P << PM   0001 0001 1010 1100. SPRU430F: N,Z,C(inverted borrow),V.
@@ -183,6 +187,7 @@
     $(V) = sborrow(ACC, b);
     ACC = ACC - b;
     setNZ32(ACC);
+    applyOvcSigned(ACC);
 }
 :SUBL "ACC,P << PM"  is rpt_phase=1 & pm_shift=1 & op16=0x11AC  {
     local b:4; pshift(b);
@@ -190,6 +195,7 @@
     $(V) = sborrow(ACC, b);
     ACC = ACC - b;
     setNZ32(ACC);
+    applyOvcSigned(ACC);
 }
 
 # CMPL ACC,P << PM   1111 1111 0101 1001   -- compare only; ACC unchanged

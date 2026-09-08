@@ -204,6 +204,7 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
     $(V) = sborrow(ACC, b);
     ACC = ACC - b;
     setNZ32(ACC);
+    applyOvcSigned(ACC);
 }
 # SUBB ACC, #8bit   0001 1001 CCCC CCCC
 # Flags used to be missing entirely here (the body was just the subtract), exactly the hole the
@@ -221,6 +222,7 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
     $(V) = sborrow(ACC, b);
     ACC = ACC - b;
     setNZ32(ACC);
+    applyOvcSigned(ACC);
 }
 # ADDB ACC, #8bit   0000 1001 CCCC CCCC
 # Flags matter here and used to be missing entirely (the body was just the add). SPRU430F has this
@@ -237,6 +239,7 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
     $(V) = scarry(ACC, b);
     ACC = ACC + b;
     setNZ32(ACC);
+    applyOvcSigned(ACC);
 }
 # ADDB AX, #8bit    1001 110A CCCC CCCC
 :ADDB AX, "#"imm8   is rpt_phase=1 & op_hi7=0x4E & AX & imm8  {
@@ -644,7 +647,27 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 
 # SAT ACC   1111 1111 0101 0111  (saturate ACC per OVC; modeled flow-preserving —
 # the OVC-driven clamp isn't tracked, so write ACC so dataflow continues).
-:SAT "ACC"  is rpt_phase=1 & op16=0xFF57 { ACC = ACC; }
+# SAT ACC   1111 1111 0101 0111  (saturate ACC per OVC, then clear OVC). SPRU430F 6.x:
+#   if(OVC > 0): ACC = 0x7FFFFFFF; V = 1;
+#   if(OVC < 0): ACC = 0x80000000; V = 1;
+#   if(OVC = 0): ACC unchanged;      V = 0;
+#   OVC = 0 in all cases. C is cleared. N/Z from ACC after.
+# The reader of the counter -- the previous stub left ACC untouched and OVC unread,
+# so a saturating math loop couldn't terminate.
+:SAT "ACC"  is rpt_phase=1 & op16=0xFF57 {
+    local ovc_s:1 = OVC;
+    $(V) = (ovc_s != 0);
+    $(C) = 0;
+    if (ovc_s s<= 0) goto <not_pos>;
+    ACC = 0x7FFFFFFF;
+    goto <done>;
+    <not_pos>
+    if (ovc_s s>= 0) goto <done>;
+    ACC = 0x80000000;
+    <done>
+    OVC = 0;
+    setNZ32(ACC);
+}
 
 # ROL ACC   1111 1111 0101 0011  (rotate ACC left through carry: C<-b31, b0<-C).
 :ROL "ACC"  is rpt_phase=1 & op16=0xFF53 {
@@ -810,6 +833,8 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 # ABS ACC          1111 1111 0101 0110  (ACC = |ACC|). SPRU430F: N/Z from result,
 # C cleared, V set if the input was 0x80000000 (the one value with no positive counterpart).
 # OVM-driven saturation not modeled -- same simplification as NEG ACC (see alu.sinc).
+# flag-audit-ovc: none -- SPRU430F Table 2-5 does not list ABS in any OVC-affecting
+# category; the instruction's own flag table lists only N,Z,C,V,OVM.
 :ABS "ACC"   is rpt_phase=1 & op16=0xFF56 {
     $(V) = (ACC == 0x80000000);
     $(C) = 0;
@@ -841,6 +866,7 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
     $(V) = scarry(ACC, addend);
     ACC = ACC + addend;
     setNZ32(ACC);
+    applyOvcSigned(ACC);
 }
 # LSL ACC,#1..16   1111 1111 0011 SHFT  (logical shift left ACC; SHFT=0 -> 16). Single
 # word. C = last bit shifted out (= ACC bit 32-sh, pre-shift); N/Z from the result.
@@ -890,6 +916,7 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
     $(V) = sborrow(ACC, subend);
     ACC = ACC - subend;
     setNZ32(ACC);
+    applyOvcSigned(ACC);
 }
 # NOT AX   1111 1111 0101 111A  (complement AL/AH; A=bit0).
 :NOT AXb0  is rpt_phase=1 & op_hi8=0xFF & op_lo71=0b0101111 & AXb0  { AXb0 = ~AXb0; setNZ16(AXb0); }
@@ -914,6 +941,7 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
     $(V) = scarry(ACC, b);
     ACC = ACC + b;
     setNZ32(ACC);
+    applyOvcSigned(ACC);
 }
 # SUB ACC, loc16 <<#0   1010 1110 LLLL LLLL  (single word; SUB counterpart of the
 # 0x81 ADD base form). Was the truncation behind word 0xae3e.
@@ -924,6 +952,7 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
     $(V) = sborrow(ACC, b);
     ACC = ACC - b;
     setNZ32(ACC);
+    applyOvcSigned(ACC);
 }
 # ADD ACC, loc16 <<#16   0000 0101 LLLL LLLL  (single word; add loc<<16 to ACC).
 :ADD ACCreg, loc16^"<<#16"  is rpt_phase=1 & op_hi8=0x05 & ACCreg & loc16 {
@@ -932,6 +961,7 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
     $(V) = scarry(ACC, v);
     ACC = ACC + v;
     setNZ32(ACC);
+    applyOvcSigned(ACC);
 }
 # SUB ACC, loc16 <<#16   0000 0100 LLLL LLLL  (single word; subtract loc<<16 from ACC).
 # Completes the ACC,loc16<<#16 family (MOV=0x25, ADD=0x05 above; SUB=0x04 was the
@@ -942,6 +972,7 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
     $(V) = sborrow(ACC, v);
     ACC = ACC - v;
     setNZ32(ACC);
+    applyOvcSigned(ACC);
 }
 # CMP loc16, #16bitSigned   0001 1011 LLLL LLLL : iiii  (2-word; flags only).
 :CMP loc16, "#"simm16  is rpt_phase=1 & op_hi8=0x1B & loc16 ; simm16 {

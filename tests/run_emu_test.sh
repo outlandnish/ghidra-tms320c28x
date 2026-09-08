@@ -54,6 +54,7 @@ cp "$module/ghidra_scripts/EmuFlagsShiftAddTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuFlagsPmProductTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuFlagsMovbAxTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuFlagsLoneFamilyTest.java" "$tmp/scripts/"
+cp "$module/ghidra_scripts/EmuOvcTest.java" "$tmp/scripts/"
 cp "$module/tests/fpu_flags.bin" "$module/tests/fpu_cond.bin" "$tmp/"
 
 fail=0
@@ -90,6 +91,7 @@ run_suite EmuFlagsShiftAddTest fpu_flags.bin  # issue #90 group A: shift-form AC
 run_suite EmuFlagsPmProductTest fpu_flags.bin # issue #90 group B: ADDL/SUBL ACC,P<<PM
 run_suite EmuFlagsMovbAxTest fpu_flags.bin    # issue #90 group C: MOVB AX.LSB/MSB N/Z
 run_suite EmuFlagsLoneFamilyTest fpu_flags.bin # issue #90 group D: lone-family + SFR SXM
+run_suite EmuOvcTest fpu_flags.bin            # issue #93: OVC counter + SAT ACC + OVM=1
 
 if [ "$fail" -eq 0 ]; then
   echo "emulation semantics: OK"
