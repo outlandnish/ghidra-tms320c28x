@@ -40,8 +40,10 @@ FLAG_WRITE = re.compile(
     r'\$\((?:N|Z|C|V|OVC|TC|SXM|OVM)\)\s*=(?!=)|setNZ\d*\s*\(|setflags')
 V_WRITE = re.compile(r'\$\(V\)\s*=(?!=)')
 OVC_WRITE = re.compile(
-    r'\bOVC\s*=|applyOvcSigned\s*\(|applyOvcUnsigned\s*\(')
+    r'\bOVC\s*=|applyOvcSigned\s*\(|applyOvcUnsigned\s*\(|'
+    r'applyOvcuBorrow\s*\(')
 ACC_DEST = re.compile(r'(?:^|[{;])\s*ACC\s*=', re.M)
+P_DEST   = re.compile(r'(?:^|[{;])\s*P\s*=', re.M)
 DEST = re.compile(r'(?:^|[{;])\s*(ACC|AH|AL|AX)\s*=', re.M)
 ARITH = re.compile(r'=\s*[^;]*[-+&|^]|<<|>>|\w\s*\*\s*\w')
 OPT_OUT = re.compile(r'#\s*flag-audit:\s*none')
@@ -72,7 +74,14 @@ OVC_REQUIRED = set("""
 ADDCL ADDCU MOVA MOVAD MOVS SBBU SQRA SQRS XMAC XMACD
 QMPYAL QMPYSL IMPYAL MPYA
 DMAC QMACL IMACL
+ADDUL SUBUL
 """.split())
+# Members of OVC_REQUIRED that can legally write to P (not just ACC). SPRU430F
+# §2.3 says "OVC unaffected by non-ACC destinations" as a GENERAL rule, but the
+# individual instruction pages carve out ADDUL P and SUBUL P as OVCU-affected
+# (SPRU430F ch. 6, resolved via issue #98). Pass 3 accepts either ACC or P as
+# the destination for these mnemonics.
+OVC_P_DEST_OK = set("ADDUL SUBUL".split())
 
 
 def parse_constructors(path):
@@ -127,6 +136,7 @@ def audit():
             has_v = bool(V_WRITE.search(body))
             has_ovc = bool(OVC_WRITE.search(body))
             writes_acc = bool(ACC_DEST.search(body))
+            writes_p   = bool(P_DEST.search(body))
             writes_dest = bool(DEST.search(body))
             has_arith = bool(ARITH.search(body))
             fname = os.path.basename(path)
@@ -142,8 +152,11 @@ def audit():
             # Pass 3: Table 2-5 OVC-required mnemonic whose ACC-writing body
             # doesn't touch OVC. Distinct from pass 2 because these bodies
             # can pass pass 1 (they write N/Z) and pass 2 (they don't set V)
-            # while still leaving OVC stale.
-            if mn in OVC_REQUIRED and writes_acc and not has_ovc:
+            # while still leaving OVC stale. Members of OVC_P_DEST_OK may
+            # also legally write P instead of ACC.
+            dest_ok = (writes_acc or
+                       (mn in OVC_P_DEST_OK and writes_p))
+            if mn in OVC_REQUIRED and dest_ok and not has_ovc:
                 if not OPT_OUT_OVC.search(hp):
                     pass3.append((mn, fname, ln, head_s))
     return pass1, pass2, pass3, scanned

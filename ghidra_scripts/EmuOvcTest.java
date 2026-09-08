@@ -25,6 +25,9 @@ public class EmuOvcTest extends GhidraScript {
     private static final long CODE = 0xc100L;         // GS RAM on the F28377D map
     private static final long ADDL_ACC_LOC32 = 0x0700L;  // ADDL ACC,loc32  | loc byte
     private static final long ADDUL_ACC_LOC32 = 0x5653L; // ADDUL ACC,loc32 (2-word)
+    private static final long SUBUL_ACC_LOC32 = 0x5655L; // SUBUL ACC,loc32 (2-word)
+    private static final long ADDUL_P_LOC32   = 0x5657L; // ADDUL P,loc32   (2-word)
+    private static final long SUBUL_P_LOC32   = 0x565DL; // SUBUL P,loc32   (2-word)
     private static final long SETC_OVM = 0x3B02L;
     private static final long CLRC_OVM = 0x2902L;
     private static final long SAT_ACC  = 0xFF57L;
@@ -71,6 +74,32 @@ public class EmuOvcTest extends GhidraScript {
             testAddulOvm(emu, sp, /*preOvc*/0, /*acc*/0xffffffffL, /*loc32*/1L,
                 /*wantOvc*/1L, "ADDUL unsigned carry with OVM=1 : OVC still 0 -> 1");
 
+            // --- issue #98: SUBUL / ADDUL P get OVCU too --------------------
+            // 5c. SUBUL ACC borrow decrement. ACC=0 - 1 -> 0xffffffff, borrow => OVC 0 -> -1.
+            //     Regression test for a real bug: the shipped body used applyOvcSigned;
+            //     SPRU430F ch. 6 is explicit ("The overflow counter is DECREMENTED
+            //     whenever a subtraction operation generates an unsigned borrow. The OVM
+            //     mode does not affect the OVCU counter"). Table 2-5 misgroups SUBUL under
+            //     "Signed Subtraction" -- individual page is authoritative.
+            testUnsignedSub(emu, sp, SUBUL_ACC_LOC32, /*isP*/false, /*preOvc*/0,
+                /*pre*/0L, /*loc32*/1L, /*want*/0xffffffffL, /*wantOvc*/-1L & 0xff, /*ovm*/0,
+                "SUBUL ACC borrow : OVC 0 -> -1");
+
+            // 5d. SUBUL ACC borrow with OVM=1 : OVCU still decrements (OVCU-ignores-OVM).
+            testUnsignedSub(emu, sp, SUBUL_ACC_LOC32, false, 0, 0L, 1L,
+                0xffffffffL, -1L & 0xff, /*ovm*/1,
+                "SUBUL ACC borrow with OVM=1 : OVC still 0 -> -1");
+
+            // 5e. ADDUL P carry increment. P=0xffffffff + 1 -> 0, carry => OVC 0 -> +1.
+            testUnsignedAdd(emu, sp, ADDUL_P_LOC32, /*isP*/true, 0, 0xffffffffL, 1L,
+                0L, 1L, /*ovm*/0,
+                "ADDUL P unsigned carry : OVC 0 -> 1");
+
+            // 5f. SUBUL P borrow decrement. P=0 - 1 -> 0xffffffff, borrow => OVC 0 -> -1.
+            testUnsignedSub(emu, sp, SUBUL_P_LOC32, /*isP*/true, 0, 0L, 1L,
+                0xffffffffL, -1L & 0xff, 0,
+                "SUBUL P borrow : OVC 0 -> -1");
+
             // 6. SAT ACC with OVC > 0 : saturate to 0x7FFFFFFF, clear OVC, V=1.
             testSat(emu, sp, /*preOvc*/3, /*preAcc*/0x11111111L,
                 /*wantOvc*/0, /*wantAcc*/0x7FFFFFFFL, /*wantV*/1,
@@ -110,7 +139,7 @@ public class EmuOvcTest extends GhidraScript {
             expect("MOVU loc,OVC : stored OVC low 6b, upper 10 zero", stored, 0x002AL);
 
             if (failures == 0) {
-                println("EmuOvcTest.java> PASS: OVC model (11 cases)");
+                println("EmuOvcTest.java> PASS: OVC model (15 cases)");
             } else {
                 println("EmuOvcTest.java> FAIL: " + failures + " check(s) failed");
             }
@@ -167,6 +196,39 @@ public class EmuOvcTest extends GhidraScript {
         for (int i = 0; i < 2; i++) {
             if (!emu.step(monitor)) { fail(what, "step " + i + ": " + emu.getLastError()); return; }
         }
+        expect(what + " [OVC]", emu.readRegister("OVC").longValue() & 0xffL, wantOvc & 0xffL);
+    }
+
+    /** Generic ADDUL/SUBUL for #98 -- either ACC or P destination, either OVM. */
+    private void testUnsignedAdd(EmulatorHelper emu, AddressSpace sp, long opW1,
+            boolean isP, long preOvc, long pre, long loc32val, long want,
+            long wantOvc, long ovm, String what) throws Exception {
+        runOvcuOp(emu, sp, opW1, isP, preOvc, pre, loc32val, want, wantOvc, ovm, what);
+    }
+    private void testUnsignedSub(EmulatorHelper emu, AddressSpace sp, long opW1,
+            boolean isP, long preOvc, long pre, long loc32val, long want,
+            long wantOvc, long ovm, String what) throws Exception {
+        runOvcuOp(emu, sp, opW1, isP, preOvc, pre, loc32val, want, wantOvc, ovm, what);
+    }
+    private void runOvcuOp(EmulatorHelper emu, AddressSpace sp, long opW1,
+            boolean isP, long preOvc, long pre, long loc32val, long want,
+            long wantOvc, long ovm, String what) throws Exception {
+        String reg = isP ? "P" : "ACC";
+        emu.writeRegister(reg, pre);
+        emu.writeRegister("OVC", preOvc);
+        emu.writeRegister("SP",  SP_BASE);
+        emu.writeMemoryValue(sp.getAddress((SP_BASE - 1) * 2), 2, loc32val & 0xffffL);
+        emu.writeMemoryValue(sp.getAddress(SP_BASE * 2),       2, (loc32val >> 16) & 0xffffL);
+        long here = codeCursor; codeCursor += 6;
+        emu.writeMemoryValue(sp.getAddress(here * 2), 2, ovm == 1 ? SETC_OVM : CLRC_OVM);
+        emu.writeMemoryValue(sp.getAddress((here + 1) * 2), 2, opW1);
+        emu.writeMemoryValue(sp.getAddress((here + 2) * 2), 2, LOC_SP1);
+        emu.writeRegister("PC", here);
+        for (int i = 0; i < 2; i++) {
+            if (!emu.step(monitor)) { fail(what, "step " + i + ": " + emu.getLastError()); return; }
+        }
+        expect(what + " [" + reg + "]",
+            emu.readRegister(reg).longValue() & 0xffffffffL, want);
         expect(what + " [OVC]", emu.readRegister("OVC").longValue() & 0xffL, wantOvc & 0xffL);
     }
 

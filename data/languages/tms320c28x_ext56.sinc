@@ -120,15 +120,19 @@
     applyOvcUnsigned();
 }
 # SUBUL ACC,loc32    0x5655  (subtract unsigned 32). SPRU430F: N,Z,C(inverted borrow),V.
-# Table 2-5 lists SUBUL under "Signed Subtraction Instructions" -- OVC is updated on
-# SIGNED overflow direction of the result, same as SUBL, not on unsigned borrow.
+# OVC handling: TI's own instruction page (ch. 6) is explicit -- "The overflow counter
+# is DECREMENTED whenever a subtraction operation generates an unsigned borrow. The OVM
+# mode does not affect the OVCU counter." Table 2-5 groups SUBUL under "Signed
+# Subtraction" which is misleading; the per-instruction page is authoritative. Fixed
+# from a signed applyOvcSigned that we shipped earlier, matching the sibling SUBUL P
+# form (see #98).
 :SUBUL ACCreg, loc32 is rpt_phase=1 & op16=0x5655 ; loc32 & ACCreg  {
     local b:4 = loc32;
     $(C) = !(ACC < b);
     $(V) = sborrow(ACC, b);
     ACC = ACC - b;
     setNZ32(ACC);
-    applyOvcSigned(ACC);
+    applyOvcuBorrow();
 }
 # SUBBL ACC,loc32    0x5654  (subtract 32-bit plus inverse borrow: ACC = ACC - loc32 - ~C).
 # dis2000-confirmed (word 0x5654); the borrow-chain counterpart of SUBUL. Reached via a
@@ -181,10 +185,28 @@
 }
 # MOV TL,#0   0x5656  (clear the lower half of XT; XT high half = T preserved). 1-word.
 :MOV "TL", "#0"  is rpt_phase=1 & op16=0x5656  { XT = XT & 0xffff0000; }
-# ADDUL P,loc32      0x5657
-:ADDUL Preg, loc32   is rpt_phase=1 & op16=0x5657 ; loc32 & Preg  { P = P + loc32; }
-# SUBUL P,loc32      0x565d
-:SUBUL Preg, loc32   is rpt_phase=1 & op16=0x565d ; loc32 & Preg  { P = P - loc32; }
+# ADDUL P,loc32      0x5657  (add unsigned 32 to P). SPRU430F ch. 6: N/Z/C/V + OVCU
+# on unsigned carry (increment). OVM does NOT gate OVCU. P is treated like ACC for
+# the unsigned counter -- the "OVC unaffected by non-ACC destinations" text in §2.3
+# generalises too broadly; the individual page + Table 2-5 both list this (see #98).
+:ADDUL Preg, loc32   is rpt_phase=1 & op16=0x5657 ; loc32 & Preg  {
+    local b:4 = loc32;
+    $(C) = carry(P, b);
+    $(V) = scarry(P, b);
+    P = P + b;
+    setNZ32(P);
+    applyOvcUnsigned();
+}
+# SUBUL P,loc32      0x565d  (subtract unsigned 32 from P). SPRU430F ch. 6: N/Z/C/V +
+# OVCU on unsigned BORROW (DECREMENT). OVM does NOT gate. Same shape as SUBUL ACC.
+:SUBUL Preg, loc32   is rpt_phase=1 & op16=0x565d ; loc32 & Preg  {
+    local b:4 = loc32;
+    $(C) = !(P < b);
+    $(V) = sborrow(P, b);
+    P = P - b;
+    setNZ32(P);
+    applyOvcuBorrow();
+}
 # MAXL ACC,loc32     0x5661  (ACC = max(ACC, loc32), signed). Sets N/Z from the signed
 # compare (N = ACC<loc32, Z = ACC==loc32) so a following MAXCUL P,loc32 can consume them.
 :MAXL ACCreg, loc32  is rpt_phase=1 & op16=0x5661 ; loc32 & ACCreg  {
