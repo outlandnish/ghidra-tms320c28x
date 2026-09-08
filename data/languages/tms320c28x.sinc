@@ -94,6 +94,9 @@ define token instr16 (16)
     setflg_v11 = (0,10)     # SETFLG/SAVE VALUE, all 11 bits (MSW low 11)
     lo_b76    = (6,7)        # top 2 bits of the low byte (SETFLG selector: 00)
     trap5     = (0,4)       # TRAP #VectorNumber: CPU interrupt vector 0..31 (0000 0000 001C CCCC)
+    intr4     = (0,3)       # INTR INTx / DLOGINT / RTOSINT: 4-bit vector index (0000 0000 0001 CCCC).
+                            # Empirical mapping verified via asm2000: CCCC 0..13 -> INT1..INT14,
+                            # CCCC=14 -> DLOGINT, CCCC=15 -> RTOSINT.
 
     # --- FPU second-word (MSW) fields ----------------------------------------
     # These describe the SECOND word of a 32-bit FPU instruction, not the opcode
@@ -320,6 +323,9 @@ macro applyOvmSaturate64AccP() {
 # the word would not decode at all, instead of running the length of the fill.
 define pcodeop illegalInstructionTrap;   # ITRAP0/ITRAP1 -> ILLEGAL vector (19)
 define pcodeop softwareTrap;             # TRAP #n       -> CPU interrupt vector n
+define pcodeop softwareInterrupt;        # INTR ...      -> emulate hardware interrupt (SPRU430F p.212).
+                                         # Distinct from TRAP: INTR ignores INTM/IER/DBGIER and
+                                         # never clears the IFR bit for its own vector.
 
 :ITRAP0         is rpt_phase=1 & op16=0x0000  { illegalInstructionTrap(); goto inst_start; }
 :ITRAP1         is rpt_phase=1 & op16=0xFFFF  { illegalInstructionTrap(); goto inst_start; }
@@ -329,6 +335,23 @@ define pcodeop softwareTrap;             # TRAP #n       -> CPU interrupt vector
 # deliberate call: the handler returns with IRET to the following instruction, so this
 # form DOES fall through. It ignores INTM/IER/DBGIER and leaves IFR/IER untouched.
 :TRAP "#"trap5  is rpt_phase=1 & op_hi8=0x00 & op_lo765=0b001 & trap5  { softwareTrap(trap5:1); }
+
+# INTR INTx / DLOGINT / RTOSINT   0000 0000 0001 CCCC   (SPRU430F p.212)
+# Same shape as TRAP but with a different sub-opcode nibble (0001 in bits 4-7 vs 001 in
+# bits 5-7 for TRAP) and a 4-bit vector index. Fall-through semantics identical to TRAP:
+# the ISR returns via IRET to the following instruction. Missing before issue #114.
+# `attach names` maps the CCCC value to the display mnemonic; the ordering matches asm2000
+# output (verified: CCCC 0..13 -> INT1..INT14, 14 -> DLOGINT, 15 -> RTOSINT).
+attach names [ intr4 ] [ "INT1" "INT2" "INT3" "INT4" "INT5" "INT6" "INT7" "INT8"
+                         "INT9" "INT10" "INT11" "INT12" "INT13" "INT14"
+                         "DLOGINT" "RTOSINT" ];
+:INTR intr4  is rpt_phase=1 & op_hi8=0x00 & loc_hi4=0b0001 & intr4  { softwareInterrupt(intr4:1); }
+
+# INTR NMI    0111 0110 0001 0110 = 0x7616  (SPRU430F p.212). NMI has a dedicated opcode
+# because it cannot go through the maskable CPU-vector path.
+:INTR "NMI"     is rpt_phase=1 & op16=0x7616  { softwareInterrupt(0x11:1); }
+# INTR EMUINT  0111 0110 0001 1100 = 0x761C. Named EMU by dis2000 but SPRU430F uses EMUINT.
+:INTR "EMUINT"  is rpt_phase=1 & op16=0x761C  { softwareInterrupt(0x12:1); }
 
 :EALLOW         is rpt_phase=1 & op16=0x7622  { $(EALLOWF) = 1; } # Enable write access to protected space
 :EDIS           is rpt_phase=1 & op16=0x761A  { $(EALLOWF) = 0; } # Disable write access to protected space
