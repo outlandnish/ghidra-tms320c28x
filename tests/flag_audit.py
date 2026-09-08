@@ -63,11 +63,12 @@ MAC MPY MPYB MPYU MPYS QMPYL IMPYL ADDUL SUBUL
 # destinations (INC/DEC/ADDUL P/SUBUL P) -- Table 2-5 lists those but the
 # general rule "OVC is not affected by overflows in registers other than
 # ACC" contradicts, and no firmware witness has been checked in yet
-# (issue #95 tracks the resolution). Also excludes constructors not yet in
-# the spec (DMAC, MPYA, QMACL, QMPYAL, QMPYSL, IMPYAL, IMACL) -- adding
-# them is a separate issue since it needs opcode + fixture work.
+# (issue #98 tracks the resolution). Also excludes constructors not yet in
+# the spec (DMAC, MPYA, QMACL, IMACL) -- adding them is issue #97's
+# remaining scope (Groups B and C).
 OVC_REQUIRED = set("""
 ADDCL ADDCU MOVA MOVAD MOVS SBBU SQRA SQRS XMAC XMACD
+QMPYAL QMPYSL IMPYAL
 """.split())
 
 
@@ -182,10 +183,10 @@ def main():
             pass3,
             'SPRU430F Table 2-5 OVC-affecting instructions write ACC but do '
             'NOT touch OVC.',
-            "Add applyOvcSigned(ACC) / applyOvcUnsigned() on the ACC += P (or "
-            "ACC -= P)\nstep; OR add `# flag-audit-ovc: none` if SPRU430F "
-            "explicitly excludes\nthe form (rare -- Table 2-5 is the source of "
-            "truth here).")
+            "Add applyOvcSigned(ACC) / applyOvcUnsigned() on the ACC += P "
+            "(or ACC -= P)\nstep; OR add `# flag-audit-ovc: none` if SPRU430F"
+            " explicitly excludes\nthe form (rare -- Table 2-5 is the source"
+            " of truth here).")
     print(f'\n{scanned} constructors scanned.')
     return 1
 
