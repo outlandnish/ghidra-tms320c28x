@@ -68,6 +68,30 @@
 # XOR ACC, loc16    1011 0111 LLLL LLLL
 :XOR ACCreg, loc16  is rpt_phase=1 & op_hi8=0xB7 & ACCreg & loc16  { ACC = ACC ^ zext(loc16); setNZ32(ACC); }
 
+# AND ACC,#16bit << #0..15   0011 1110 0000 SHFT : imm16   (2-word; SPRU430F p.163)
+# AND ACC,#16bit << #16      0101 0110 0000 1000 : imm16   (2-word same page)
+# The #16bit is zero-extended before the shift ("ACC AND 0:16bit << shift"), NOT SXM-
+# governed, unlike MOV/ADD ACC,#16bit<<# which route through mext. Missing before
+# issue #118 -- fw-parity sweep flagged `AND ACC, #0x7780` at 0x825aa as <UNDEF>.
+# Split on shft4==0 to render as `AND ACC,#imm` without the `<<#0` decoration,
+# matching TI's asm2000 / dis2000 output.
+:AND ACCreg, "#"imm16  is rpt_phase=1 & op_hi8=0x3E & loc_hi4=0b0000 & shft4=0 & ACCreg ; imm16 {
+    local v:4 = zext(imm16:2);
+    ACC = ACC & v;
+    setNZ32(ACC);
+}
+:AND ACCreg, "#"imm16^"<<#"^shft4  is rpt_phase=1 & op_hi8=0x3E & loc_hi4=0b0000 & shft4 & ACCreg ; imm16 {
+    local s:4 = zext(shft4:1);
+    local v:4 = zext(imm16:2) << s;
+    ACC = ACC & v;
+    setNZ32(ACC);
+}
+:AND ACCreg, "#"imm16^"<<#16"  is rpt_phase=1 & op16=0x5608 & ACCreg ; imm16 {
+    local v:4 = zext(imm16:2) << 16;
+    ACC = ACC & v;
+    setNZ32(ACC);
+}
+
 # =============================================================================
 # CMP (compare = subtract, set flags, discard result)
 # =============================================================================
