@@ -108,6 +108,19 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
     DP = dp10;
 }
 
+# MOV DP, #10bit   1111 10CC CCCC CCCC   -- load low 10 bits of DP, PRESERVE upper 6.
+# The load-vs-clear distinction versus MOVZ above is the whole point: MOV DP is a
+# partial write, so the resulting DP depends on the prior DP value. We can't compute
+# that at SLEIGH decode time, so ctx_DP is INVALIDATED here rather than snapshot to
+# `dp10` (which would silently invent the upper-6 bits as zero and mis-resolve every
+# downstream @6bit access). DpPropagationAnalyzer can still constant-fold when the
+# prior DP is known statically; otherwise @6bit accesses go unresolved from here.
+# Missing before issue #118 -- fw-parity sweep flagged `MOV DP, #0x7a` at 0x82e98 as <UNDEF>.
+:MOV "DP", "#"dp10  is rpt_phase=1 & op_hi_6=0b111110 & dp10
+        [ ctx_DP_valid = 0; globalset(inst_next, ctx_DP_valid); ] {
+    DP = (DP & 0xfc00) | dp10;
+}
+
 # --- 16-bit / 32-bit moves ---------------------------------------------------
 # MOVDL XT,loc32    1010 0110 LLLL LLLL  -- store XT to loc32, then load XT from it
 :MOVDL "XT", loc32  is rpt_phase=1 & op_hi8=0xA6 & loc32  { loc32 = XT; XT = loc32; }
@@ -726,6 +739,15 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 :MOVB "XAR5", "#"imm8  is rpt_phase=1 & op_hi8=0xD5 & imm8 { XAR5 = zext(imm8:1); }
 :MOVB "XAR6", "#"imm8  is rpt_phase=1 & op_hi8=0xBE & imm8 { XAR6 = zext(imm8:1); }
 :MOVB "XAR7", "#"imm8  is rpt_phase=1 & op_hi8=0xB6 & imm8 { XAR7 = zext(imm8:1); }
+
+# MOVB AR6/AR7, #8bit -- NARROW-WRITE siblings of MOVB XAR6/XAR7 above.
+# 1101 011n CCCC CCCC  (SPRU430F p.282). Distinct from the wide-write XAR variants: this
+# form writes ONLY the low 16 bits (AR6/AR7 view), leaving AR6H/AR7H unchanged. asm2000
+# rejects the AR0..AR5 syntax (spec only defines the AR6/AR7 forms), so no AR0..AR5
+# constructors here even though the D0..D5 opcodes carry the wide-write XAR variants.
+# Missing before issue #118 -- fw-parity sweep flagged `MOVB AR7, #0xa` at 0x82bf4 as <UNDEF>.
+:MOVB "AR6", "#"imm8  is rpt_phase=1 & op_hi8=0xD6 & imm8 { AR6 = zext(imm8:1); }
+:MOVB "AR7", "#"imm8  is rpt_phase=1 & op_hi8=0xD7 & imm8 { AR7 = zext(imm8:1); }
 
 # TEST ACC   1111 1111 0101 1000  (set Z/N from ACC; decode-only flags)
 :TEST "ACC"  is rpt_phase=1 & op16=0xFF58 { $(Z) = (ACC == 0); $(N) = (ACC s< 0); }
