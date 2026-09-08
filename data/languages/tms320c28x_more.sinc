@@ -807,11 +807,15 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
     mov_acc_mext_shift(imm16:2, s);
 }
 # CMPB AX,#8bit   0101 001A CCCC CCCC  (compare AX with zero-ext 8-bit; set flags)
+# SPRU430F ch. 6 p.180: N/Z/C only, V not affected. Infinite-precision N (the
+# imm side is zero-extended per spec pseudocode "AX - 0:8bit"). See #108.
 :CMPB AX, "#"imm8  is rpt_phase=1 & op_hi7=0x29 & AX & imm8 {
-    local b:2 = zext(imm8:1);
-    local r:2 = AX - b;
-    $(C) = !(AX < b); $(V) = sborrow(AX, b);
-    $(N) = (r s< 0); $(Z) = (r == 0);
+    local a:4 = sext(AX);
+    local b:4 = zext(imm8:1);
+    local r:4 = a - b;
+    $(C) = !(AX < zext(imm8:1));
+    $(N) = (r s< 0);
+    $(Z) = (r == 0);
 }
 
 # =============================================================================
@@ -1079,9 +1083,17 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
     applyOvcSigned(ACC);
 }
 # CMP loc16, #16bitSigned   0001 1011 LLLL LLLL : iiii  (2-word; flags only).
+# SPRU430F ch. 6 p.178: N/Z/C, V not affected. Was missing C entirely and used
+# finite-precision N. Infinite-precision N via 4-byte sext; C from the
+# unsigned compare of the raw operands. See #108.
 :CMP loc16, "#"simm16  is rpt_phase=1 & op_hi8=0x1B & loc16 ; simm16 {
-    local x:2 = loc16; local y:2 = simm16:2; local r:2 = x - y;
-    $(N) = (r s< 0); $(Z) = (r == 0);
+    local x:2 = loc16; local y:2 = simm16:2;
+    local a:4 = sext(x);
+    local b:4 = sext(y);
+    local r:4 = a - b;
+    $(C) = !(x < y);
+    $(N) = (r s< 0);
+    $(Z) = (r == 0);
 }
 # MPYU ACC,T,loc16   0011 0110 LLLL LLLL  (unsigned 16x16 -> ACC).
 # SPRU430F: N,Z on the ACC write.

@@ -250,17 +250,23 @@
 }
 
 # CMPL ACC,P << PM   1111 1111 0101 1001   -- compare only; ACC unchanged
+# SPRU430F: N/Z/C, V not affected. Infinite-precision N via 8-byte sext.
+# See #108.
 :CMPL "ACC,P << PM"  is rpt_phase=1 & pm_shift=0 & op16=0xFF59  {
     local b:4 = P;
-    local r:4 = ACC - b;
+    local a8:8 = sext(ACC);
+    local b8:8 = sext(b);
+    local r:8 = a8 - b8;
     $(C) = !(ACC < b);
-    $(V) = sborrow(ACC, b);
-    setNZ32(r);
+    $(N) = (r s< 0);
+    $(Z) = (r == 0);
 }
 :CMPL "ACC,P << PM"  is rpt_phase=1 & pm_shift=1 & op16=0xFF59  {
     local b:4; pshift(b);
-    local r:4 = ACC - b;
+    local a8:8 = sext(ACC);
+    local b8:8 = sext(b);
+    local r:8 = a8 - b8;
     $(C) = !(ACC < b);
-    $(V) = sborrow(ACC, b);
-    setNZ32(r);
+    $(N) = (r s< 0);
+    $(Z) = (r == 0);
 }

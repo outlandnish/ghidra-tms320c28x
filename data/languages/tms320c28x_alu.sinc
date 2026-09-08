@@ -72,12 +72,18 @@
 # CMP (compare = subtract, set flags, discard result)
 # =============================================================================
 # CMP AX, loc16     0101 010A LLLL LLLL
+# SPRU430F ch. 6 p.177: N/Z/C only -- V is NOT affected. N is computed at
+# INFINITE PRECISION: sign-extend both operands, subtract, check sign of the
+# 32-bit result. The earlier finite-precision `setNZ16(r)` got N wrong on the
+# underflow edge (e.g. AX=0x8000, loc16=0x0001 -> r=0x7FFF has N=0 truncated,
+# but the mathematical result -32769 is negative so N should be 1). See #108.
 :CMP AX, loc16   is rpt_phase=1 & op_hi7=0x2A & AX & loc16  {
-    local b:2 = loc16;
-    local r:2 = AX - b;
-    $(C) = !(AX < b);
-    $(V) = sborrow(AX, b);
-    setNZ16(r);
+    local a:4 = sext(AX);
+    local b:4 = sext(loc16);
+    local r:4 = a - b;
+    $(C) = !(AX < loc16);
+    $(N) = (r s< 0);
+    $(Z) = (r == 0);
 }
 
 # =============================================================================
@@ -102,12 +108,15 @@
     applyOvcSigned(ACC);
 }
 # CMPL ACC, loc32   0000 1111 LLLL LLLL
+# SPRU430F: N/Z/C only, V not affected. Infinite-precision N via 8-byte sext.
+# See #108.
 :CMPL ACCreg, loc32 is rpt_phase=1 & op_hi8=0x0F & ACCreg & loc32  {
-    local b:4 = loc32;
-    local r:4 = ACC - b;
-    $(C) = !(ACC < b);
-    $(V) = sborrow(ACC, b);
-    setNZ32(r);
+    local a:8 = sext(ACC);
+    local b:8 = sext(loc32);
+    local r:8 = a - b;
+    $(C) = !(ACC < loc32);
+    $(N) = (r s< 0);
+    $(Z) = (r == 0);
 }
 
 # =============================================================================
