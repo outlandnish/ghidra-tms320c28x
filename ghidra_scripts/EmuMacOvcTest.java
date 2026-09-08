@@ -69,6 +69,16 @@ public class EmuMacOvcTest extends GhidraScript {
     private static final long MPYU_ACC_T    = 0x3600L;   // MPYU ACC,T,loc16
     private static final long MPYXU_ACC_T   = 0x3000L;   // MPYXU ACC,T,loc16
 
+    // Group C (issue #97, 2-word MAC with *XAR7 mode byte in word 2).
+    private static final long DMAC_W1   = 0x564BL;
+    private static final long QMACL_W1  = 0x564FL;
+    private static final long IMACL_W1  = 0x564DL;
+    private static final long MODE_XAR7   = 0xC700L;   // *XAR7  in word 2 high byte
+    private static final long MODE_XAR7PP = 0x8700L;   // *XAR7++ in word 2 high byte
+    // Scratch program-memory location XAR7 will point at during Group C cases.
+    // Word-addressable: XAR7=0x9000 -> bytes 0x12000..0x12001 for word 0x9000.
+    private static final long XAR7_BASE = 0x9000L;
+
     private int failures = 0;
     private long codeCursor = CODE;
 
@@ -193,8 +203,42 @@ public class EmuMacOvcTest extends GhidraScript {
                 0xFFFF0001L, 1L, 0L,
                 "MPYXU ACC : (s)(-1) * (u)0xFFFF -> 0xFFFF0001, N=1 Z=0");
 
+            // --- Group C (issue #97, 2-word MAC with *XAR7 mode byte) ---------
+            // 25. DMAC ACC:P,loc32,*XAR7: XT.hi=1, prog[XAR7].hi=1 -> addend=1
+            //     ACC=0x7fffffff + 1 -> 0x80000000 (+ve overflow, OVC++).
+            testDmac(emu, sp, MODE_XAR7, /*preOvc*/0, /*preAcc*/0x7fffffffL,
+                /*xtHi*/1, /*xtLo*/0, /*tmpHi*/1, /*tmpLo*/0,
+                /*wantAcc*/0x80000000L, /*wantOvc*/1L, /*wantXar7Delta*/0L,
+                "DMAC ACC:P,loc32,*XAR7 +ve ov : OVC 0 -> 1, XAR7 unchanged");
+
+            // 26. DMAC ACC:P,loc32,*XAR7++: same as 25 but XAR7 gets += 2 after.
+            testDmac(emu, sp, MODE_XAR7PP, 0, 0x7fffffffL, 1, 0, 1, 0,
+                0x80000000L, 1L, /*wantXar7Delta*/2L,
+                "DMAC ACC:P,loc32,*XAR7++ : OVC 0 -> 1, XAR7 += 2");
+
+            // 27. QMACL P,loc32,*XAR7: ACC=0x7fffffff + P=1 -> 0x80000000 (OVC++).
+            testQmaclImacl(emu, sp, QMACL_W1, MODE_XAR7,
+                /*preOvc*/0, /*preAcc*/0x7fffffffL, /*preP*/1L,
+                /*wantAcc*/0x80000000L, /*wantOvc*/1L, /*wantXar7Delta*/0L,
+                "QMACL P,loc32,*XAR7 +ve ov : OVC 0 -> 1, XAR7 unchanged");
+
+            // 28. QMACL P,loc32,*XAR7++ : same + XAR7 += 2.
+            testQmaclImacl(emu, sp, QMACL_W1, MODE_XAR7PP, 0, 0x7fffffffL, 1L,
+                0x80000000L, 1L, 2L,
+                "QMACL P,loc32,*XAR7++ : OVC 0 -> 1, XAR7 += 2");
+
+            // 29. IMACL P,loc32,*XAR7: unsigned add, ACC=0xffffffff + P=1 -> 0 (OVCU++).
+            testQmaclImacl(emu, sp, IMACL_W1, MODE_XAR7, 0, 0xffffffffL, 1L,
+                0L, 1L, 0L,
+                "IMACL P,loc32,*XAR7 unsigned carry : OVC 0 -> 1");
+
+            // 30. IMACL P,loc32,*XAR7++ : same + XAR7 += 2.
+            testQmaclImacl(emu, sp, IMACL_W1, MODE_XAR7PP, 0, 0xffffffffL, 1L,
+                0L, 1L, 2L,
+                "IMACL P,loc32,*XAR7++ : OVC 0 -> 1, XAR7 += 2");
+
             if (failures == 0) {
-                println("EmuMacOvcTest.java> PASS: MAC-family OVC accounting (24 cases)");
+                println("EmuMacOvcTest.java> PASS: MAC-family OVC accounting (30 cases)");
             } else {
                 println("EmuMacOvcTest.java> FAIL: " + failures + " check(s) failed");
             }
@@ -451,6 +495,63 @@ public class EmuMacOvcTest extends GhidraScript {
         expect(what + " [ACC]", emu.readRegister("ACC").longValue() & 0xffffffffL, wantAcc);
         expect(what + " [N]",   emu.readRegister("N").longValue(), wantN);
         expect(what + " [Z]",   emu.readRegister("Z").longValue(), wantZ);
+    }
+
+    /** DMAC ACC:P,loc32,*XAR7 or *XAR7++. loc32 via *-SP[1]; prog[XAR7] seeded. */
+    private void testDmac(EmulatorHelper emu, AddressSpace sp, long modeHi,
+            long preOvc, long preAcc, long xtHi, long xtLo,
+            long tmpHi, long tmpLo, long wantAcc, long wantOvc, long wantXar7Delta,
+            String what) throws Exception {
+        emu.writeRegister("ACC", preAcc);
+        emu.writeRegister("OVC", preOvc);
+        emu.writeRegister("P",   0L);
+        emu.writeRegister("XAR7", XAR7_BASE);
+        emu.writeRegister("SP",  SP_BASE);
+        // loc32 = *-SP[1]: 32-bit read starting at word (SP-1). Word (SP-1)=low, SP=high.
+        emu.writeMemoryValue(sp.getAddress((SP_BASE - 1) * 2), 2, xtLo & 0xffffL);
+        emu.writeMemoryValue(sp.getAddress(SP_BASE * 2), 2, xtHi & 0xffffL);
+        // prog[XAR7] = 32-bit value at word XAR7 (low) and XAR7+1 (high).
+        emu.writeMemoryValue(sp.getAddress(XAR7_BASE * 2), 2, tmpLo & 0xffffL);
+        emu.writeMemoryValue(sp.getAddress((XAR7_BASE + 1) * 2), 2, tmpHi & 0xffffL);
+        long here = codeCursor; codeCursor += 4;
+        emu.writeMemoryValue(sp.getAddress(here * 2), 2, CLRC_OVM);
+        emu.writeMemoryValue(sp.getAddress((here + 1) * 2), 2, DMAC_W1);
+        emu.writeMemoryValue(sp.getAddress((here + 2) * 2), 2, modeHi | LOC_SP1);
+        emu.writeRegister("PC", here);
+        for (int i = 0; i < 2; i++) {
+            if (!emu.step(monitor)) { fail(what, "step " + i + ": " + emu.getLastError()); return; }
+        }
+        expect(what + " [ACC]", emu.readRegister("ACC").longValue() & 0xffffffffL, wantAcc);
+        expect(what + " [OVC]", emu.readRegister("OVC").longValue() & 0xffL, wantOvc & 0xffL);
+        long xar7After = emu.readRegister("XAR7").longValue() & 0xffffffffL;
+        expect(what + " [XAR7 delta]", xar7After - XAR7_BASE, wantXar7Delta);
+    }
+
+    /** QMACL / IMACL P,loc32,*XAR7[++]. loc32 via *-SP[1]; prog[XAR7] all-zero. */
+    private void testQmaclImacl(EmulatorHelper emu, AddressSpace sp, long w1, long modeHi,
+            long preOvc, long preAcc, long preP, long wantAcc, long wantOvc,
+            long wantXar7Delta, String what) throws Exception {
+        emu.writeRegister("ACC", preAcc);
+        emu.writeRegister("OVC", preOvc);
+        emu.writeRegister("P",   preP);
+        emu.writeRegister("XAR7", XAR7_BASE);
+        emu.writeRegister("SP",  SP_BASE);
+        emu.writeMemoryValue(sp.getAddress((SP_BASE - 1) * 2), 2, 0L);
+        emu.writeMemoryValue(sp.getAddress(SP_BASE * 2),       2, 0L);
+        emu.writeMemoryValue(sp.getAddress(XAR7_BASE * 2),       2, 0L);
+        emu.writeMemoryValue(sp.getAddress((XAR7_BASE + 1) * 2), 2, 0L);
+        long here = codeCursor; codeCursor += 4;
+        emu.writeMemoryValue(sp.getAddress(here * 2), 2, CLRC_OVM);
+        emu.writeMemoryValue(sp.getAddress((here + 1) * 2), 2, w1);
+        emu.writeMemoryValue(sp.getAddress((here + 2) * 2), 2, modeHi | LOC_SP1);
+        emu.writeRegister("PC", here);
+        for (int i = 0; i < 2; i++) {
+            if (!emu.step(monitor)) { fail(what, "step " + i + ": " + emu.getLastError()); return; }
+        }
+        expect(what + " [ACC]", emu.readRegister("ACC").longValue() & 0xffffffffL, wantAcc);
+        expect(what + " [OVC]", emu.readRegister("OVC").longValue() & 0xffL, wantOvc & 0xffL);
+        long xar7After = emu.readRegister("XAR7").longValue() & 0xffffffffL;
+        expect(what + " [XAR7 delta]", xar7After - XAR7_BASE, wantXar7Delta);
     }
 
     private void expect(String what, long got, long want) {

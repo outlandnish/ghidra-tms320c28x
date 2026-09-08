@@ -58,6 +58,7 @@ MOV MOVL MOVU MOVB MOVH ZALR SAT SAT64 NORM FLIP CSB
 MAC MPY MPYA MPYB MPYS MPYU MPYXU
 QMPYL QMPYUL QMPYXUL QMPYAL QMPYSL
 IMPYL IMPYXUL IMPYAL
+DMAC QMACL IMACL
 ADDUL SUBUL
 """.split())
 
@@ -66,12 +67,11 @@ ADDUL SUBUL
 # destinations (INC/DEC/ADDUL P/SUBUL P) -- Table 2-5 lists those but the
 # general rule "OVC is not affected by overflows in registers other than
 # ACC" contradicts, and no firmware witness has been checked in yet
-# (issue #98 tracks the resolution). Also excludes constructors not yet in
-# the spec (DMAC, MPYA, QMACL, IMACL) -- adding them is issue #97's
-# remaining scope (Groups B and C).
+# (issue #98 tracks the resolution).
 OVC_REQUIRED = set("""
 ADDCL ADDCU MOVA MOVAD MOVS SBBU SQRA SQRS XMAC XMACD
 QMPYAL QMPYSL IMPYAL MPYA
+DMAC QMACL IMACL
 """.split())
 
 
