@@ -14,6 +14,12 @@
 #     saturation-aware code loop forever, same class as the SUBB fill-loop
 #     hole that motivated #90.
 #
+#   PASS 3 (issue #95): MAC-family and add-with-carry / sub-with-borrow
+#     constructors named in SPRU430F Table 2-5 as OVC-affecting, whose
+#     bodies write ACC but do NOT touch OVC. Distinct from pass 2 because
+#     these can (and did) set only N/Z without ever writing $(V), which
+#     kept pass 2 blind to them -- the SBBU hole was exactly this shape.
+#
 # Exit non-zero on any un-annotated candidate. To exempt a constructor:
 #   # flag-audit: none       -- flagless BY SPRU430F (pass 1 opt-out)
 #   # flag-audit-ovc: none   -- V-writer that spec explicitly leaves OVC alone
@@ -50,6 +56,18 @@ AND OR XOR NOT NEG NEGL ABS ABSTC INC DEC CMP CMPL CMPB TEST
 ASR ASRL LSL LSLL LSR LSRL SFR SBF ROL ROR
 MOV MOVL MOVU MOVB MOVH ZALR SAT SAT64 NORM FLIP CSB
 MAC MPY MPYB MPYU MPYS QMPYL IMPYL ADDUL SUBUL
+""".split())
+
+# SPRU430F Table 2-5 subset that this repo currently models and whose ACC-
+# writing body must therefore touch OVC. Deliberately excludes non-ACC
+# destinations (INC/DEC/ADDUL P/SUBUL P) -- Table 2-5 lists those but the
+# general rule "OVC is not affected by overflows in registers other than
+# ACC" contradicts, and no firmware witness has been checked in yet
+# (issue #95 tracks the resolution). Also excludes constructors not yet in
+# the spec (DMAC, MPYA, QMACL, QMPYAL, QMPYSL, IMPYAL, IMACL) -- adding
+# them is a separate issue since it needs opcode + fixture work.
+OVC_REQUIRED = set("""
+ADDCL ADDCU MOVA MOVAD MOVS SBBU SQRA SQRS XMAC XMACD
 """.split())
 
 
@@ -89,16 +107,17 @@ def parse_constructors(path):
 
 
 def audit():
-    """Return (pass1_hits, pass2_hits, scanned)."""
+    """Return (pass1_hits, pass2_hits, pass3_hits, scanned)."""
     pass1 = []
     pass2 = []
+    pass3 = []
     scanned = 0
     paths = sorted(glob.glob(os.path.join(LANG, '*.sinc'))) + \
         sorted(glob.glob(os.path.join(LANG, '*.slaspec')))
     for path in paths:
         for mn, ln, head, body, pre in parse_constructors(path):
             scanned += 1
-            if mn not in ALU:
+            if mn not in ALU and mn not in OVC_REQUIRED:
                 continue
             has_flag = bool(FLAG_WRITE.search(body))
             has_v = bool(V_WRITE.search(body))
@@ -109,14 +128,21 @@ def audit():
             fname = os.path.basename(path)
             head_s = head.strip()
             hp = head + '\n' + pre  # search head + preceding comment block
-            if not has_flag and writes_dest and has_arith:
+            if mn in ALU and not has_flag and writes_dest and has_arith:
                 if not OPT_OUT.search(hp):
                     pass1.append((mn, fname, ln, head_s))
             # Pass 2: V-writer on ACC that does not touch OVC.
             if has_v and writes_acc and not has_ovc:
                 if not OPT_OUT_OVC.search(hp):
                     pass2.append((mn, fname, ln, head_s))
-    return pass1, pass2, scanned
+            # Pass 3: Table 2-5 OVC-required mnemonic whose ACC-writing body
+            # doesn't touch OVC. Distinct from pass 2 because these bodies
+            # can pass pass 1 (they write N/Z) and pass 2 (they don't set V)
+            # while still leaving OVC stale.
+            if mn in OVC_REQUIRED and writes_acc and not has_ovc:
+                if not OPT_OUT_OVC.search(hp):
+                    pass3.append((mn, fname, ln, head_s))
+    return pass1, pass2, pass3, scanned
 
 
 def report(hits, title, remedy):
@@ -128,10 +154,10 @@ def report(hits, title, remedy):
 
 
 def main():
-    pass1, pass2, scanned = audit()
-    if not pass1 and not pass2:
+    pass1, pass2, pass3, scanned = audit()
+    if not pass1 and not pass2 and not pass3:
         print(f'flag_audit: OK ({scanned} constructors scanned, '
-              f'0 pass-1 and 0 pass-2 candidates)')
+              f'0 pass-1, 0 pass-2, 0 pass-3 candidates)')
         return 0
     if pass1:
         report(
@@ -150,6 +176,16 @@ def main():
             "OR add\n`# flag-audit-ovc: none` if SPRU430F Table 2-5 explicitly"
             " excludes the\ninstruction from OVC accounting (e.g. CMP, CMPL, "
             "or non-ACC-destination forms).")
+        print()
+    if pass3:
+        report(
+            pass3,
+            'SPRU430F Table 2-5 OVC-affecting instructions write ACC but do '
+            'NOT touch OVC.',
+            "Add applyOvcSigned(ACC) / applyOvcUnsigned() on the ACC += P (or "
+            "ACC -= P)\nstep; OR add `# flag-audit-ovc: none` if SPRU430F "
+            "explicitly excludes\nthe form (rare -- Table 2-5 is the source of "
+            "truth here).")
     print(f'\n{scanned} constructors scanned.')
     return 1
 

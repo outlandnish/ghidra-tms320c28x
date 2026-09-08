@@ -63,8 +63,14 @@
 
 # MOVS T,loc16      0001 0001 LLLL LLLL   -- T = [loc16]; ACC -= P<<PM (PM=0 modeled)
 # loc!=0xAC: that one encoding is SUBL ACC,P << PM (see the P<<PM block at the end).
+# SPRU430F: N/Z/C/V + OVC on the ACC -= P step.
 :MOVS Treg, loc16  is rpt_phase=1 & op_hi8=0x11 & loc_full8!=0xAC & Treg & loc16  {
-    ACC = ACC - P;
+    local b:4 = P;
+    $(C) = !(ACC < b);
+    $(V) = sborrow(ACC, b);
+    ACC = ACC - b;
+    setNZ32(ACC);
+    applyOvcSigned(ACC);
     T = loc16;
 }
 
@@ -109,8 +115,14 @@
 
 # MOVA T,loc16      0001 0000 LLLL LLLL   -- T = loc16; ACC += P (load T, add prev product)
 # loc!=0xAC: that one encoding is ADDL ACC,P << PM (see the P<<PM block below).
+# SPRU430F: N/Z/C/V + OVC on the ACC += P step.
 :MOVA Treg, loc16  is rpt_phase=1 & op_hi8=0x10 & loc_full8!=0xAC & Treg & loc16  {
-    ACC = ACC + P;
+    local b:4 = P;
+    $(C) = carry(ACC, b);
+    $(V) = scarry(ACC, b);
+    ACC = ACC + b;
+    setNZ32(ACC);
+    applyOvcSigned(ACC);
     T = loc16;
 }
 

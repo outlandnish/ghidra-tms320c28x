@@ -55,6 +55,7 @@ cp "$module/ghidra_scripts/EmuFlagsPmProductTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuFlagsMovbAxTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuFlagsLoneFamilyTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuOvcTest.java" "$tmp/scripts/"
+cp "$module/ghidra_scripts/EmuMacOvcTest.java" "$tmp/scripts/"
 cp "$module/tests/fpu_flags.bin" "$module/tests/fpu_cond.bin" "$tmp/"
 
 fail=0
@@ -92,6 +93,7 @@ run_suite EmuFlagsPmProductTest fpu_flags.bin # issue #90 group B: ADDL/SUBL ACC
 run_suite EmuFlagsMovbAxTest fpu_flags.bin    # issue #90 group C: MOVB AX.LSB/MSB N/Z
 run_suite EmuFlagsLoneFamilyTest fpu_flags.bin # issue #90 group D: lone-family + SFR SXM
 run_suite EmuOvcTest fpu_flags.bin            # issue #93: OVC counter + SAT ACC + OVM=1
+run_suite EmuMacOvcTest fpu_flags.bin         # issue #95: MAC-family + ADDC/SBBU OVC accounting
 
 if [ "$fail" -eq 0 ]; then
   echo "emulation semantics: OK"
