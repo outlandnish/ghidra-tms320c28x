@@ -348,10 +348,20 @@
 # Word-addressable memory: `*[ram]:4 XAR7` reads 4 bytes = 2 words at word
 # address XAR7. Post-increment XAR7 by 2 (two word-addresses) because each
 # reads a 32-bit value from program memory. SPRU430F's IMACL page says
-# "post-increment ... by 1" (vs "by 2" for DMAC/QMACL) -- appears to be a
-# manual typo (all three read the same 32-bit width); modelled uniformly as
-# += 2 and flagged for verification if firmware ever exercises the +XAR7++
-# form of IMACL specifically.
+# "post-increment ... by 1" (vs "by 2" for DMAC/QMACL); we treat the "1" as
+# a documentation typo and increment IMACL by 2 as well. Reasoning:
+#   (a) SPRU430 has no revision newer than F -- the discrepancy is unfixed
+#       in TI's current documentation, so it isn't a known-and-fixed typo
+#       waiting to be pulled in;
+#   (b) all three fetch a 32-bit operand from program memory using *XAR7++,
+#       and every other 32-bit program-memory post-increment on the C28x
+#       advances by 2 words;
+#   (c) a "by 1" post-inc would leave XAR7 pointing into the MIDDLE of the
+#       just-consumed 32-bit datum -- not a useful primitive for any MAC
+#       loop, so no compiler or hand-written library would target it.
+# Confidence ~85% per docs alone; closes to 100% only with a silicon test or
+# TI errata. See issue #102 for the follow-up if a firmware witness or
+# hardware test comes back.
 #
 # Flags per SPRU430F on the ACC ± P step:
 #   DMAC   0x564B ; word2 mode|loc32  N/Z/C/V + signed OVC (ACC gets high×high)
