@@ -319,19 +319,54 @@ public class EmulateStartup extends GhidraScript {
             // --- apply --------------------------------------------------------------------
             int wroteRegions = 0;
             long wroteWords = 0;
+            // A write run routinely SPANS BANKS: LS0..LS5, D0 and D1 are separate 2K blocks
+            // (SetupF28377D splits them per SPRS880P Table 7-1), and a .cinit run like
+            // 0x9300..0xba34 covers six of them. Initializing only the block at the region START
+            // and then setBytes()-ing the whole run throws MemoryAccessException on the first byte
+            // of the next, still-uninitialized bank -- which aborted the entire script, losing
+            // every remaining region AND the code-binding pass below. Walk block by block, and
+            // keep going when one bank cannot be written.
             for (long[] rg : regions) {
-                Address s = wa(rg[0]);
-                MemoryBlock b = mem.getBlock(s);
-                if (b == null) continue;
-                if (!b.isInitialized()) {
-                    try { mem.convertToInitialized(b, (byte) 0); }
-                    catch (Exception e) { println("  cannot initialize " + b.getName() + ": " + e); continue; }
+                long w = rg[0], end = rg[0] + rg[1];      // [w, end) in words
+                boolean any = false;
+                while (w < end) {
+                    Address s = wa(w);
+                    MemoryBlock b = mem.getBlock(s);
+                    if (b == null) {
+                        // Unmapped hole -- skip to the next mapped block rather than word by word.
+                        long next = Long.MAX_VALUE;
+                        for (MemoryBlock ob : mem.getBlocks()) {
+                            long os = ob.getStart().getOffset() / 2;
+                            if (os > w && os < next) next = os;
+                        }
+                        if (next == Long.MAX_VALUE) break;
+                        w = Math.min(next, end);
+                        continue;
+                    }
+                    long blockEnd = b.getEnd().getOffset() / 2 + 1;
+                    long chunk = Math.min(end, blockEnd) - w;
+                    if (!b.isInitialized()) {
+                        try { mem.convertToInitialized(b, (byte) 0); }
+                        catch (Exception e) {
+                            println("  cannot initialize " + b.getName() + ": " + e);
+                            w += chunk;
+                            continue;
+                        }
+                    }
+                    byte[] buf = emu.readMemory(s, (int) (chunk * 2));
+                    try { currentProgram.getListing().clearCodeUnits(s, wa(w + chunk - 1), false); }
+                    catch (Exception e) { }
+                    try {
+                        mem.setBytes(s, buf);
+                        wroteWords += chunk;
+                        any = true;
+                    } catch (Exception e) {
+                        println(String.format("  cannot write %05x..%05x in %s: %s",
+                                w, w + chunk - 1, b.getName(), e.getMessage()));
+                    }
+                    w += chunk;
                 }
-                byte[] buf = emu.readMemory(s, (int) (rg[1] * 2));
-                try { currentProgram.getListing().clearCodeUnits(s, wa(rg[0] + rg[1] - 1), false); }
-                catch (Exception e) { }
-                mem.setBytes(s, buf);
-                wroteRegions++; wroteWords += rg[1];
+                if (any) wroteRegions++;
             }
             println(String.format("materialized %d region(s), %d words", wroteRegions, wroteWords));
 
