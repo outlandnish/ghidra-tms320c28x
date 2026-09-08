@@ -548,17 +548,37 @@ macro unpackst1(in) {
 # =============================================================================
 # Shifts of AX by T(3:0).  The AX selector is bit 0 of the word (AXb0), NOT bit 8,
 # and the sub-opcode occupies bits 1..7 (op_lo71).  1111 1111 0110 0ssA.
+# SPRU430F ch. 6: N/Z from AX after; C = last bit shifted out (0 if T[3:0]==0).
+# Same pattern as LSLL/LSRL/ASRL in tms320c28x_ext56.sinc. Was flag-silent — see #104.
 # ASR AX,T   1111 1111 0110 010A  (arithmetic shift right by T)
 :ASR AXb0, "T"  is rpt_phase=1 & op_hi8=0xFF & op_lo71=0b0110010 & AXb0  {
-    local sh:2 = T & 0xf; AXb0 = AXb0 s>> sh;
+    local s:2 = T & 0xf;
+    $(C) = 0;
+    if (s == 0) goto <done>;
+    $(C) = ((AXb0 >> (s - 1)) & 1) != 0;
+  <done>
+    AXb0 = AXb0 s>> s;
+    setNZ16(AXb0);
 }
 # LSR AX,T   1111 1111 0110 001A
 :LSR AXb0, "T"  is rpt_phase=1 & op_hi8=0xFF & op_lo71=0b0110001 & AXb0  {
-    local sh:2 = T & 0xf; AXb0 = AXb0 >> sh;
+    local s:2 = T & 0xf;
+    $(C) = 0;
+    if (s == 0) goto <done>;
+    $(C) = ((AXb0 >> (s - 1)) & 1) != 0;
+  <done>
+    AXb0 = AXb0 >> s;
+    setNZ16(AXb0);
 }
 # LSL AX,T   1111 1111 0110 011A  (logical shift left by T)
 :LSL AXb0, "T"  is rpt_phase=1 & op_hi8=0xFF & op_lo71=0b0110011 & AXb0  {
-    local sh:2 = T & 0xf; AXb0 = AXb0 << sh;
+    local s:2 = T & 0xf;
+    $(C) = 0;
+    if (s == 0) goto <done>;
+    $(C) = ((AXb0 >> (16 - s)) & 1) != 0;
+  <done>
+    AXb0 = AXb0 << s;
+    setNZ16(AXb0);
 }
 # ADDB SP,#7bit   1111 1110 0CCC CCCC  (stack adjust). bit7=0 distinguishes from
 # SUBB SP,#7bit (1111 1110 1CCC CCCC, bit7=1) — must constrain bit7 or ADDB greedily
@@ -614,14 +634,26 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 # =============================================================================
 # ASR/LSR/LSL AX,#1..16   1111 1111 sssA SHFT  (sss: ASR=101 LSR=110 LSL=100,
 # A=bit4 selects AL/AH, SHFT=0 means 16). Single word. SPRU430F ch6.
+# N/Z from AX after; C = last bit shifted out. shcount is always 1..16 (SHFT+1),
+# so unlike the T-register forms there is no shift-count-zero carve-out. Was
+# flag-silent -- see issue #104.
 :ASR AXb4, "#"shcount  is rpt_phase=1 & op_hi8=0xFF & op_lo765=0b101 & AXb4 & shcount {
-    AXb4 = AXb4 s>> shcount;
+    local s:2 = zext(shcount);
+    $(C) = ((AXb4 >> (s - 1)) & 1) != 0;
+    AXb4 = AXb4 s>> s;
+    setNZ16(AXb4);
 }
 :LSR AXb4, "#"shcount  is rpt_phase=1 & op_hi8=0xFF & op_lo765=0b110 & AXb4 & shcount {
-    AXb4 = AXb4 >> shcount;
+    local s:2 = zext(shcount);
+    $(C) = ((AXb4 >> (s - 1)) & 1) != 0;
+    AXb4 = AXb4 >> s;
+    setNZ16(AXb4);
 }
 :LSL AXb4, "#"shcount  is rpt_phase=1 & op_hi8=0xFF & op_lo765=0b100 & AXb4 & shcount {
-    AXb4 = AXb4 << shcount;
+    local s:2 = zext(shcount);
+    $(C) = ((AXb4 >> (16 - s)) & 1) != 0;
+    AXb4 = AXb4 << s;
+    setNZ16(AXb4);
 }
 
 # SETC Mode   0011 1011 CCCC CCCC  -- set status bits per 8-bit mask. Common
@@ -693,6 +725,42 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
     setNZ32(ACC);
 }
 
+# LSL ACC,T   1111 1111 0101 0000  (logical shift left ACC by T(3:0)). T-register
+# counterpart of LSL ACC,#imm at 0xFF3x. SPRU430F: N/Z from ACC after; C = 0 if
+# T[3:0]==0 else last bit shifted out. Was missing -- see issue #104.
+:LSL ACCreg, "T"  is rpt_phase=1 & op16=0xFF50 & ACCreg {
+    local s:4 = zext(T) & 0xf;
+    $(C) = 0;
+    if (s == 0) goto <done>;
+    $(C) = ((ACC >> (32 - s)) & 1) != 0;
+  <done>
+    ACC = ACC << s;
+    setNZ32(ACC);
+}
+# SFR ACC,T   1111 1111 0101 0001  (shift ACC right by T(3:0); SXM-governed).
+# T-register counterpart of SFR ACC,#imm at 0xFF4x. SPRU430F: arithmetic (sign-fill)
+# when SXM=1, logical (zero-fill) when SXM=0. N/Z from ACC after; C = 0 if T[3:0]==0
+# else last bit shifted out. Was missing -- see issue #104.
+:SFR ACCreg, "T"  is rpt_phase=1 & op16=0xFF51 & ACCreg {
+    local s:4 = zext(T) & 0xf;
+    $(C) = 0;
+    if (s == 0) goto <done>;
+    $(C) = ((ACC >> (s - 1)) & 1) != 0;
+  <done>
+    local sxm_mask:4 = 0 - zext($(SXM));  # all-1s when SXM=1, 0 when SXM=0
+    local arith:4 = ACC s>> s;
+    local logic:4 = ACC >> s;
+    ACC = (arith & sxm_mask) | (logic & ~sxm_mask);
+    setNZ32(ACC);
+}
+# ROR ACC   1111 1111 0101 0010  (rotate ACC right through carry: C->b31, b0->C).
+# Mirror of ROL ACC at 0xFF53. Was missing -- see issue #104.
+:ROR "ACC"  is rpt_phase=1 & op16=0xFF52 {
+    local oldc:4 = zext($(C)) << 31;
+    $(C) = (ACC & 1) != 0;
+    ACC = (ACC >> 1) | oldc;
+    setNZ32(ACC);
+}
 # ROL ACC   1111 1111 0101 0011  (rotate ACC left through carry: C<-b31, b0<-C).
 :ROL "ACC"  is rpt_phase=1 & op16=0xFF53 {
     local oldc:4 = zext($(C));

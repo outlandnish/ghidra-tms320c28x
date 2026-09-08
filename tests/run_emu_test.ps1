@@ -54,6 +54,7 @@ Copy-Item "$Module\ghidra_scripts\EmuFlagsMovbAxTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuFlagsLoneFamilyTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuOvcTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuMacOvcTest.java" "$ws\scripts\" -Force
+Copy-Item "$Module\ghidra_scripts\EmuShiftAuditTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\tests\fpu_flags.bin" "$ws\" -Force
 Copy-Item "$Module\tests\fpu_cond.bin" "$ws\" -Force
 
@@ -91,6 +92,7 @@ Invoke-Suite "EmuFlagsMovbAxTest" "fpu_flags.bin"    # issue #90 group C: MOVB A
 Invoke-Suite "EmuFlagsLoneFamilyTest" "fpu_flags.bin" # issue #90 group D: lone-family + SFR SXM
 Invoke-Suite "EmuOvcTest" "fpu_flags.bin"             # issue #93: OVC counter + SAT ACC + OVM=1
 Invoke-Suite "EmuMacOvcTest" "fpu_flags.bin"          # issue #95: MAC-family + ADDC/SBBU OVC accounting
+Invoke-Suite "EmuShiftAuditTest" "fpu_flags.bin"      # issue #104: AX + 64-bit shift N/Z/C, LSL/SFR ACC,T + ROR ACC
 
 if ($fail -eq 0) { Write-Host "emulation semantics: OK" -ForegroundColor Green }
 else { exit 1 }

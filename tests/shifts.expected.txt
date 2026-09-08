@@ -1,0 +1,18 @@
+# Shift/rotate fixture (issue #104).
+# Verifies the three new constructors (LSL ACC,T / SFR ACC,T / ROR ACC at
+# 0xFF50/51/52) decode correctly, and that the reworked flag-carrying siblings
+# still render the same opcode->mnemonic mapping after the flag semantics
+# were added. Encodings taken directly from SPRU430F ch. 6 opcode fields; no
+# TI-assembler round-trip needed since these are single-word fixed opcodes.
+#
+# Byte order is little-endian 16-bit words: 0xFF50 -> "50ff".
+0x0	50ff	LSL ACC,T
+0x1	51ff	SFR ACC,T
+0x2	52ff	ROR ACC
+0x3	53ff	ROL ACC
+0x4	33ff	LSL ACC,#0x4
+0x5	43ff	SFR ACC,#0x4
+0x6	66ff	LSL AL,T
+0x7	a3ff	ASR AL,#0x4
+0x8	a356	LSL64 ACC:P,#0x4
+0x9	5256	LSL64 ACC:P,T
