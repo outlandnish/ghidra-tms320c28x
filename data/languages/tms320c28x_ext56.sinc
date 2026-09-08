@@ -517,10 +517,36 @@
     local v:2 = loc16;
     $(TC) = ((v >> sh) & 1) != 0;
 }
-# TSET loc16,#16bit 0x560d : loc word ; imm word -- 3-word; decode-only-ish
-:TSET loc16, "#16bit"  is rpt_phase=1 & op16=0x560d ; loc16  { }   # decode-only
-# TCLR loc16,#bit   0x5609
-:TCLR loc16, "#bit"  is rpt_phase=1 & op16=0x5609 ; loc16  { }     # decode-only
+# TSET/TCLR loc16,#bit -- 2-word bit test + set/clear. Word 1 is a fixed
+# opcode; word 2 is `0000 BBBB LLLL LLLL` with BBBB the bit index (0..15).
+# Prior spec dropped the BBBB field entirely and printed the literal string
+# "#16bit"/"#bit" as if it were the operand. Now decodes BBBB via the shared
+# tbit_b field applied to word 2, constrained by op_hi_4=0 so the pattern
+# does not over-match. SPRU430F ch. 6 p.442 (TSET) / p.438 (TCLR):
+#   TC = [loc16(bit)];
+#   [loc16(bit)] = 1 (TSET) or 0 (TCLR);
+# and N/Z are set from the modified [loc16] when the destination is @AX
+# (@AL or @AH). We model N/Z as always-set from the result value -- a slight
+# over-approximation for non-@AX destinations but matches the pattern already
+# used by AND/OR loc16,AX above (setNZ16 unconditional). See issue #108.
+# TSET loc16,#bit   0x560d ; 0000 BBBB LLLL LLLL
+:TSET loc16, "#"tbit_b  is rpt_phase=1 & op16=0x560d ; op_hi_4=0 & tbit_b & loc16  {
+    local v:2 = loc16;
+    local mask:2 = 1 << tbit_b;
+    $(TC) = (v & mask) != 0;
+    v = v | mask;
+    loc16 = v;
+    setNZ16(v);
+}
+# TCLR loc16,#bit   0x5609 ; 0000 BBBB LLLL LLLL
+:TCLR loc16, "#"tbit_b  is rpt_phase=1 & op16=0x5609 ; op_hi_4=0 & tbit_b & loc16  {
+    local v:2 = loc16;
+    local mask:2 = 1 << tbit_b;
+    $(TC) = (v & mask) != 0;
+    v = v & ~mask;
+    loc16 = v;
+    setNZ16(v);
+}
 
 # =============================================================================
 # Flag / mode set/clear (single-purpose; one constructor per distinct opcode).
