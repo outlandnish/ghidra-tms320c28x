@@ -217,8 +217,19 @@
     ACC = ACC - P; T = loc16; local t:4 = sext(T); P = t * t;
 }
 # ZALR ACC,loc16  0x5613 : loc16  -- AL = 0x8000 (round const), AH = [loc16]. dis2000-confirmed.
+# SPRU430F states it as the two halves ("AH = [loc16]; AL = 0x8000;"), but writing it that
+# way leaves the decompiler with two 16-bit stores it has to glue back together, so every
+# later read of ACC renders as CONCAT22(AH, AL). One full-width store of the same value
+# reads as a single 32-bit definition instead. Identical semantics: AH is the high half.
+#
+# The difference is p-code SHAPE, not behaviour, so it is invisible to emulation and to
+# every decode fixture. Measured on the emitted ops for `ZALR ACC,@AR0`:
+#   was:  (register,0x0,2) COPY 0x8000   +  (register,0x2,2) COPY AR0    -- AL and AH
+#   now:  (register,0x0,4) INT_OR ...                                    -- ACC, once
+# EmuZalrTest guards the half assignment and the zero-extension, which a one-store
+# rewrite can get wrong; ZALR has no site in either measured image, so nothing else does.
 :ZALR ACCreg, loc16  is rpt_phase=1 & op16=0x5613 ; loc16 & ACCreg {
-    AL = 0x8000; AH = loc16;
+    ACC = (zext(loc16) << 16) | 0x8000;
 }
 
 # =============================================================================
