@@ -90,6 +90,7 @@ define token instr16 (16)
     setflg_f5 = (11,15)     # SETFLG/SAVE FLAG mask, high 5 bits (MSW FFFF FVVV VVVV VVVV)
     setflg_v11 = (0,10)     # SETFLG/SAVE VALUE, all 11 bits (MSW low 11)
     lo_b76    = (6,7)        # top 2 bits of the low byte (SETFLG selector: 00)
+    trap5     = (0,4)       # TRAP #VectorNumber: CPU interrupt vector 0..31 (0000 0000 001C CCCC)
 
     # --- FPU second-word (MSW) fields ----------------------------------------
     # These describe the SECOND word of a 32-bit FPU instruction, not the opcode
@@ -227,6 +228,39 @@ macro mov_acc_mext_shift(in, shift) {
 # =============================================================================
 
 :ABORTI         is rpt_phase=1 & op16=0x0001  { }                 # Abort interrupt (skeleton: no semantics yet)
+
+# =============================================================================
+# Traps
+# =============================================================================
+# ITRAP0 / ITRAP1 are the two words the C28x decodes as ILLEGAL instructions: each
+# raises the illegal-instruction trap and vectors through ILLEGAL (interrupt vector
+# 19), so neither reaches the following word. They are not in SPRU430F's instruction
+# tables -- they are what the hardware does with an unallocated opcode -- but TI's own
+# tools name them, which is what makes them worth decoding: asm2000 assembles both
+# mnemonics and dis2000 prints them (verified round-trip: ITRAP0 -> 0x0000,
+# ITRAP1 -> 0xffff).
+#
+# Worth decoding because these are the two fill patterns: 0x0000 zero-fill and 0xffff
+# erased flash. Leaving them undecodable put a <UNDEF> wherever a listing ran into
+# padding -- all 7 of the remaining firmware-parity mismatches over a 16K-word DIR
+# range were exactly this, and the full image dis2000 dump has 1019 ITRAP0 + 274
+# ITRAP1.
+#
+# TERMINAL ON PURPOSE. The trap vectors away and never falls through, so `goto` to
+# the pcodeop's own address ends the flow. That is also what keeps padding from being
+# swallowed as code: disassembly stops at the first fill word exactly as it did when
+# the word would not decode at all, instead of running the length of the fill.
+define pcodeop illegalInstructionTrap;   # ITRAP0/ITRAP1 -> ILLEGAL vector (19)
+define pcodeop softwareTrap;             # TRAP #n       -> CPU interrupt vector n
+
+:ITRAP0         is rpt_phase=1 & op16=0x0000  { illegalInstructionTrap(); goto inst_start; }
+:ITRAP1         is rpt_phase=1 & op16=0xFFFF  { illegalInstructionTrap(); goto inst_start; }
+
+# TRAP #VectorNumber   0000 0000 001C CCCC   (SPRU430F p.440)
+# Transfers control to the ISR for CPU vector 0..31. Unlike the illegal traps this is a
+# deliberate call: the handler returns with IRET to the following instruction, so this
+# form DOES fall through. It ignores INTM/IER/DBGIER and leaves IFR/IER untouched.
+:TRAP "#"trap5  is rpt_phase=1 & op_hi8=0x00 & op_lo765=0b001 & trap5  { softwareTrap(trap5:1); }
 
 :EALLOW         is rpt_phase=1 & op16=0x7622  { $(EALLOWF) = 1; } # Enable write access to protected space
 :EDIS           is rpt_phase=1 & op16=0x761A  { $(EALLOWF) = 0; } # Disable write access to protected space
