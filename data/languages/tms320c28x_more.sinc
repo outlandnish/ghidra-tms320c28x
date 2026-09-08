@@ -27,9 +27,22 @@
 lcdest: reloc  is op_hi8=0x00 & op_lo_76=0b10 & loc_off6 ; imm16  [ reloc = (loc_off6 << 16) | imm16; ] { export *[ram]:4 reloc; }
 lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc_off6 << 16) | imm16; ] { export *[ram]:4 reloc; }
 # Both LC forms invalidate ctx_DP at inst_next -- see flow.sinc LCR for the ABI note.
+# LC is a SOFTWARE-STACK call, NOT an RPC call. SPRU430F p.219 is explicit:
+#   temp(21:0) = PC + 2; [SP] = temp(15:0); SP += 1; [SP] = temp(21:16); SP += 1
+# RPC is never touched -- that is the whole difference between LC/LRET and LCR/LRETR,
+# and TI's own note recommends LCR/LRETR instead when OBJMODE=1.
+#
+# This used to set RPC and leave SP alone, copied from LCR. It did not compose with
+# LRET, which pops a 32-bit return address off SP (flow.sinc): the pushed word was
+# never written, so LRET returned to whatever happened to sit at the top of the frame.
+# The two 16-bit stores are one little-endian 32-bit store here, matching LRET's
+# 32-bit read and the PUSH RPC / POP RPC pair below.
 :LC lcdest  is rpt_phase=1 & lcdest
         [ ctx_DP_valid = 0; globalset(inst_next, ctx_DP_valid); ] {
-    RPC = inst_next >> 1;   # nested-call chain: see the LCR #22bit note in flow.sinc.
+    local ret:4 = inst_next >> 1;
+    local a:4 = SP;
+    *[ram]:4 a = ret;
+    SP = SP + 2;
     call lcdest;
 }
 :LB lbdest  is rpt_phase=1 & lbdest {
@@ -37,9 +50,17 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 }
 
 # LC *XAR7   0111 0110 0000 0100   (indirect call via XAR7)
+# Same software-stack mechanism as LC #22bit above (SPRU430F p.218: "the return PC
+# value is pushed onto the software stack"); only the target differs. `inst_next`
+# already accounts for this form being one word, so the shift is the same.
 :LC "*XAR7"  is rpt_phase=1 & op16=0x7604
-        [ ctx_DP_valid = 0; globalset(inst_next, ctx_DP_valid); ]
-        { RPC = inst_next >> 1; call [XAR7]; }
+        [ ctx_DP_valid = 0; globalset(inst_next, ctx_DP_valid); ] {
+    local ret:4 = inst_next >> 1;
+    local a:4 = SP;
+    *[ram]:4 a = ret;
+    SP = SP + 2;
+    call [XAR7];
+}
 
 # LB *XAR7   0111 0110 0010 0000   (indirect branch via XAR7)
 # The same opcode is used for BOTH the FFC-helper return sequence AND for switch-table

@@ -5,7 +5,7 @@
 # C28x SLEIGH *semantics* regression tests.
 #
 # run_disasm_test.sh checks the listing; these check what the p-code actually does, by
-# emulating and reading registers back. Two suites:
+# emulating and reading registers back. Suites:
 #
 #   EmuFlagTest     -- SETFLG / SAVE / RESTORE against the STF sub-registers. The only
 #                      test that can catch a wrong bit order INSIDE a mask: SETFLG's FLAG
@@ -42,6 +42,7 @@ cp "$module/ghidra_scripts/EmuFlagTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuFpuCondTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuRptTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuCallTest.java" "$tmp/scripts/"
+cp "$module/ghidra_scripts/EmuLcTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuAluStoreTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuAddbAccFlagsTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuPreadFlagsTest.java" "$tmp/scripts/"
@@ -71,6 +72,7 @@ run_suite EmuFlagTest fpu_flags.bin
 run_suite EmuFpuCondTest fpu_cond.bin
 run_suite EmuRptTest fpu_flags.bin  # host-driven test, any C28x program will do as import target
 run_suite EmuCallTest fpu_flags.bin # RPC nested-call chain (state modifier, not SLEIGH)
+run_suite EmuLcTest fpu_flags.bin   # LC/LRET software-stack call, RPC untouched (#77)
 run_suite EmuAluStoreTest fpu_flags.bin     # store-side loc16,AX ALU trio (issue #56)
 run_suite EmuAddbAccFlagsTest fpu_flags.bin # ADDB ACC,#8bit Z/N/C/V (host-driven)
 run_suite EmuPreadFlagsTest fpu_flags.bin   # PREAD loc16,*XAR7 N/Z (host-driven)

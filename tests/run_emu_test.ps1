@@ -3,7 +3,7 @@
 # C28x SLEIGH *semantics* regression tests (run from PowerShell).
 #
 # run_disasm_test.ps1 checks the listing; these check what the p-code actually does, by
-# emulating and reading registers back. Two suites:
+# emulating and reading registers back. Suites:
 #
 #   EmuFlagTest     -- SETFLG / SAVE / RESTORE against the STF sub-registers. The only
 #                      test that can catch a wrong bit order INSIDE a mask: SETFLG's FLAG
@@ -40,6 +40,7 @@ Copy-Item "$Module\ghidra_scripts\EmuFlagTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuFpuCondTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuRptTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuCallTest.java" "$ws\scripts\" -Force
+Copy-Item "$Module\ghidra_scripts\EmuLcTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuAluStoreTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuAddbAccFlagsTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuPreadFlagsTest.java" "$ws\scripts\" -Force
@@ -68,6 +69,7 @@ Invoke-Suite "EmuFlagTest" "fpu_flags.bin"
 Invoke-Suite "EmuFpuCondTest" "fpu_cond.bin"
 Invoke-Suite "EmuRptTest" "fpu_flags.bin"  # any import target works; test is host-driven
 Invoke-Suite "EmuCallTest" "fpu_flags.bin" # RPC nested-call chain (state modifier, not SLEIGH)
+Invoke-Suite "EmuLcTest" "fpu_flags.bin"   # LC/LRET software-stack call, RPC untouched (#77)
 Invoke-Suite "EmuAluStoreTest" "fpu_flags.bin"     # store-side loc16,AX ALU trio (issue #56)
 Invoke-Suite "EmuAddbAccFlagsTest" "fpu_flags.bin" # ADDB ACC,#8bit Z/N/C/V (host-driven)
 Invoke-Suite "EmuPreadFlagsTest" "fpu_flags.bin"   # PREAD loc16,*XAR7 N/Z (host-driven)

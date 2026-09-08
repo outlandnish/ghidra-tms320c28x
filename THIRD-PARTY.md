@@ -123,6 +123,12 @@ Files adapted so far:
   the TI C-runtime state (PM=0 / OVM=0 / PAGE0=0, SPRU514 Table 7-4), extended
   `killedbycall` list (DP + status registers), and the standalone `interrupt`
   prototype. See #15.
+
+  Also the `<returnaddress>` **scoping** from `99ce8ea`: it moves from a top-level
+  element into the prototype that owns it. As a top-level element it also applied to
+  `interrupt`, claiming RPC for a handler whose `IRET` pops the automatic context off
+  the software stack instead. A prototype declaring nothing falls back to the stack,
+  which is what `IRET` does. Structure only; the RPC prototype half is unchanged. See #77.
 - **`src/main/java/ghidra/app/plugin/core/analysis/TMS320C28xFfcReturnAnalyzer.java`**
   — port of their `TMS320C28FfcReturnAnalyzer`. Local changes: the processor-name
   string ("TMS320C28x" here vs "TMS320C28" in theirs), the class rename, and the
@@ -425,6 +431,57 @@ than argued about. Two independent production images: a **DIR** drive-inverter C
   contains a branch at all. Those instances are consistent with the RPTB block-end wrapper
   (103 `RPTB` in that image), where the loop-back is the deliberate hardware-loop model of
   #19 — not the flag-update branches upstream removed.
+
+### The long-call mechanism split (#77)
+
+`99ce8ea` gives LC/LRET and FFC/XAR7 their own prototypes (`__lc`, `__ffc`) selected by a
+`TMS320C28CallConventionAnalyzer`, and adds a completed-call `<pcode inject="uponreturn">`
+to the default one. Measured over the same two images as #75 (DIR / PMR):
+
+| | DIR | PMR |
+|---|---|---|
+| `LCR` call sites | 5,697 | 3,155 |
+| **`LRET` / `LRETE`** | **0 / 0** | **0 / 0** |
+| functions selecting `__lc` | **0** | **0** |
+| functions selecting `__ffc` | **0** | **1** |
+
+- **`__lc`** is structurally dead here. Its classifier requires every returning exit to be
+  `LRET`/`LRETE`, and neither image contains one — TI's compiler uses `LCR`/`LRETR`
+  exclusively, as SPRU430F's own note under `LC` recommends. `LC` itself appears 9 / 1
+  times, and in DIR every one is in a region that disassembles as garbage.
+- **`__ffc` + the analyzer** would select a non-default convention for **one** function
+  across 3,656. Not worth a 203-line analyzer and a fourth prototype.
+- **The `uponreturn` inject is not separable**, and taking it alone is actively harmful.
+  It is the pop half of a pair whose push half lives in *their* `LCR` p-code
+  (`push32(RPC)`). This module's `LCR` deliberately pushes nothing — that experiment was
+  run before and wrecked frame recovery — and accounts for the two words in the prototype
+  layer instead, via `stackshift="2"` + stack pentry `offset="2"`. Injecting the pop alone
+  gives an unmatched `SP -= 2` at all 5,697 call sites: measured over 40 LCR-heavy DIR
+  functions, SP arithmetic in the decompiled C goes 0 → 8 lines and the output grows 7.5%.
+
+  Upstream reached the same conclusion from the other side: `30f7c6f` sets
+  `stackshift="0"` precisely because, with the push in p-code and the pop injected, a
+  nonzero stackshift "would count that architectural two-word transition a second time."
+  Both models are internally consistent; they account for the same two words in different
+  layers, and the pieces do not mix.
+
+  For completeness the **complete** upstream model was also tried here (push in `LCR`
+  p-code + the inject). It costs no locals — the decompiled stack-token distribution is
+  identical apart from one new `stack0x00000000`, the RPC save slot, 57 times across
+  40 functions — and the ABI baselines do not move. It is a real alternative, declined
+  only because it buys architectural fidelity the decompiler does not use while adding
+  that noise to every calling function.
+- **`70d2863`** — its XAR4 pointer-return pentry is already present here. Its other two
+  halves are deliberate divergences pinned by `tests/abi_probe.expected.txt`: the general
+  XAR4/XAR5 int pentries it deletes are what let a third 16-bit argument sub-piece down to
+  `AR4` (SPRU514 §7.3.1 rule f), and its reverse-allocation `offset="0x1fffffe08"` stack
+  range is the same frame encoding already declined for `438993e`.
+- **The `add SP,#simm16` constructor** in `99ce8ea` — this module already models the frame
+  adjusts TI actually emits, `ADDB`/`SUBB SP,#7bit`, at 991 / 985 (DIR) and 524 / 529
+  (PMR). The 16-bit form reaches SP through the `loc16` `@SP` mode, which exports `SPL`,
+  and occurs 16 / 2 times. Left alone: `SPL` is SP's true architectural width (SPRU430F
+  has SP 16-bit; the 32-bit `SP` register here is a Ghidra stack-pointer requirement), so
+  a wider delta would be the modelling artifact, not the fix.
 
 Convergent, so nothing to adopt:
 

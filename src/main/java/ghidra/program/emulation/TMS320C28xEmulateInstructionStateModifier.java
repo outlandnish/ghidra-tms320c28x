@@ -140,14 +140,15 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 
 	// Single-word return opcode that restores RPC from the hardware nested-call stack.
 	private static final int OP_LRETR = 0x0006;
-	// Single-word indirect call that uses RPC.
-	private static final int OP_LC_XAR7 = 0x7604;
 	//
 	// XCALL *AL (0x5634) and XRETC/XRET (0x56Fx) used to be handled here as RPC calls. They are
 	// NOT: SPRU430F has XCALL push only the low 16 bits of the return address onto the SOFTWARE
 	// stack ("[SP] = temp(15:0); SP = SP + 1") and XRETC pop it back, leaving RPC untouched.
 	// SLEIGH models that directly now, so anything left here would push a SECOND, 2-word RPC
 	// frame on top of it -- measured as SP moving by 3 words across an XCALL instead of 1.
+	//
+	// LC #22bit (0x00 with op_lo_76=0b10) and LC *XAR7 (0x7604) were removed for exactly the
+	// same reason; see isRpcCall below.
 
 	// RPC as it stood *before* the instruction that just executed. A call overwrites RPC
 	// with its own return address, so by the time postExecuteCallback runs the caller's
@@ -239,8 +240,17 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 	/**
 	 * True for the calls that route their return address through RPC. Field extents mirror
 	 * the SLEIGH tokens: {@code op_hi8}=(8,15), {@code op_lo_76}=(6,7), {@code op_lo_35}=(3,7).
+	 * Only the two LCR forms qualify.
+	 * <p>
 	 * FFC is excluded -- it returns via XAR7 and never touches the RPC chain. So is the C2xLP
 	 * XCALL family, which pushes the software stack instead (see the opcode constants above).
+	 * <p>
+	 * LC #22bit and LC *XAR7 were excluded for that same reason: SPRU430F p.218-219 has them
+	 * push the return PC onto the SOFTWARE stack ("[SP] = temp(15:0); SP = SP + 1; ...") and
+	 * leave RPC alone. SLEIGH models that directly now, so leaving them here would push a
+	 * second, 2-word RPC frame on top of the real one -- the identical bug the XCALL note
+	 * above records, and it also stored the caller's stale RPC where the return address
+	 * belongs, so LRET returned to the wrong address.
 	 */
 	private static boolean isRpcCall(int w0) {
 		int ophi8 = w0 >>> 8;
@@ -248,13 +258,7 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 		if (ophi8 == 0x76 && lo76 == 0x1) {                     // LCR #22bit
 			return true;
 		}
-		if (ophi8 == 0x3E && ((w0 >>> 3) & 0x1F) == 0x0C) {     // LCR *XARn
-			return true;
-		}
-		if (ophi8 == 0x00 && lo76 == 0x2) {                     // LC #22bit
-			return true;
-		}
-		return w0 == OP_LC_XAR7;                                // LC *XAR7
+		return ophi8 == 0x3E && ((w0 >>> 3) & 0x1F) == 0x0C;    // LCR *XARn
 	}
 
 	/**
