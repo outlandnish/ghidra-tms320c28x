@@ -273,6 +273,7 @@
 # =============================================================================
 :IMPYL ACCreg, XTreg, loc32  is rpt_phase=1 & op16=0x5644 ; loc32 & ACCreg & XTreg {
     local a:8 = sext(XT); local b:8 = sext(loc32); local r:8 = a * b; ACC = r:4;  # low 32
+    setNZ32(ACC);  # SPRU430F: N,Z on the ACC-writing form (was missing)
 }
 :IMPYL Preg, XTreg, loc32    is rpt_phase=1 & op16=0x5605 ; loc32 & Preg & XTreg {
     local a:8 = sext(XT); local b:8 = sext(loc32); local r:8 = a * b; P = r:4;
@@ -298,6 +299,44 @@
 # low half: sext(XT) * zext(loc32).
 :IMPYXUL Preg, XTreg, loc32  is rpt_phase=1 & op16=0x5665 ; loc32 & Preg & XTreg {
     local a:8 = sext(XT); local b:8 = zext(loc32); local r:8 = a * b; P = r:4;  # low 32 -> P
+}
+# =============================================================================
+# 32x32 multiply-accumulate forms. Same word1=0x56<sub> / word2=loc32 shape as
+# above, but with an ACC ± P step BEFORE the P update. Encodings dis2000-confirmed
+# from a cl2000-assembled fixture (tests/mac_ext56.bin). Semantics per SPRU430F:
+#   QMPYAL 0x5646  ACC += P;  P = (sXT * s[loc32]) >> 32;   N/Z/C/V + signed OVC
+#   QMPYSL 0x5645  ACC -= P;  P = (sXT * s[loc32]) >> 32;   N/Z/C/V + signed OVC
+#   IMPYAL 0x564C  ACC += P;  P =  sXT * s[loc32]  (low 32); N/Z/C/V + UNSIGNED OVCU
+# IMPYAL adds P as UNSIGNED (ignoring PM) and counts on unsigned carry (OVCU); its
+# spec sheet is explicit that OVM does not gate OVCU -- the applyOvcUnsigned macro
+# was fixed to match while this batch was in flight.
+# =============================================================================
+:QMPYAL Preg, XTreg, loc32  is rpt_phase=1 & op16=0x5646 ; loc32 & Preg & XTreg {
+    local b:4 = P;
+    $(C) = carry(ACC, b);
+    $(V) = scarry(ACC, b);
+    ACC = ACC + b;
+    setNZ32(ACC);
+    applyOvcSigned(ACC);
+    local a:8 = sext(XT); local m:8 = sext(loc32); local r:8 = (a * m) >> 32; P = r:4;
+}
+:QMPYSL Preg, XTreg, loc32  is rpt_phase=1 & op16=0x5645 ; loc32 & Preg & XTreg {
+    local b:4 = P;
+    $(C) = !(ACC < b);
+    $(V) = sborrow(ACC, b);
+    ACC = ACC - b;
+    setNZ32(ACC);
+    applyOvcSigned(ACC);
+    local a:8 = sext(XT); local m:8 = sext(loc32); local r:8 = (a * m) >> 32; P = r:4;
+}
+:IMPYAL Preg, XTreg, loc32  is rpt_phase=1 & op16=0x564C ; loc32 & Preg & XTreg {
+    local b:4 = P;
+    $(C) = carry(ACC, b);
+    $(V) = scarry(ACC, b);
+    ACC = ACC + b;
+    setNZ32(ACC);
+    applyOvcUnsigned();
+    local a:8 = sext(XT); local m:8 = sext(loc32); local r:8 = a * m; P = r:4;
 }
 # Square-and-accumulate (MAC-style; 2-word, loc16 in word2). dis2000-confirmed.
 # SQRA: ACC += P (PM=0); T=[loc16]; P = T*T.  SQRS: ACC -= P; T=[loc16]; P = T*T.

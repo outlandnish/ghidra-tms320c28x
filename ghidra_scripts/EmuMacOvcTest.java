@@ -50,6 +50,14 @@ public class EmuMacOvcTest extends GhidraScript {
     private static final long XPMA_LO  = 0x0100L;   // -> 0x3F0100 in word-address
     private static final long XPMA_HI_BASE = 0x3F0000L;
 
+    // Group A (issue #97, 32x32 MAC forms). All 2-word, word1=0x564x, word2=loc32.
+    private static final long QMPYAL_W1 = 0x5646L;
+    private static final long QMPYSL_W1 = 0x5645L;
+    private static final long IMPYAL_W1 = 0x564CL;
+    // Pre-load XT with 0 so the "P = ..." step produces a predictable P after
+    // the ACC += P we care about. XT is written directly via emu.writeRegister.
+    private static final long IMPYL_ACC_W1 = 0x5644L;   // IMPYL ACC,XT,loc32
+
     private int failures = 0;
     private long codeCursor = CODE;
 
@@ -112,8 +120,34 @@ public class EmuMacOvcTest extends GhidraScript {
             testXmacFamily(emu, sp, XMACD_W1, 0, 0x7fffffffL, 1L, 0x80000000L,
                 1L, "XMACD P,loc16,*(pma) +ve overflow : OVC 0 -> 1");
 
+            // --- Group A (issue #97, 32x32 MAC forms) --------------------------
+            // 13. QMPYAL P,XT,loc32: P=1, ACC=0x7fffffff -> 0x80000000, OVC 0 -> +1
+            testXtL32(emu, sp, QMPYAL_W1, 0, 0x7fffffffL, 1L, 0x80000000L,
+                1L, /*ovm*/0, "QMPYAL P,XT,loc32 +ve overflow : OVC 0 -> 1");
+
+            // 14. QMPYSL P,XT,loc32: P=1, ACC=0x80000000 -> 0x7fffffff, OVC 0 -> -1
+            testXtL32(emu, sp, QMPYSL_W1, 0, 0x80000000L, 1L, 0x7fffffffL,
+                -1L & 0xff, 0, "QMPYSL P,XT,loc32 -ve overflow : OVC 0 -> -1");
+
+            // 15. IMPYAL P,XT,loc32 unsigned carry: P=1, ACC=0xffffffff -> 0, OVC 0 -> +1 via OVCU
+            testXtL32(emu, sp, IMPYAL_W1, 0, 0xffffffffL, 1L, 0L,
+                1L, 0, "IMPYAL P,XT,loc32 unsigned carry : OVC 0 -> 1");
+
+            // 16. IMPYAL under OVM=1 : OVCU still increments (SPRU430F: OVM does
+            //     NOT affect OVCU). This is the negative test for the macro fix
+            //     that removed the OVM gate from applyOvcUnsigned.
+            testXtL32(emu, sp, IMPYAL_W1, 0, 0xffffffffL, 1L, 0L, 1L, /*ovm*/1,
+                "IMPYAL unsigned carry with OVM=1 : OVC still 0 -> 1");
+
+            // 17. IMPYL ACC,XT,loc32 N/Z: MOVL XT,#-1; loc32=+1; ACC = -1*1 = -1.
+            //     N should be 1, Z should be 0. This tests the setNZ32 that was
+            //     added while auditing the family for #97.
+            testImpylAcc(emu, sp, IMPYL_ACC_W1, /*xt*/0xffffffffL, /*loc32*/1L,
+                /*wantAcc*/0xffffffffL, /*wantN*/1L, /*wantZ*/0L,
+                "IMPYL ACC : (-1)*1 -> -1, N=1 Z=0");
+
             if (failures == 0) {
-                println("EmuMacOvcTest.java> PASS: MAC-family OVC accounting (12 cases)");
+                println("EmuMacOvcTest.java> PASS: MAC-family OVC accounting (17 cases)");
             } else {
                 println("EmuMacOvcTest.java> FAIL: " + failures + " check(s) failed");
             }
@@ -229,6 +263,50 @@ public class EmuMacOvcTest extends GhidraScript {
         }
         expect(what + " [ACC]", emu.readRegister("ACC").longValue() & 0xffffffffL, wantAcc);
         expect(what + " [OVC]", emu.readRegister("OVC").longValue() & 0xffL, wantOvc & 0xffL);
+    }
+
+    /** QMPYAL / QMPYSL / IMPYAL: 2-word, XT preloaded, loc32 via *-SP[1]. */
+    private void testXtL32(EmulatorHelper emu, AddressSpace sp, long w1,
+            long preOvc, long preAcc, long preP, long wantAcc, long wantOvc,
+            long ovm, String what) throws Exception {
+        emu.writeRegister("ACC", preAcc);
+        emu.writeRegister("OVC", preOvc);
+        emu.writeRegister("P",   preP);
+        emu.writeRegister("XT",  0L);
+        emu.writeRegister("SP",  SP_BASE);
+        emu.writeMemoryValue(sp.getAddress((SP_BASE - 1) * 2), 2, 0L);
+        emu.writeMemoryValue(sp.getAddress(SP_BASE       * 2), 2, 0L);
+        long here = codeCursor; codeCursor += 4;
+        emu.writeMemoryValue(sp.getAddress(here * 2), 2, ovm == 1 ? SETC_OVM : CLRC_OVM);
+        emu.writeMemoryValue(sp.getAddress((here + 1) * 2), 2, w1);
+        emu.writeMemoryValue(sp.getAddress((here + 2) * 2), 2, LOC_SP1);
+        emu.writeRegister("PC", here);
+        for (int i = 0; i < 2; i++) {
+            if (!emu.step(monitor)) { fail(what, "step " + i + ": " + emu.getLastError()); return; }
+        }
+        expect(what + " [ACC]", emu.readRegister("ACC").longValue() & 0xffffffffL, wantAcc);
+        expect(what + " [OVC]", emu.readRegister("OVC").longValue() & 0xffL, wantOvc & 0xffL);
+    }
+
+    /** IMPYL ACC,XT,loc32: pure multiply, check N/Z afterward. */
+    private void testImpylAcc(EmulatorHelper emu, AddressSpace sp, long w1,
+            long xt, long loc32val, long wantAcc, long wantN, long wantZ,
+            String what) throws Exception {
+        emu.writeRegister("ACC", 0L);
+        emu.writeRegister("XT",  xt);
+        emu.writeRegister("N",   wantN == 1 ? 0L : 1L);   // pre-seed opposite
+        emu.writeRegister("Z",   wantZ == 1 ? 0L : 1L);
+        emu.writeRegister("SP",  SP_BASE);
+        emu.writeMemoryValue(sp.getAddress((SP_BASE - 1) * 2), 2, loc32val & 0xffffL);
+        emu.writeMemoryValue(sp.getAddress(SP_BASE       * 2), 2, (loc32val >> 16) & 0xffffL);
+        long here = codeCursor; codeCursor += 4;
+        emu.writeMemoryValue(sp.getAddress(here * 2), 2, w1);
+        emu.writeMemoryValue(sp.getAddress((here + 1) * 2), 2, LOC_SP1);
+        emu.writeRegister("PC", here);
+        if (!emu.step(monitor)) { fail(what, emu.getLastError()); return; }
+        expect(what + " [ACC]", emu.readRegister("ACC").longValue() & 0xffffffffL, wantAcc);
+        expect(what + " [N]",   emu.readRegister("N").longValue(), wantN);
+        expect(what + " [Z]",   emu.readRegister("Z").longValue(), wantZ);
     }
 
     private void expect(String what, long got, long want) {

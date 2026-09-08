@@ -1,0 +1,19 @@
+# Assembled by cl2000 -v28 --silicon_version=28 from tests/mac_ext56.asm (not
+# checked in -- see mac_ext56.expected.txt provenance below). dis2000's decode
+# of the same bytes agrees on the mnemonic (spacing differs; the expected text
+# below matches our SLEIGH's rendering, which is what DumpDisasm produces).
+#
+# Provenance:
+#   .sect ".text"
+#   _t: QMPYAL P,XT,@Var
+#       QMPYSL P,XT,@Var
+#       IMPYAL P,XT,@Var
+#   Var .word 0
+#
+# TI's own dis2000 -a mac_ext56.obj output:
+#   00000000   5646   QMPYAL       P, XT, @0x0
+#   00000002   5645   QMPYSL       P, XT, @0x0
+#   00000004   564c   IMPYAL       P, XT, @0x0
+0x0	46560000	QMPYAL P,XT,@0x0
+0x2	45560000	QMPYSL P,XT,@0x0
+0x4	4c560000	IMPYAL P,XT,@0x0

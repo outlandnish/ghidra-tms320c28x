@@ -64,6 +64,13 @@ public class EmuOvcTest extends GhidraScript {
             // 5. Unsigned no-carry: 5 + 3 = 8. No OVC change.
             testAddul(emu, sp, 5, 5L, 3L, 5L, "ADDUL no carry : OVC 5 unchanged");
 
+            // 5b. ADDUL with OVM=1 : OVCU still increments -- SPRU430F is explicit
+            //     that "The OVM mode does not affect the OVCU counter" (see the OVCU
+            //     row on the ADDUL page). Negative test for the OVM-gate that was
+            //     erroneously present on applyOvcUnsigned until #97's Group A audit.
+            testAddulOvm(emu, sp, /*preOvc*/0, /*acc*/0xffffffffL, /*loc32*/1L,
+                /*wantOvc*/1L, "ADDUL unsigned carry with OVM=1 : OVC still 0 -> 1");
+
             // 6. SAT ACC with OVC > 0 : saturate to 0x7FFFFFFF, clear OVC, V=1.
             testSat(emu, sp, /*preOvc*/3, /*preAcc*/0x11111111L,
                 /*wantOvc*/0, /*wantAcc*/0x7FFFFFFFL, /*wantV*/1,
@@ -103,7 +110,7 @@ public class EmuOvcTest extends GhidraScript {
             expect("MOVU loc,OVC : stored OVC low 6b, upper 10 zero", stored, 0x002AL);
 
             if (failures == 0) {
-                println("EmuOvcTest.java> PASS: OVC model (10 cases)");
+                println("EmuOvcTest.java> PASS: OVC model (11 cases)");
             } else {
                 println("EmuOvcTest.java> FAIL: " + failures + " check(s) failed");
             }
@@ -136,13 +143,24 @@ public class EmuOvcTest extends GhidraScript {
     /** ADDUL ACC,loc32 with OVM off. */
     private void testAddul(EmulatorHelper emu, AddressSpace sp, long preOvc, long preAcc,
             long loc32val, long wantOvc, String what) throws Exception {
+        testAddulOvmGate(emu, sp, preOvc, preAcc, loc32val, wantOvc, 0, what);
+    }
+
+    /** ADDUL ACC,loc32 with OVM on -- for the OVCU-ignores-OVM regression. */
+    private void testAddulOvm(EmulatorHelper emu, AddressSpace sp, long preOvc, long preAcc,
+            long loc32val, long wantOvc, String what) throws Exception {
+        testAddulOvmGate(emu, sp, preOvc, preAcc, loc32val, wantOvc, 1, what);
+    }
+
+    private void testAddulOvmGate(EmulatorHelper emu, AddressSpace sp, long preOvc,
+            long preAcc, long loc32val, long wantOvc, long ovm, String what) throws Exception {
         emu.writeRegister("ACC", preAcc);
         emu.writeRegister("OVC", preOvc);
         emu.writeRegister("SP", SP_BASE);
         emu.writeMemoryValue(sp.getAddress((SP_BASE - 1) * 2), 2, loc32val & 0xffffL);
         emu.writeMemoryValue(sp.getAddress(SP_BASE * 2), 2, (loc32val >> 16) & 0xffffL);
         long here = codeCursor; codeCursor += 6;
-        emu.writeMemoryValue(sp.getAddress(here * 2), 2, CLRC_OVM);
+        emu.writeMemoryValue(sp.getAddress(here * 2), 2, ovm == 1 ? SETC_OVM : CLRC_OVM);
         emu.writeMemoryValue(sp.getAddress((here + 1) * 2), 2, ADDUL_ACC_LOC32);
         emu.writeMemoryValue(sp.getAddress((here + 2) * 2), 2, LOC_SP1);
         emu.writeRegister("PC", here);
