@@ -1,0 +1,12 @@
+# Bit-manipulation fixture (issue #108).
+# Verifies TSET/TCLR now decode the BBBB bit-index field from word 2. Before
+# the fix, the pattern dropped BBBB entirely and printed the literal string
+# "#16bit"/"#bit" as if it were the operand -- users had no way to see which
+# bit was being manipulated. Encodings taken directly from SPRU430F ch. 6
+# p.438 (TCLR) / p.442 (TSET): word1 = 0x560D (TSET) or 0x5609 (TCLR),
+# word2 = 0000 BBBB LLLL LLLL. Byte column is little-endian per 16-bit word.
+0x0	0d560104	TSET @0x1,#0x4
+0x2	0d56020f	TSET @0x2,#0xf
+0x4	09560307	TCLR @0x3,#0x7
+0x6	09560400	TCLR @0x4,#0x0
+0x8	0d560600	TSET @0x6,#0x0

@@ -80,7 +80,7 @@ lang="$module/data/languages"
 tmp=$(mktemp -d -t c28x-test-XXXXXX)
 trap 'rm -rf "$tmp"' EXIT
 
-CASES="addr_modes fpu_display fpu_parallel fpu_flags c2xlp cla_all traps mac_ext56 shifts"
+CASES="addr_modes fpu_display fpu_parallel fpu_flags c2xlp cla_all traps mac_ext56 shifts bitops"
 
 # Cases not named here run on the core C28x language.
 processor_for() {

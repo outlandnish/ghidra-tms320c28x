@@ -56,6 +56,7 @@ Copy-Item "$Module\ghidra_scripts\EmuOvcTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuMacOvcTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuShiftAuditTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuNegAbsTest.java" "$ws\scripts\" -Force
+Copy-Item "$Module\ghidra_scripts\EmuCmpLogicBitTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\tests\fpu_flags.bin" "$ws\" -Force
 Copy-Item "$Module\tests\fpu_cond.bin" "$ws\" -Force
 
@@ -95,6 +96,7 @@ Invoke-Suite "EmuOvcTest" "fpu_flags.bin"             # issue #93: OVC counter +
 Invoke-Suite "EmuMacOvcTest" "fpu_flags.bin"          # issue #95: MAC-family + ADDC/SBBU OVC accounting
 Invoke-Suite "EmuShiftAuditTest" "fpu_flags.bin"      # issue #104: AX + 64-bit shift N/Z/C, LSL/SFR ACC,T + ROR ACC
 Invoke-Suite "EmuNegAbsTest" "fpu_flags.bin"          # issue #106: NEG/ABS/NEGTC/ABSTC + OVM saturation
+Invoke-Suite "EmuCmpLogicBitTest" "fpu_flags.bin"     # issue #108: Compare/Logical/Bit-manip audit
 
 if ($fail -eq 0) { Write-Host "emulation semantics: OK" -ForegroundColor Green }
 else { exit 1 }
