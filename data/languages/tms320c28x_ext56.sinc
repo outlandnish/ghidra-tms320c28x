@@ -143,10 +143,15 @@
     applyOvcSigned(ACC);
 }
 # ADDCL ACC,loc32   0x5640  (add 32-bit value plus carry to ACC). dis2000-confirmed (DIR).
+# SPRU430F: N/Z/C/V + OVC. Combined-addend pattern mirrors SUBBL above.
 :ADDCL ACCreg, loc32 is rpt_phase=1 & op16=0x5640 ; loc32 & ACCreg  {
     local cin:4 = zext($(C));
-    $(C) = carry(ACC, loc32);
-    ACC = ACC + loc32 + cin;
+    local b:4 = loc32 + cin;
+    $(C) = carry(ACC, b);
+    $(V) = scarry(ACC, b);
+    ACC = ACC + b;
+    setNZ32(ACC);
+    applyOvcSigned(ACC);
 }
 # MOVU loc16,OVC    0x5628 : loc16  (STORE the 6-bit OVC into low bits of [loc16];
 # upper 10 bits of the target are zeroed). Was writing literal 0 -- fixed to write the
@@ -296,11 +301,24 @@
 }
 # Square-and-accumulate (MAC-style; 2-word, loc16 in word2). dis2000-confirmed.
 # SQRA: ACC += P (PM=0); T=[loc16]; P = T*T.  SQRS: ACC -= P; T=[loc16]; P = T*T.
+# SPRU430F: N/Z/C/V + OVC on the ACC += P (SQRA) / ACC -= P (SQRS) step.
 :SQRA loc16  is rpt_phase=1 & op16=0x5615 ; loc16 {
-    ACC = ACC + P; T = loc16; local t:4 = sext(T); P = t * t;
+    local b:4 = P;
+    $(C) = carry(ACC, b);
+    $(V) = scarry(ACC, b);
+    ACC = ACC + b;
+    setNZ32(ACC);
+    applyOvcSigned(ACC);
+    T = loc16; local t:4 = sext(T); P = t * t;
 }
 :SQRS loc16  is rpt_phase=1 & op16=0x5611 ; loc16 {
-    ACC = ACC - P; T = loc16; local t:4 = sext(T); P = t * t;
+    local b:4 = P;
+    $(C) = !(ACC < b);
+    $(V) = sborrow(ACC, b);
+    ACC = ACC - b;
+    setNZ32(ACC);
+    applyOvcSigned(ACC);
+    T = loc16; local t:4 = sext(T); P = t * t;
 }
 # ZALR ACC,loc16  0x5613 : loc16  -- AL = 0x8000 (round const), AH = [loc16]. dis2000-confirmed.
 # SPRU430F states it as the two halves ("AH = [loc16]; AL = 0x8000;"), but writing it that

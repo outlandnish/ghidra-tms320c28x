@@ -112,7 +112,17 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 # MOVDL XT,loc32    1010 0110 LLLL LLLL  -- store XT to loc32, then load XT from it
 :MOVDL "XT", loc32  is rpt_phase=1 & op_hi8=0xA6 & loc32  { loc32 = XT; XT = loc32; }
 # MOVAD T,loc16     1010 0111 LLLL LLLL  -- T=loc16; ACC+=P (like MOVA, addr variant)
-:MOVAD "T", loc16   is rpt_phase=1 & op_hi8=0xA7 & loc16  { ACC = ACC + P; T = loc16; }
+# SPRU430F: N/Z/C/V + OVC on the ACC += P step. Also does [loc16+1]=T as a side effect
+# (data-move variant of MOVA); we model the register write, not the memory move.
+:MOVAD "T", loc16   is rpt_phase=1 & op_hi8=0xA7 & loc16  {
+    local b:4 = P;
+    $(C) = carry(ACC, b);
+    $(V) = scarry(ACC, b);
+    ACC = ACC + b;
+    setNZ32(ACC);
+    applyOvcSigned(ACC);
+    T = loc16;
+}
 # DMOV loc16        1010 0101 LLLL LLLL  -- data move [loc16+1]=[loc16] (delay line)
 :DMOV loc16         is rpt_phase=1 & op_hi8=0xA5 & loc16  { }   # decode-only (memory shuffle)
 
@@ -275,12 +285,18 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 :MPYXU Preg, Treg, loc16  is rpt_phase=1 & op_hi8=0x32 & Preg & Treg & loc16  {
     local a:4 = sext(T); local b:4 = zext(loc16); P = a * b;
 }
-# XMACD P,loc16,*pma  1010 0100 LLLL LLLL : pma   (mac with data move) decode-only-ish
+# XMACD P,loc16,*pma  1010 0100 LLLL LLLL : pma   (mac with data move)
+# SPRU430F: N/Z/C/V + OVC on the ACC += P step.
 :XMACD Preg, loc16, "*("xpmaval")"  is rpt_phase=1 & op_hi8=0xA4 & Preg & loc16 ; imm16 & xpmaval {
-    ACC = ACC + P;
+    local b:4 = P;
+    $(C) = carry(ACC, b);
+    $(V) = scarry(ACC, b);
+    ACC = ACC + b;
+    setNZ32(ACC);
+    applyOvcSigned(ACC);
     local pv:2 = xpmaval;
-    local a:4 = sext(loc16); local b:4 = sext(pv);
-    P = a * b;
+    local a:4 = sext(loc16); local mb:4 = sext(pv);
+    P = a * mb;
 }
 
 # =============================================================================
@@ -318,11 +334,17 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 :MOV ACCreg, loc16^"<<#0"  is rpt_phase=1 & op_hi8=0x85 & ACCreg & loc16 {
     mov_acc_mext_shift(loc16, 0);
 }
+# SPRU430F: N/Z/C/V + OVC on the ACC += P step.
 :XMAC Preg, loc16, "*("xpmaval")"  is rpt_phase=1 & op_hi8=0x84 & Preg & loc16 ; imm16 & xpmaval {
-    ACC = ACC + P;
+    local b:4 = P;
+    $(C) = carry(ACC, b);
+    $(V) = scarry(ACC, b);
+    ACC = ACC + b;
+    setNZ32(ACC);
+    applyOvcSigned(ACC);
     local pv:2 = xpmaval;
-    local a:4 = sext(loc16); local b:4 = sext(pv);
-    P = a * b;
+    local a:4 = sext(loc16); local mb:4 = sext(pv);
+    P = a * mb;
 }
 
 # =============================================================================
@@ -758,19 +780,27 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 # MOVU ACC, loc16   0000 1110 LLLL LLLL  -- load ACC with zero-extended 16-bit word.
 :MOVU ACCreg, loc16  is rpt_phase=1 & op_hi8=0x0E & ACCreg & loc16  { ACC = zext(loc16); setNZ32(ACC); }
 # ADDCU ACC, loc16  0000 1100 LLLL LLLL  -- ACC = ACC + 0:[loc16] + C  (add unsigned w/ carry)
+# SPRU430F: N/Z/C/V + OVC. Combined-addend pattern; C and V approximated on the
+# consolidated sum (zext(loc16) + C).
 :ADDCU ACCreg, loc16  is rpt_phase=1 & op_hi8=0x0C & ACCreg & loc16  {
-    local b:4 = zext(loc16);
     local cin:4 = zext($(C));
-    $(C) = carry(ACC, b);          # approx: carry from the loc16 add (ignores the +C ripple)
-    ACC = ACC + b + cin;
+    local b:4 = zext(loc16) + cin;
+    $(C) = carry(ACC, b);
+    $(V) = scarry(ACC, b);
+    ACC = ACC + b;
     setNZ32(ACC);
+    applyOvcSigned(ACC);
 }
 # SBBU ACC, loc16   0001 1101 LLLL LLLL  -- ACC = ACC - 0:[loc16] - ~C  (subtract unsigned w/ borrow)
+# SPRU430F: N/Z/C/V + OVC. Same combined-subtrahend shape as SUBBL.
 :SBBU ACCreg, loc16  is rpt_phase=1 & op_hi8=0x1D & ACCreg & loc16  {
-    local b:4 = zext(loc16);
-    local nborrow:4 = zext($(C) == 0);   # ~C as 0/1
-    ACC = ACC - b - nborrow;
+    local nborrow:4 = zext($(C) == 0);   # ~C as 0/1  (borrow-in)
+    local b:4 = zext(loc16) + nborrow;   # combined subtrahend
+    $(C) = !(ACC < b);
+    $(V) = sborrow(ACC, b);
+    ACC = ACC - b;
     setNZ32(ACC);
+    applyOvcSigned(ACC);
 }
 
 # CLRC mode   0010 1001 CCCC CCCC  -- clear status bits per 8-bit mask (counterpart
