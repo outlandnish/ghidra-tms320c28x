@@ -48,6 +48,10 @@ Copy-Item "$Module\ghidra_scripts\EmuSubbAccFlagsTest.java" "$ws\scripts\" -Forc
 Copy-Item "$Module\ghidra_scripts\EmuPreadFlagsTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuPreadRepeatTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuC2xlpTest.java" "$ws\scripts\" -Force
+Copy-Item "$Module\ghidra_scripts\EmuFlagsShiftAddTest.java" "$ws\scripts\" -Force
+Copy-Item "$Module\ghidra_scripts\EmuFlagsPmProductTest.java" "$ws\scripts\" -Force
+Copy-Item "$Module\ghidra_scripts\EmuFlagsMovbAxTest.java" "$ws\scripts\" -Force
+Copy-Item "$Module\ghidra_scripts\EmuFlagsLoneFamilyTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\tests\fpu_flags.bin" "$ws\" -Force
 Copy-Item "$Module\tests\fpu_cond.bin" "$ws\" -Force
 
@@ -79,6 +83,10 @@ Invoke-Suite "EmuSubbAccFlagsTest" "fpu_flags.bin" # SUBB ACC,#8bit Z/C  (the fi
 Invoke-Suite "EmuPreadFlagsTest" "fpu_flags.bin"   # PREAD loc16,*XAR7 N/Z (host-driven)
 Invoke-Suite "EmuPreadRepeatTest" "fpu_flags.bin"  # RPT||PREAD *XAR7 shadow (state modifier)
 Invoke-Suite "EmuC2xlpTest" "fpu_flags.bin"        # C2xLP 0x3F page + XCALL/XRET software stack
+Invoke-Suite "EmuFlagsShiftAddTest" "fpu_flags.bin"  # issue #90 group A: shift-form ACC arithmetic
+Invoke-Suite "EmuFlagsPmProductTest" "fpu_flags.bin" # issue #90 group B: ADDL/SUBL ACC,P<<PM
+Invoke-Suite "EmuFlagsMovbAxTest" "fpu_flags.bin"    # issue #90 group C: MOVB AX.LSB/MSB N/Z
+Invoke-Suite "EmuFlagsLoneFamilyTest" "fpu_flags.bin" # issue #90 group D: lone-family + SFR SXM
 
 if ($fail -eq 0) { Write-Host "emulation semantics: OK" -ForegroundColor Green }
 else { exit 1 }
