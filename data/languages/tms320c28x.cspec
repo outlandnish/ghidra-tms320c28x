@@ -56,11 +56,6 @@
 
   <stackpointer register="SP" space="ram" growth="positive"/>
 
-  <!-- LCR saves the return address in RPC; LRETR returns through it. Telling
-       Ghidra this lets the decompiler model call/return framing correctly. -->
-  <returnaddress>
-    <register name="RPC"/>
-  </returnaddress>
 
   <!-- C28x EABI (SPRU514 §7.3, ties out to SPRAC71). Argument classes are
        assigned in this priority order and, within a class, in declaration order:
@@ -81,6 +76,19 @@
        signatures. tests/run_abi_check verifies. -->
   <default_proto>
     <prototype name="__c28x" extrapop="0" stackshift="2">
+      <!-- LCR saves the return address in RPC; LRETR returns through it. Telling
+           Ghidra this lets the decompiler model call/return framing correctly.
+
+           SCOPED TO THIS PROTOTYPE, not the whole spec. As a top-level element it
+           also applied to `interrupt`, whose IRET does not return through RPC at
+           all: it pops the automatic context off the software stack (SPRU430F).
+           A prototype that declares nothing here falls back to the stack, which
+           is what IRET actually does. Structure adapted from mwdmwd/ghidra-c28x
+           99ce8ea; see THIRD-PARTY.md. -->
+      <returnaddress>
+        <register name="RPC"/>
+      </returnaddress>
+
       <input>
         <!-- Class 1: hidden return pointer for structure returns (SPRU514 §7.3.2). -->
         <pentry minsize="1" maxsize="4" storage="hiddenret">
