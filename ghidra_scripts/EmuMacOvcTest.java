@@ -58,6 +58,17 @@ public class EmuMacOvcTest extends GhidraScript {
     // the ACC += P we care about. XT is written directly via emu.writeRegister.
     private static final long IMPYL_ACC_W1 = 0x5644L;   // IMPYL ACC,XT,loc32
 
+    // Group B (issue #97, MPYA family). Both add ACC += P before writing P.
+    private static final long MPYA_PT   = 0x1700L;      // MPYA P,T,loc16 (1-word)
+    private static final long MPYA_PIMM = 0x1500L;      // MPYA P,loc16,#16bit (2-word)
+    // MPY-family drive-by fixes -- these write ACC and per SPRU430F set N/Z,
+    // but bodies were silent about it.
+    private static final long MPY_ACC_T     = 0x1200L;   // MPY  ACC,T,loc16
+    private static final long MPY_ACC_IMM   = 0x3400L;   // MPY  ACC,loc16,#16bit
+    private static final long MPYB_ACC_IMM8 = 0x3500L;   // MPYB ACC,T,#8bit
+    private static final long MPYU_ACC_T    = 0x3600L;   // MPYU ACC,T,loc16
+    private static final long MPYXU_ACC_T   = 0x3000L;   // MPYXU ACC,T,loc16
+
     private int failures = 0;
     private long codeCursor = CODE;
 
@@ -146,8 +157,44 @@ public class EmuMacOvcTest extends GhidraScript {
                 /*wantAcc*/0xffffffffL, /*wantN*/1L, /*wantZ*/0L,
                 "IMPYL ACC : (-1)*1 -> -1, N=1 Z=0");
 
+            // --- Group B (issue #97, MPYA family) ------------------------------
+            // 18. MPYA P,T,loc16: P=1, ACC=0x7fffffff -> 0x80000000 (+ve overflow, OVC++)
+            testMpyaPT(emu, sp, /*preOvc*/0, /*preAcc*/0x7fffffffL, /*preP*/1L,
+                /*wantAcc*/0x80000000L, /*wantOvc*/1L,
+                "MPYA P,T,loc16 +ve overflow : OVC 0 -> 1");
+
+            // 19. MPYA P,loc16,#16bit: same shape, 2-word imm form
+            testMpyaPImm(emu, sp, 0, 0x7fffffffL, 1L, 0x80000000L, 1L,
+                "MPYA P,loc16,#16bit +ve overflow : OVC 0 -> 1");
+
+            // --- MPY-family N/Z regressions (SPRU430F says Z,N; bodies were silent) ---
+            // 20. MPY ACC,T,loc16 (0x12): T=-1, loc16=+1 -> ACC=-1; N=1, Z=0.
+            testMpyAccT16(emu, sp, MPY_ACC_T, /*t*/0xffffL, /*loc16*/1L,
+                0xffffffffL, 1L, 0L, "MPY ACC,T : (-1)*1 -> -1, N=1 Z=0");
+
+            // 21. MPY ACC,loc16,#16bit (0x34): loc16=0, imm=1 -> ACC=0; N=0, Z=1.
+            //     (The T-side gets loaded first per SPRU430F but any zero input works.)
+            testMpyAccImm(emu, sp, MPY_ACC_IMM, /*loc16*/0L, /*imm*/1L,
+                0L, 0L, 1L, "MPY ACC,loc16,#imm : 0*1 -> 0, N=0 Z=1");
+
+            // 22. MPYB ACC,T,#8bit (0x35): T=1, imm=5 -> ACC=5; N=0, Z=0.
+            testMpybAccImm(emu, sp, MPYB_ACC_IMM8, /*t*/1L, /*imm8*/5L,
+                5L, 0L, 0L, "MPYB ACC,T,#5 : 1*5 -> 5, N=0 Z=0");
+
+            // 23. MPYU ACC,T,loc16 (0x36): T=0xFFFF, loc16=0xFFFF -> ACC=0xFFFE0001;
+            //     N=1 (bit31), Z=0.
+            testMpyAccT16(emu, sp, MPYU_ACC_T, 0xffffL, 0xffffL,
+                0xFFFE0001L, 1L, 0L,
+                "MPYU ACC : 0xFFFF*0xFFFF -> 0xFFFE0001, N=1 Z=0");
+
+            // 24. MPYXU ACC,T,loc16 (0x30): T=-1, loc16=0xFFFF (unsigned) ->
+            //     sext(-1) * zext(65535) = -65535 = 0xFFFF0001; N=1, Z=0.
+            testMpyAccT16(emu, sp, MPYXU_ACC_T, 0xffffL, 0xffffL,
+                0xFFFF0001L, 1L, 0L,
+                "MPYXU ACC : (s)(-1) * (u)0xFFFF -> 0xFFFF0001, N=1 Z=0");
+
             if (failures == 0) {
-                println("EmuMacOvcTest.java> PASS: MAC-family OVC accounting (17 cases)");
+                println("EmuMacOvcTest.java> PASS: MAC-family OVC accounting (24 cases)");
             } else {
                 println("EmuMacOvcTest.java> FAIL: " + failures + " check(s) failed");
             }
@@ -302,6 +349,103 @@ public class EmuMacOvcTest extends GhidraScript {
         long here = codeCursor; codeCursor += 4;
         emu.writeMemoryValue(sp.getAddress(here * 2), 2, w1);
         emu.writeMemoryValue(sp.getAddress((here + 1) * 2), 2, LOC_SP1);
+        emu.writeRegister("PC", here);
+        if (!emu.step(monitor)) { fail(what, emu.getLastError()); return; }
+        expect(what + " [ACC]", emu.readRegister("ACC").longValue() & 0xffffffffL, wantAcc);
+        expect(what + " [N]",   emu.readRegister("N").longValue(), wantN);
+        expect(what + " [Z]",   emu.readRegister("Z").longValue(), wantZ);
+    }
+
+    /** MPYA P,T,loc16 (1-word). T preloaded via emu; loc16 via *-SP[1]. */
+    private void testMpyaPT(EmulatorHelper emu, AddressSpace sp, long preOvc,
+            long preAcc, long preP, long wantAcc, long wantOvc,
+            String what) throws Exception {
+        emu.writeRegister("ACC", preAcc);
+        emu.writeRegister("OVC", preOvc);
+        emu.writeRegister("P",   preP);
+        emu.writeRegister("T",   0L);
+        emu.writeRegister("SP",  SP_BASE);
+        emu.writeMemoryValue(sp.getAddress((SP_BASE - 1) * 2), 2, 0L);
+        long here = codeCursor; codeCursor += 4;
+        emu.writeMemoryValue(sp.getAddress(here * 2), 2, CLRC_OVM);
+        emu.writeMemoryValue(sp.getAddress((here + 1) * 2), 2, MPYA_PT | LOC_SP1);
+        emu.writeRegister("PC", here);
+        for (int i = 0; i < 2; i++) {
+            if (!emu.step(monitor)) { fail(what, "step " + i + ": " + emu.getLastError()); return; }
+        }
+        expect(what + " [ACC]", emu.readRegister("ACC").longValue() & 0xffffffffL, wantAcc);
+        expect(what + " [OVC]", emu.readRegister("OVC").longValue() & 0xffL, wantOvc & 0xffL);
+    }
+
+    /** MPYA P,loc16,#16bit (2-word: opcode | loc byte ; imm16). */
+    private void testMpyaPImm(EmulatorHelper emu, AddressSpace sp, long preOvc,
+            long preAcc, long preP, long wantAcc, long wantOvc,
+            String what) throws Exception {
+        emu.writeRegister("ACC", preAcc);
+        emu.writeRegister("OVC", preOvc);
+        emu.writeRegister("P",   preP);
+        emu.writeRegister("SP",  SP_BASE);
+        emu.writeMemoryValue(sp.getAddress((SP_BASE - 1) * 2), 2, 0L);
+        long here = codeCursor; codeCursor += 6;
+        emu.writeMemoryValue(sp.getAddress(here * 2), 2, CLRC_OVM);
+        emu.writeMemoryValue(sp.getAddress((here + 1) * 2), 2, MPYA_PIMM | LOC_SP1);
+        emu.writeMemoryValue(sp.getAddress((here + 2) * 2), 2, 0L);   // imm16
+        emu.writeRegister("PC", here);
+        for (int i = 0; i < 2; i++) {
+            if (!emu.step(monitor)) { fail(what, "step " + i + ": " + emu.getLastError()); return; }
+        }
+        expect(what + " [ACC]", emu.readRegister("ACC").longValue() & 0xffffffffL, wantAcc);
+        expect(what + " [OVC]", emu.readRegister("OVC").longValue() & 0xffL, wantOvc & 0xffL);
+    }
+
+    /** MPY/MPYU/MPYXU ACC,T,loc16 (1-word). T preloaded; loc16 via *-SP[1]. */
+    private void testMpyAccT16(EmulatorHelper emu, AddressSpace sp, long opHi,
+            long t, long loc16, long wantAcc, long wantN, long wantZ,
+            String what) throws Exception {
+        emu.writeRegister("ACC", 0L);
+        emu.writeRegister("T",   t);
+        emu.writeRegister("N",   wantN == 1 ? 0L : 1L);
+        emu.writeRegister("Z",   wantZ == 1 ? 0L : 1L);
+        emu.writeRegister("SP",  SP_BASE);
+        emu.writeMemoryValue(sp.getAddress((SP_BASE - 1) * 2), 2, loc16 & 0xffffL);
+        long here = codeCursor; codeCursor += 2;
+        emu.writeMemoryValue(sp.getAddress(here * 2), 2, opHi | LOC_SP1);
+        emu.writeRegister("PC", here);
+        if (!emu.step(monitor)) { fail(what, emu.getLastError()); return; }
+        expect(what + " [ACC]", emu.readRegister("ACC").longValue() & 0xffffffffL, wantAcc);
+        expect(what + " [N]",   emu.readRegister("N").longValue(), wantN);
+        expect(what + " [Z]",   emu.readRegister("Z").longValue(), wantZ);
+    }
+
+    /** MPY ACC,loc16,#16bit (2-word). loc16 via *-SP[1], imm inline. */
+    private void testMpyAccImm(EmulatorHelper emu, AddressSpace sp, long opHi,
+            long loc16, long imm, long wantAcc, long wantN, long wantZ,
+            String what) throws Exception {
+        emu.writeRegister("ACC", 0L);
+        emu.writeRegister("N",   wantN == 1 ? 0L : 1L);
+        emu.writeRegister("Z",   wantZ == 1 ? 0L : 1L);
+        emu.writeRegister("SP",  SP_BASE);
+        emu.writeMemoryValue(sp.getAddress((SP_BASE - 1) * 2), 2, loc16 & 0xffffL);
+        long here = codeCursor; codeCursor += 4;
+        emu.writeMemoryValue(sp.getAddress(here * 2), 2, opHi | LOC_SP1);
+        emu.writeMemoryValue(sp.getAddress((here + 1) * 2), 2, imm & 0xffffL);
+        emu.writeRegister("PC", here);
+        if (!emu.step(monitor)) { fail(what, emu.getLastError()); return; }
+        expect(what + " [ACC]", emu.readRegister("ACC").longValue() & 0xffffffffL, wantAcc);
+        expect(what + " [N]",   emu.readRegister("N").longValue(), wantN);
+        expect(what + " [Z]",   emu.readRegister("Z").longValue(), wantZ);
+    }
+
+    /** MPYB ACC,T,#8bit (1-word: opcode | imm8). */
+    private void testMpybAccImm(EmulatorHelper emu, AddressSpace sp, long opHi,
+            long t, long imm8, long wantAcc, long wantN, long wantZ,
+            String what) throws Exception {
+        emu.writeRegister("ACC", 0L);
+        emu.writeRegister("T",   t);
+        emu.writeRegister("N",   wantN == 1 ? 0L : 1L);
+        emu.writeRegister("Z",   wantZ == 1 ? 0L : 1L);
+        long here = codeCursor; codeCursor += 2;
+        emu.writeMemoryValue(sp.getAddress(here * 2), 2, opHi | (imm8 & 0xffL));
         emu.writeRegister("PC", here);
         if (!emu.step(monitor)) { fail(what, emu.getLastError()); return; }
         expect(what + " [ACC]", emu.readRegister("ACC").longValue() & 0xffffffffL, wantAcc);

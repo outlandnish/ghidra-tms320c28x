@@ -19,10 +19,12 @@
 }
 
 # MPY ACC,T,loc16   0001 0010 LLLL LLLL   -- ACC = T * loc16  (signed 16x16->32)
+# SPRU430F: N,Z on the ACC write.
 :MPY ACCreg, Treg, loc16  is rpt_phase=1 & op_hi8=0x12 & ACCreg & Treg & loc16  {
     local a:4 = sext(T);
     local b:4 = sext(loc16);
     ACC = a * b;
+    setNZ32(ACC);
 }
 
 # MPYS P,T,loc16    0001 0011 LLLL LLLL   -- ACC -= P<<PM (PM=0 modeled); then P = T*loc16
@@ -40,7 +42,7 @@
 }
 
 # MPY ACC,loc16,#16bit  0011 0100 LLLL LLLL : iiii iiii iiii iiii  (2-word)
-# T = [loc16]; ACC = signed T * signed #16bit.
+# T = [loc16]; ACC = signed T * signed #16bit.  SPRU430F: N,Z on the ACC write.
 :MPY ACCreg, loc16, "#"imm16  is rpt_phase=1 & op_hi8=0x34 & ACCreg & loc16 ; imm16  {
     T = loc16;
     local tv:2 = T;
@@ -48,6 +50,41 @@
     local a:4 = sext(tv);
     local b:4 = sext(iv);
     ACC = a * b;
+    setNZ32(ACC);
+}
+
+# MPYA P,T,loc16    0001 0111 LLLL LLLL   -- ACC += P<<PM (PM=0 modeled), then P = T*loc16
+# SPRU430F: N/Z/C/V + OVC on the ACC += P step. Add-form sibling of MPYS above;
+# encoding dis2000-confirmed in tests/mac_ext56.bin.
+:MPYA Preg, Treg, loc16  is rpt_phase=1 & op_hi8=0x17 & Preg & Treg & loc16  {
+    local b:4 = P;
+    $(C) = carry(ACC, b);
+    $(V) = scarry(ACC, b);
+    ACC = ACC + b;
+    setNZ32(ACC);
+    applyOvcSigned(ACC);
+    local a:4 = sext(T);
+    local m:4 = sext(loc16);
+    P = a * m;
+}
+
+# MPYA P,loc16,#16bit  0001 0101 LLLL LLLL : iiii iiii iiii iiii  (2-word)
+# ACC += P<<PM (PM=0); T = [loc16]; P = signed T * signed #16bit.
+# The T load is a documented side effect (unlike the plain MPY P,#16bit form).
+# SPRU430F: N/Z/C/V + OVC on the ACC += P step; encoding dis2000-confirmed.
+:MPYA Preg, loc16, "#"imm16  is rpt_phase=1 & op_hi8=0x15 & Preg & loc16 ; imm16  {
+    local b:4 = P;
+    $(C) = carry(ACC, b);
+    $(V) = scarry(ACC, b);
+    ACC = ACC + b;
+    setNZ32(ACC);
+    applyOvcSigned(ACC);
+    T = loc16;
+    local tv:2 = T;
+    local iv:2 = imm16;
+    local a:4 = sext(tv);
+    local m:4 = sext(iv);
+    P = a * m;
 }
 
 # MPY P,loc16,#16bit    1000 1100 LLLL LLLL : iiii iiii iiii iiii  (2-word)
@@ -89,10 +126,12 @@
 }
 
 # MPYB ACC,T,#8bit  0011 0101 CCCC CCCC   -- ACC = T * #8bit
+# SPRU430F: N,Z on the ACC write.
 :MPYB ACCreg, Treg, "#"imm8  is rpt_phase=1 & op_hi8=0x35 & ACCreg & Treg & imm8  {
     local a:4 = sext(T);
     local b:4 = zext(imm8:2);
     ACC = a * b;
+    setNZ32(ACC);
 }
 
 # MAC P,loc16,0:pma 0001 0100 LLLL LLLL : pma word

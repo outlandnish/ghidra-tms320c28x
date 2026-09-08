@@ -278,8 +278,10 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 
 # --- multiply additions ------------------------------------------------------
 # MPYXU ACC,T,loc16   0011 0000 LLLL LLLL  (signed x unsigned -> ACC)
+# SPRU430F: N,Z on the ACC write.
 :MPYXU ACCreg, Treg, loc16  is rpt_phase=1 & op_hi8=0x30 & ACCreg & Treg & loc16  {
     local a:4 = sext(T); local b:4 = zext(loc16); ACC = a * b;
+    setNZ32(ACC);
 }
 # MPYXU P,T,loc16     0011 0010 LLLL LLLL
 :MPYXU Preg, Treg, loc16  is rpt_phase=1 & op_hi8=0x32 & Preg & Treg & loc16  {
@@ -1010,8 +1012,10 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
     $(N) = (r s< 0); $(Z) = (r == 0);
 }
 # MPYU ACC,T,loc16   0011 0110 LLLL LLLL  (unsigned 16x16 -> ACC).
+# SPRU430F: N,Z on the ACC write.
 :MPYU ACCreg, Treg, loc16  is rpt_phase=1 & op_hi8=0x36 & ACCreg & Treg & loc16 {
     local a:4 = zext(T); local b:4 = zext(loc16); ACC = a * b;
+    setNZ32(ACC);
 }
 # SUB loc16, AX   0111 010A LLLL LLLL  ([loc16] = [loc16] - AX).  C/V/N/Z.
 # SPRU430F p.419: despite the manual's "Reverse-Subtract ... From AX" title, the

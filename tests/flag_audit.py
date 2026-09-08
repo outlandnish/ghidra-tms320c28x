@@ -43,7 +43,7 @@ OVC_WRITE = re.compile(
     r'\bOVC\s*=|applyOvcSigned\s*\(|applyOvcUnsigned\s*\(')
 ACC_DEST = re.compile(r'(?:^|[{;])\s*ACC\s*=', re.M)
 DEST = re.compile(r'(?:^|[{;])\s*(ACC|AH|AL|AX)\s*=', re.M)
-ARITH = re.compile(r'=\s*[^;]*[-+&|^]|<<|>>')
+ARITH = re.compile(r'=\s*[^;]*[-+&|^]|<<|>>|\w\s*\*\s*\w')
 OPT_OUT = re.compile(r'#\s*flag-audit:\s*none')
 OPT_OUT_OVC = re.compile(r'#\s*flag-audit-ovc:\s*none')
 
@@ -55,7 +55,10 @@ ADD ADDB ADDU ADDL ADDCU ADDCL SUB SUBB SUBU SUBL SUBBL SUBCU SUBCUL SBBU
 AND OR XOR NOT NEG NEGL ABS ABSTC INC DEC CMP CMPL CMPB TEST
 ASR ASRL LSL LSLL LSR LSRL SFR SBF ROL ROR
 MOV MOVL MOVU MOVB MOVH ZALR SAT SAT64 NORM FLIP CSB
-MAC MPY MPYB MPYU MPYS QMPYL IMPYL ADDUL SUBUL
+MAC MPY MPYA MPYB MPYS MPYU MPYXU
+QMPYL QMPYUL QMPYXUL QMPYAL QMPYSL
+IMPYL IMPYXUL IMPYAL
+ADDUL SUBUL
 """.split())
 
 # SPRU430F Table 2-5 subset that this repo currently models and whose ACC-
@@ -68,7 +71,7 @@ MAC MPY MPYB MPYU MPYS QMPYL IMPYL ADDUL SUBUL
 # remaining scope (Groups B and C).
 OVC_REQUIRED = set("""
 ADDCL ADDCU MOVA MOVAD MOVS SBBU SQRA SQRS XMAC XMACD
-QMPYAL QMPYSL IMPYAL
+QMPYAL QMPYSL IMPYAL MPYA
 """.split())
 
 
