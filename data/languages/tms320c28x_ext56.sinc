@@ -525,12 +525,16 @@ macro normAcc() {
 # =============================================================================
 # Bit-test / square-accumulate (real-ish).
 # =============================================================================
-# TBIT loc16,T      0x5625
+# TBIT loc16,T      0x5625 ; 0000 0000 LLLL LLLL   (SPRU430F, 2-word)
+# Test bit `15 - T[3:0]` of [loc16] -- reversed indexing, so T=0 tests bit 15 and
+# T=15 tests bit 0. Prior body used `T & 0xf` directly, which inverted the tested
+# bit vs. hardware for every non-zero T value. Fixed for issue #118 (fw-parity
+# sweep uncovered while auditing TBIT alongside TBIT loc16,#bit at alu.sinc:192).
 :TBIT loc16, "T"  is rpt_phase=1 & op16=0x5625 ; loc16  {
-    local t16:2 = T;
-    local sh:2 = t16 & 0xf;
+    local tv:2 = T & 0xf;
+    local bit:2 = 15 - tv;
     local v:2 = loc16;
-    $(TC) = ((v >> sh) & 1) != 0;
+    $(TC) = ((v >> bit) & 1) != 0;
 }
 # TSET/TCLR loc16,#bit -- 2-word bit test + set/clear. Word 1 is a fixed
 # opcode; word 2 is `0000 BBBB LLLL LLLL` with BBBB the bit index (0..15).
@@ -562,6 +566,7 @@ macro normAcc() {
     loc16 = v;
     setNZ16(v);
 }
+
 
 # =============================================================================
 # Flag / mode set/clear (single-purpose; one constructor per distinct opcode).
