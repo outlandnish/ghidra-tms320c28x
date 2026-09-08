@@ -138,6 +138,16 @@ Files adapted so far:
   detection is by mnemonic + resolved call flow / the `*XAR7` print form. Runtime-
   verified: with their operand-0 checks the analyzer never fired on this
   module. See #16.
+
+  Since diverged on the proof itself. Upstream walks a single straight line to one
+  terminal `LB *XAR7`; this version closes over the helper's own control flow and
+  proves **every** `LB *XAR7` it reaches, so a helper that returns early still
+  qualifies. The guarantee is unchanged — XAR7 unwritten across the whole region,
+  and the region enterable only at its entry — because neither depends on the body
+  being one basic block. Measured: one of the two real FFC helpers in a production
+  PMR image is a 64-bit compare with an early exit, so the straight-line rule proved
+  1 of 3 returns where the closure proves 3 of 3, with no new match on a second
+  image. See #84.
 - **`data/languages/tms320c28x_more.sinc`** (partial) — the three-variant
   `LB *XAR7` constructor split dispatched by (`ffc_return`, `switch_canonical`)
   SLEIGH context bits, plus the `XAR7 & 0x003fffff` 22-bit PC mask on the

@@ -12,7 +12,9 @@
 package ghidra.app.plugin.core.analysis;
 
 import java.math.BigInteger;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -34,6 +36,7 @@ import ghidra.program.model.listing.InstructionIterator;
 import ghidra.program.model.listing.Listing;
 import ghidra.program.model.listing.Program;
 import ghidra.program.model.listing.ProgramContext;
+import ghidra.program.model.symbol.FlowType;
 import ghidra.program.model.symbol.Reference;
 import ghidra.program.model.symbol.ReferenceIterator;
 import ghidra.util.Msg;
@@ -54,13 +57,19 @@ import ghidra.util.task.TaskMonitor;
  *   <li>one or more decoded FFC calls target the helper entry,</li>
  *   <li>every incoming flow reference to the entry is one of those FFC calls,</li>
  *   <li>there is no fall-through into the entry or external ingress into its body,</li>
- *   <li>the bounded body is contiguous and straight-line through a terminal
- *       {@code LB *XAR7}, and</li>
- *   <li>no intervening instruction writes any part of XAR7.</li>
+ *   <li>the body closes under its own control flow within a bounded instruction
+ *       count, every path ending at an {@code LB *XAR7}, and</li>
+ *   <li>no instruction in that region writes any part of XAR7, calls out (XAR7 is
+ *       killed by call), or transfers anywhere the closure cannot enumerate.</li>
  * </ul>
- * Only the proven terminal instruction receives local SLEIGH context selecting
- * RETURN P-Code. Ordinary indirect branches and switch-canonicalized LBs
- * retain their existing semantics.
+ * The body need not be one basic block: a helper that returns early is still
+ * proven, because the guarantee comes from XAR7 being unwritten across the whole
+ * region and the region being enterable only at its entry, not from the shape of
+ * the control flow between them.
+ * <p>
+ * Every proven {@code LB *XAR7} receives local SLEIGH context selecting RETURN
+ * P-Code. Ordinary indirect branches and switch-canonicalized LBs retain their
+ * existing semantics.
  */
 public class TMS320C28xFfcReturnAnalyzer extends AbstractAnalyzer {
 
@@ -106,7 +115,7 @@ public class TMS320C28xFfcReturnAnalyzer extends AbstractAnalyzer {
 				switchContext, monitor);
 			if (helper != null) {
 				matches.add(helper);
-				validReturns.add(helper.returnAddress);
+				validReturns.addAll(helper.returnAddresses);
 			}
 		}
 
@@ -123,23 +132,27 @@ public class TMS320C28xFfcReturnAnalyzer extends AbstractAnalyzer {
 
 		AddressSet redisassemble = new AddressSet();
 		for (FfcHelper helper : matches) {
-			Instruction terminal = listing.getInstructionAt(helper.returnAddress);
-			if (terminal == null || BigInteger.ONE.equals(context.getValue(returnContext,
-				terminal.getMinAddress(), false))) {
-				continue;
-			}
-			try {
-				listing.clearCodeUnits(terminal.getMinAddress(), terminal.getMaxAddress(), false);
-				context.setValue(returnContext, terminal.getMinAddress(), terminal.getMaxAddress(),
-					BigInteger.ONE);
-				redisassemble.add(terminal.getMinAddress());
-				Msg.info(this,
-					"recognized FFC helper return at " + helper.returnAddress + " entry=" +
-						helper.entryAddress + " callers=" + helper.callerCount + " instructions=" +
-						helper.instructionCount);
-			}
-			catch (ContextChangeException exception) {
-				log.appendException(exception);
+			for (Address returnAddress : helper.returnAddresses) {
+				Instruction terminal = listing.getInstructionAt(returnAddress);
+				if (terminal == null || BigInteger.ONE.equals(context.getValue(returnContext,
+					terminal.getMinAddress(), false))) {
+					continue;
+				}
+				try {
+					listing.clearCodeUnits(terminal.getMinAddress(), terminal.getMaxAddress(),
+						false);
+					context.setValue(returnContext, terminal.getMinAddress(),
+						terminal.getMaxAddress(), BigInteger.ONE);
+					redisassemble.add(terminal.getMinAddress());
+					Msg.info(this,
+						"recognized FFC helper return at " + returnAddress + " entry=" +
+							helper.entryAddress + " callers=" + helper.callerCount +
+							" instructions=" + helper.instructionCount + " returns=" +
+							helper.returnAddresses.size());
+				}
+				catch (ContextChangeException exception) {
+					log.appendException(exception);
+				}
 			}
 		}
 		for (Instruction terminal : revocations) {
@@ -191,35 +204,79 @@ public class TMS320C28xFfcReturnAnalyzer extends AbstractAnalyzer {
 			return null;
 		}
 
-		List<Instruction> body = new ArrayList<>();
-		Instruction current = first;
-		for (int count = 0; count < MAX_HELPER_INSTRUCTIONS; count++) {
+		// Bounded closure over the helper's OWN control flow, not a straight line.
+		//
+		// The proof never needed the body to be a single basic block. What it needs is
+		// that XAR7 is unwritten everywhere in the region and that the region can only
+		// be entered at `entry` (checked below); under those two conditions every
+		// `LB *XAR7` inside it necessarily branches to the address the FFC stored,
+		// whatever the internal control flow looks like.
+		//
+		// Requiring one straight-line exit rejected an entire shape TI emits freely:
+		// the compare/shift helpers that return early. Measured on a production PMR
+		// image, one of the two real FFC helpers is exactly that -- a 64-bit compare
+		// with an `SB ...,NEQ` over a second `LB *XAR7`.
+		Map<Address, Instruction> body = new LinkedHashMap<>();
+		List<Address> returns = new ArrayList<>();
+		Deque<Instruction> pending = new ArrayDeque<>();
+		pending.add(first);
+		while (!pending.isEmpty()) {
 			monitor.checkCancelled();
-			if (current == null) {
+			Instruction current = pending.poll();
+			if (body.containsKey(current.getMinAddress())) {
+				continue;
+			}
+			if (body.size() >= MAX_HELPER_INSTRUCTIONS) {
 				return null;
 			}
-			body.add(current);
+			body.put(current.getMinAddress(), current);
+
 			if (isXar7Branch(current)) {
+				// The switch canonicalizer owns this opcode when it has claimed it,
+				// and its context bit outranks this analyzer.
 				if (BigInteger.ONE.equals(program.getProgramContext().getValue(switchContext,
 					current.getMinAddress(), false))) {
 					return null;
 				}
-				if (!hasExclusiveBodyIngress(program, body)) {
-					return null;
-				}
-				return new FfcHelper(entry, current.getMinAddress(), callers.size(), body.size());
+				returns.add(current.getMinAddress());
+				continue;   // an exit: nothing flows past it
 			}
-			if (writesRegister(current, "XAR7") || hasNonFallthroughFlow(current)) {
+			if (writesRegister(current, "XAR7")) {
+				return null;
+			}
+			// A call may clobber XAR7 (it is killedbycall), and a computed transfer has
+			// no enumerable successor, so neither can be carried across. A terminal that
+			// is not one of our exits ends a path we cannot account for. All three
+			// simply fail the proof, exactly as the straight-line walk failed them.
+			FlowType flow = current.getFlowType();
+			if (flow.isCall() || flow.isTerminal() || flow.isComputed()) {
 				return null;
 			}
 
-			Instruction next = contiguousNext(current);
-			if (next == null || !next.getMinAddress().equals(current.getFallThrough())) {
-				return null;
+			for (Address target : current.getFlows()) {
+				Instruction next = listing.getInstructionAt(target);
+				if (next == null) {
+					return null;
+				}
+				pending.add(next);
 			}
-			current = next;
+			Address fallThrough = current.getFallThrough();
+			if (fallThrough != null) {
+				Instruction next = listing.getInstructionAt(fallThrough);
+				if (next == null) {
+					return null;
+				}
+				pending.add(next);
+			}
+			else if (current.getFlows().length == 0) {
+				return null;   // no successor at all, and not an exit
+			}
 		}
-		return null;
+
+		if (returns.isEmpty() || !hasExclusiveBodyIngress(program, entry, body.keySet())) {
+			return null;
+		}
+		return new FfcHelper(entry, returns, callers.size(), body.size());
 	}
 
 	private static boolean hasExclusiveFfcEntry(Program program, Address entry,
@@ -249,15 +306,30 @@ public class TMS320C28xFfcReturnAnalyzer extends AbstractAnalyzer {
 		return !observedCallers.isEmpty() && observedCallers.equals(expectedCallers);
 	}
 
-	private static boolean hasExclusiveBodyIngress(Program program, List<Instruction> body) {
-		Set<Address> bodyAddresses = new HashSet<>();
-		for (Instruction instruction : body) {
-			bodyAddresses.add(instruction.getMinAddress());
-		}
-		for (int i = 1; i < body.size(); i++) {
-			Instruction instruction = body.get(i);
+	/**
+	 * True when nothing outside {@code bodyAddresses} can reach any of it except at
+	 * {@code entry} (whose ingress is proven against the FFC callers separately).
+	 * <p>
+	 * Both ways in have to be closed. A recorded flow reference covers branches and
+	 * calls; plain FALL-THROUGH is not a reference, so it is checked directly against
+	 * the preceding instruction. The straight-line walk this replaced got the second
+	 * one for free, by being contiguous from the entry and testing only the entry.
+	 */
+	private static boolean hasExclusiveBodyIngress(Program program, Address entry,
+			Set<Address> bodyAddresses) {
+		Listing listing = program.getListing();
+		for (Address address : bodyAddresses) {
+			if (address.equals(entry)) {
+				continue;
+			}
+			Instruction instruction = listing.getInstructionAt(address);
+			Instruction previous = instruction == null ? null : instruction.getPrevious();
+			if (previous != null && !bodyAddresses.contains(previous.getMinAddress()) &&
+				address.equals(previous.getFallThrough())) {
+				return false;
+			}
 			ReferenceIterator references = program.getReferenceManager()
-				.getReferencesTo(instruction.getMinAddress());
+				.getReferencesTo(address);
 			while (references.hasNext()) {
 				Reference reference = references.next();
 				if (reference.getReferenceType().isFlow() &&
@@ -289,11 +361,6 @@ public class TMS320C28xFfcReturnAnalyzer extends AbstractAnalyzer {
 		// has one. Match the indirect form on that shape rather than an XAR7 operand.
 		return isMnemonic(instruction, "lb") && instruction.getNumOperands() == 0 &&
 			instruction.toString().toUpperCase().endsWith("*XAR7");
-	}
-
-	private static boolean hasNonFallthroughFlow(Instruction instruction) {
-		return instruction.getFlowType().isCall() || instruction.getFlowType().isJump() ||
-			instruction.getFlowType().isTerminal() || instruction.getFlows().length != 0;
 	}
 
 	private static boolean hasFallthroughInto(Instruction instruction) {
@@ -341,23 +408,17 @@ public class TMS320C28xFfcReturnAnalyzer extends AbstractAnalyzer {
 			.equalsIgnoreCase("*" + registerName);
 	}
 
-	private static Instruction contiguousNext(Instruction instruction) {
-		Instruction next = instruction.getNext();
-		return next != null && instruction.getMaxAddress().next().equals(next.getMinAddress())
-				? next
-				: null;
-	}
-
 	private static final class FfcHelper {
 		private final Address entryAddress;
-		private final Address returnAddress;
+		/** Every proven {@code LB *XAR7} in the body; a helper may return early. */
+		private final List<Address> returnAddresses;
 		private final int callerCount;
 		private final int instructionCount;
 
-		private FfcHelper(Address entryAddress, Address returnAddress, int callerCount,
+		private FfcHelper(Address entryAddress, List<Address> returnAddresses, int callerCount,
 				int instructionCount) {
 			this.entryAddress = entryAddress;
-			this.returnAddress = returnAddress;
+			this.returnAddresses = returnAddresses;
 			this.callerCount = callerCount;
 			this.instructionCount = instructionCount;
 		}
