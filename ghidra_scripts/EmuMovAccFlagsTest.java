@@ -144,8 +144,22 @@ public class EmuMovAccFlagsTest extends GhidraScript {
             movhAtAxAccShN(emu, sp, LOC_AL, 0x10000000L, 3L, 0x8000L, 1, 0,
                 "MOVH @AL,ACC<<#3 : ACC=0x10000000 -> AL=0x8000, N=1 (2-word)");
 
+            // 13. MOVL @ACC,P pm_shift=0 (op_hi8=0xA9, loc_full8=0xA9). Same class as
+            // the MOVL @ACC,ACC split above but the source is a real register that
+            // must land in ACC per spec (SPRU430F p.303 "value of ACC after the load").
+            // Firmware sweep found 245 aligned-word sites -- this is not a paper case.
+            movlAtAccSrc(emu, sp, /*op*/0xA9A9L, /*srcReg*/"P", 0x80000000L, 1, 0,
+                "MOVL @ACC,P : P=0x80000000 -> ACC=P, N=1 (issue #110 follow-up)");
+            movlAtAccSrc(emu, sp, 0xA9A9L, "P", 0L, 0, 1,
+                "MOVL @ACC,P : P=0 -> ACC=0, Z=1");
+            // 14. MOVL @ACC,XT (op_hi8=0xAB, loc_full8=0xA9). No pm_shift. 135 sites.
+            movlAtAccSrc(emu, sp, 0xABA9L, "XT", 0x80000000L, 1, 0,
+                "MOVL @ACC,XT : XT=0x80000000 -> ACC=XT, N=1 (issue #110 follow-up)");
+            movlAtAccSrc(emu, sp, 0xABA9L, "XT", 0L, 0, 1,
+                "MOVL @ACC,XT : XT=0 -> ACC=0, Z=1");
+
             if (failures == 0) {
-                println("EmuMovAccFlagsTest.java> PASS: MOV family N/Z audit (issue #110, 14 cases)");
+                println("EmuMovAccFlagsTest.java> PASS: MOV family N/Z audit (issue #110, 18 cases)");
             } else {
                 println("EmuMovAccFlagsTest.java> FAIL: " + failures + " check(s) failed");
             }
@@ -334,6 +348,22 @@ public class EmuMovAccFlagsTest extends GhidraScript {
         if (!emu.step(monitor)) { fail(what, emu.getLastError()); return; }
         String reg = locByte == LOC_AH ? "AH" : "AL";
         expect(what + " [" + reg + "]", emu.readRegister(reg).longValue() & 0xffffL, wantAX);
+        expect(what + " [N]", emu.readRegister("N").longValue(), wantN);
+        expect(what + " [Z]", emu.readRegister("Z").longValue(), wantZ);
+    }
+
+    private void movlAtAccSrc(EmulatorHelper emu, AddressSpace sp, long opWord,
+            String srcReg, long srcVal, long wantN, long wantZ, String what) throws Exception {
+        emu.writeRegister(srcReg, srcVal);
+        // Pre-seed ACC to a distinctive junk value so the assertion proves ACC was
+        // actually overwritten by SRC (not just tested with stale bits).
+        emu.writeRegister("ACC", 0x12345678L);
+        seedFlags(emu, wantN, wantZ);
+        long here = codeCursor; codeCursor += 4;
+        emu.writeMemoryValue(sp.getAddress(here * 2), 2, opWord);
+        emu.writeRegister("PC", here);
+        if (!emu.step(monitor)) { fail(what, emu.getLastError()); return; }
+        expect(what + " [ACC]", emu.readRegister("ACC").longValue() & 0xffffffffL, srcVal);
         expect(what + " [N]", emu.readRegister("N").longValue(), wantN);
         expect(what + " [Z]", emu.readRegister("Z").longValue(), wantZ);
     }

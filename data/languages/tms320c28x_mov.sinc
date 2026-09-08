@@ -121,6 +121,20 @@
 }
 
 # MOVL loc32, P     1010 1001 LLLL LLLL
+# SPRU430F p.303: when loc32=@ACC the store lands in the ACC register alias, which
+# effectively does `ACC = P<<PM` and updates N/Z from the resulting ACC. Splitting
+# on pm_shift mirrors the MOVL ACC,P<<PM in tms320c28x_more.sinc so both encodings
+# of the "P->ACC + flags" primitive lower to the same p-code. Firmware sweep (issue
+# #110 follow-up): 245 aligned-word occurrences across two production images.
+:MOVL "@ACC", Preg  is rpt_phase=1 & pm_shift=0 & op_hi8=0xA9 & ctx_AMODE=0 & loc_full8=0b10101001 & Preg  {
+    ACC = P;
+    setNZ32(ACC);
+}
+:MOVL "@ACC", Preg  is rpt_phase=1 & pm_shift=1 & op_hi8=0xA9 & ctx_AMODE=0 & loc_full8=0b10101001 & Preg  {
+    local v:4; pshift(v);
+    ACC = v;
+    setNZ32(ACC);
+}
 :MOVL loc32, Preg   is rpt_phase=1 & op_hi8=0xA9 & loc32 & Preg  {
     loc32 = P;
 }
@@ -131,6 +145,14 @@
 }
 
 # MOVL loc32, XT    1010 1011 LLLL LLLL
+# SPRU430F p.305: when loc32=@ACC the store lands in the ACC register alias,
+# so the operation becomes `ACC = XT; setNZ32(ACC)`. No PM shift here (XT has
+# no product-shift mode). Firmware sweep (issue #110 follow-up): 135 aligned-
+# word occurrences across two production images.
+:MOVL "@ACC", XTreg  is rpt_phase=1 & op_hi8=0xAB & ctx_AMODE=0 & loc_full8=0b10101001 & XTreg  {
+    ACC = XT;
+    setNZ32(ACC);
+}
 :MOVL loc32, XTreg  is rpt_phase=1 & op_hi8=0xAB & loc32 & XTreg  {
     loc32 = XT;
 }
