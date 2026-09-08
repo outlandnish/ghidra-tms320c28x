@@ -160,6 +160,9 @@ device memory and label its peripheral frames so XREFs resolve to readable regis
 - **[docs/SLEIGH-IDIOMS.md](docs/SLEIGH-IDIOMS.md)** — SLEIGH idioms & gotchas (each
   backed by a real compiler error). Read before writing constructors.
 - **[docs/TESTING.md](docs/TESTING.md)** — the disasm regression harness.
+- **[docs/ANALYSIS-MIGRATION.md](docs/ANALYSIS-MIGRATION.md)** — moving existing analysis
+  onto an updated module: decode changes only take effect on re-disassembly, so this is a
+  fresh import plus replaying the documentation onto it.
 
 ## Status
 
