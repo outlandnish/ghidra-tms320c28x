@@ -54,7 +54,7 @@
 param(
   [string]$Ghidra = $env:GHIDRA_INSTALL_DIR,
   [string]$Module = (Split-Path -Parent $PSScriptRoot),
-  [string[]]$Cases = @("addr_modes", "fpu_display", "fpu_parallel", "fpu_flags", "c2xlp",
+  [string[]]$Cases = @("addr_modes", "modulo_addr", "fpu_display", "fpu_parallel", "fpu_flags", "c2xlp",
                        "cla_all", "traps", "mac_ext56", "shifts", "bitops", "loops_intr",
                        "fw_gaps")
 )

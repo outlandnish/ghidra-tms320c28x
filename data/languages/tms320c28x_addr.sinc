@@ -131,6 +131,38 @@ loc16: "*BR0++"  is ctx_AMODE=0 & loc_full8=0b10101110 { export *[ram]:2 XAR0; }
 loc16: "*BR0--"  is ctx_AMODE=0 & loc_full8=0b10101111 { export *[ram]:2 XAR0; }
 loc16: "*,ARP"loc_arp  is ctx_AMODE=0 & loc_mode5=0b10110 & loc_areg & loc_arp { export *[ram]:2 loc_areg; }
 
+# --- C2xLP ARP-implicit indirect modes (Table 5-1, "C2xLP Indirect") -------------
+# The pointer register is whatever ARP currently selects, so the encoding carries
+# no register selector. We don't track ARP as state, so semantics is approximate
+# via XAR0 (same stand-in the *BR0++ modes use above), and the post-modifications
+# (`++`, `--`, `0++`, `0--`) are decode-only. Missing these made every hand-ported
+# C2xLP source-compat instruction (SUB ACC,*, RPT *0++, etc.) fail to decode --
+# the fw-parity sweep flagged 4+ sites in the DIR CPU2 image (issue #127).
+loc16: "*"       is ctx_AMODE=0 & loc_full8=0b10111000 { export *[ram]:2 XAR0; }
+loc16: "*++"     is ctx_AMODE=0 & loc_full8=0b10111001 { export *[ram]:2 XAR0; }
+loc16: "*--"     is ctx_AMODE=0 & loc_full8=0b10111010 { export *[ram]:2 XAR0; }
+loc16: "*0++"    is ctx_AMODE=0 & loc_full8=0b10111011 { export *[ram]:2 XAR0; }
+loc16: "*0--"    is ctx_AMODE=0 & loc_full8=0b10111100 { export *[ram]:2 XAR0; }
+
+# --- Circular indirect addressing (XAR6, XAR1) -- Table 5-1 §5.6.3 ---------------
+# *AR6%++: address = XAR6, then AR6 post-increments with a circular wrap keyed
+# by AR1[7:0]. Per SPRU430F: if AR6[7:0] == AR1[7:0] then AR6[7:0] = 0 (upper 8
+# bits of AR6 preserved); else AR6 += 1 (for loc16) or += 2 (for loc32). The
+# check is on the PRE-increment low byte. Only AR6 (== XAR6[15:0]) participates;
+# XAR6[31:16] is never touched. AR1 is a runtime value -- constant context is
+# NOT required; the check reads the current AR1.
+# Emulation: covered by EmuModuloTest (wrap, no-wrap, upper-byte preserve).
+loc16: "*AR6%++"  is ctx_AMODE=0 & loc_full8=0b10111111 {
+    local a:4 = XAR6;
+    if (AR6:1 == AR1:1) goto <wrap>;
+    AR6 = AR6 + 1;
+    goto <done>;
+  <wrap>
+    AR6 = AR6 & 0xFF00;
+  <done>
+    export *[ram]:2 a;
+}
+
 # =============================================================================
 # loc32 : 32-bit (2-word) memory/register operand.  AMODE = 0.
 # Each constructor exports a size-4 operand; pointer deltas are 2 words.
@@ -196,3 +228,20 @@ loc32: "@XT"   is ctx_AMODE=0 & loc_full8=0b10101100 { export XT;  }
 loc32: "*BR0++"  is ctx_AMODE=0 & loc_full8=0b10101110 { export *[ram]:4 XAR0; }
 loc32: "*BR0--"  is ctx_AMODE=0 & loc_full8=0b10101111 { export *[ram]:4 XAR0; }
 loc32: "*,ARP"loc_arp  is ctx_AMODE=0 & loc_mode5=0b10110 & loc_areg & loc_arp { export *[ram]:4 loc_areg; }
+
+# --- C2xLP ARP-implicit + circular indirect modes — 32-bit (see loc16 notes) ------
+loc32: "*"       is ctx_AMODE=0 & loc_full8=0b10111000 { export *[ram]:4 XAR0; }
+loc32: "*++"     is ctx_AMODE=0 & loc_full8=0b10111001 { export *[ram]:4 XAR0; }
+loc32: "*--"     is ctx_AMODE=0 & loc_full8=0b10111010 { export *[ram]:4 XAR0; }
+loc32: "*0++"    is ctx_AMODE=0 & loc_full8=0b10111011 { export *[ram]:4 XAR0; }
+loc32: "*0--"    is ctx_AMODE=0 & loc_full8=0b10111100 { export *[ram]:4 XAR0; }
+loc32: "*AR6%++" is ctx_AMODE=0 & loc_full8=0b10111111 {
+    local a:4 = XAR6;
+    if (AR6:1 == AR1:1) goto <wrap>;
+    AR6 = AR6 + 2;
+    goto <done>;
+  <wrap>
+    AR6 = AR6 & 0xFF00;
+  <done>
+    export *[ram]:4 a;
+}
