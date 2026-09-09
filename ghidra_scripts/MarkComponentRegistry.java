@@ -198,18 +198,27 @@ public class MarkComponentRegistry extends GhidraScript {
     // -Dc28x.reg.dryRun=true from an earlier invocation silently turns the next "apply" into
     // another dry run that still reports success. Wiping this script's namespace first makes the
     // arguments of THIS invocation the whole truth.
+    // Clear only what a PREVIOUS RUN OF THIS SCRIPT promoted -- not every c28x.reg.* property.
+    // A blanket clear also destroys a genuine JVM -D, which on Windows is the ONLY way to set
+    // these: analyzeHeadless.bat truncates a script argument at its first '=', so -Dc28x.reg.x=1
+    // arrives as a bare -Dc28x.reg.x and the documented route is JAVA_TOOL_OPTIONS instead.
+    // Wiping those made every documented -Dc28x.reg.* override silently no-op under headless --
+    // the same defect already fixed in EmulateStartup.
+    private static final Set<String> PROMOTED = new HashSet<>();
+
     void promoteDashDArgs() {
-        final String prefix = "c28x.reg.";
-        for (String k : new ArrayList<>(System.getProperties().stringPropertyNames()))
-            if (k.startsWith(prefix)) System.clearProperty(k);
+        for (String k : PROMOTED) System.clearProperty(k);
+        PROMOTED.clear();
         String[] args = getScriptArgs();
         if (args == null) return;
         for (String a : args) {
             if (a == null || !a.startsWith("-D")) continue;
             String kv = a.substring(2);
             int eq = kv.indexOf('=');
-            if (eq > 0) System.setProperty(kv.substring(0, eq), kv.substring(eq + 1));
-            else if (!kv.isEmpty()) System.setProperty(kv, "true");
+            String k = eq > 0 ? kv.substring(0, eq) : kv;
+            if (k.isEmpty()) continue;
+            System.setProperty(k, eq > 0 ? kv.substring(eq + 1) : "true");
+            PROMOTED.add(k);
         }
     }
 
