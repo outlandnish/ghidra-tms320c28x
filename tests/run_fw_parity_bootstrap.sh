@@ -56,35 +56,31 @@ module=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 Fw=""; Base=0x82000; MaxSpan=4096; OutDir=""
 seeds=()
 seeds_file=""
+seeds_project=""
+seeds_program=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    -Fw)      Fw=$2;         shift 2;;
-    -Base)    Base=$2;       shift 2;;
-    -Seed)    seeds+=("$2"); shift 2;;
-    -Seeds)   seeds_file=$2; shift 2;;
-    -MaxSpan) MaxSpan=$2;    shift 2;;
-    -OutDir)  OutDir=$2;     shift 2;;
+    -Fw)           Fw=$2;            shift 2;;
+    -Base)         Base=$2;          shift 2;;
+    -Seed)         seeds+=("$2");    shift 2;;
+    -Seeds)        seeds_file=$2;    shift 2;;
+    -SeedsProject) seeds_project=$2; shift 2;;
+    -SeedsProgram) seeds_program=$2; shift 2;;
+    -MaxSpan)      MaxSpan=$2;       shift 2;;
+    -OutDir)       OutDir=$2;        shift 2;;
     *) echo "unknown arg: $1" >&2; exit 2;;
   esac
 done
-[ -n "$Fw" ] || { echo "usage: $0 -Fw <swapped.bin> -Base <wordaddr> -Seed <wordaddr> [-Seed ...]" >&2; exit 2; }
-[ -f "$Fw" ] || { echo "no such firmware image: $Fw" >&2; exit 1; }
-
-if [ -n "$seeds_file" ]; then
-  while IFS= read -r line; do
-    line=${line%%#*}
-    line=$(printf '%s' "$line" | awk '{$1=$1; print $1}')  # trim + take first col
-    [ -z "$line" ] && continue
-    seeds+=("$line")
-  done < "$seeds_file"
+if [ -n "$seeds_project" ] && [ -n "$seeds_program" ]; then
+  analyzed_mode=1
+else
+  analyzed_mode=0
+  [ -n "$Fw" ] || { echo "flash-only mode: -Fw <bin> is required (or use -SeedsProject + -SeedsProgram for the analyzed-program mode)." >&2; exit 2; }
+  [ -f "$Fw" ] || { echo "no such firmware image: $Fw" >&2; exit 1; }
 fi
-[ "${#seeds[@]}" -gt 0 ] || { echo "no seeds -- give -Seed or -Seeds" >&2; exit 2; }
 
 base=$((Base))
 maxSpan=$((MaxSpan))
-img_size=$(stat -c%s "$Fw" 2>/dev/null || stat -f%z "$Fw")
-img_words=$((img_size / 2))
-img_end=$((base + img_words))
 
 work=$(mktemp -d -t c28x-fwbs-XXXXXX)
 trap 'rm -rf "$work"' EXIT
@@ -94,6 +90,99 @@ if [ -z "$OutDir" ]; then
   OutDir="$module/tests/out/fw_bootstrap"
 fi
 mkdir -p "$OutDir"
+
+# -SeedsProject / -SeedsProgram chain the seed extractor + image extractor into
+# the sweep so callers don't have to remember to run either by hand. Requires
+# a project that has been through SeedFunctions signal D (c_int00 exists),
+# Materialize{Sections,CopyTable} (ramfunc bytes present at run addrs), and
+# MarkComponentRegistry's PIE + registry passes (seed sources fire). Missing
+# any of these produces near-empty outputs -- the throws below catch the two
+# hard cases (no seeds / no image bytes).
+image_bin=""
+image_map=""
+functions_tsv=""
+if [ "$analyzed_mode" -eq 1 ]; then
+  seeds_auto="$OutDir/seeds_auto.tsv"
+  image_bin="$OutDir/image.bin"
+  image_map="$OutDir/image_map.tsv"
+  functions_tsv="$OutDir/functions.tsv"
+  proj_dir=$(dirname "$seeds_project")
+  proj_name=$(basename "$seeds_project" .gpr)
+  ws_seeds="$work/seedxtract"
+  mkdir -p "$ws_seeds/scripts"
+  cp "$module/ghidra_scripts/DumpFwParitySeeds.java"     "$ws_seeds/scripts/"
+  cp "$module/ghidra_scripts/DumpFwParityImage.java"     "$ws_seeds/scripts/"
+  cp "$module/ghidra_scripts/DumpFwParityFunctions.java" "$ws_seeds/scripts/"
+  JAVA_TOOL_OPTIONS="-Dc28x.parity.seeds.out=$seeds_auto -Dc28x.parity.image.bytes=$image_bin -Dc28x.parity.image.map=$image_map -Dc28x.parity.functions.out=$functions_tsv" \
+    "$GHIDRA_INSTALL_DIR/support/analyzeHeadless" "$proj_dir" "$proj_name" \
+      -process "$seeds_program" -readOnly -noanalysis \
+      -scriptPath "$ws_seeds/scripts" \
+      -postScript DumpFwParitySeeds.java \
+      -postScript DumpFwParityImage.java \
+      -postScript DumpFwParityFunctions.java \
+      -max-cpu 2 >/dev/null 2>&1 || true
+  [ -f "$seeds_auto" ]    || { echo "seed extractor produced no output -- is $seeds_program in project $seeds_project analyzed?" >&2; exit 1; }
+  [ -f "$image_bin" ]     || { echo "image extractor produced no output -- is $seeds_program in project $seeds_project analyzed?" >&2; exit 1; }
+  [ -f "$functions_tsv" ] || { echo "functions extractor produced no output" >&2; exit 1; }
+  seeds_file_extra="$seeds_auto"
+else
+  seeds_file_extra=""
+fi
+
+for sf in "$seeds_file_extra" "$seeds_file"; do
+  [ -z "$sf" ] && continue
+  while IFS= read -r line; do
+    line=${line%%#*}
+    line=$(printf '%s' "$line" | awk '{$1=$1; print $1}')  # trim + take first col
+    [ -z "$line" ] && continue
+    seeds+=("$line")
+  done < "$sf"
+done
+[ "${#seeds[@]}" -gt 0 ] || { echo "no seeds -- give -Seed, -Seeds, or -SeedsProject+-SeedsProgram" >&2; exit 2; }
+echo "Loaded ${#seeds[@]} seed(s)"
+
+# ---------- image cache + word-address lookup --------------------------------
+# In FLASH-ONLY mode there is one implicit block at $base containing the raw
+# firmware. In ANALYZED mode we read image_map.tsv (from DumpFwParityImage) into
+# parallel arrays: img_block_start / img_block_len / img_block_off. The slice
+# helper walks them to find the block containing a given word address, and
+# `dd`s from image.bin (or the raw firmware in flash-only mode) accordingly.
+img_block_start=(); img_block_len=(); img_block_off=(); img_block_name=()
+if [ "$analyzed_mode" -eq 1 ]; then
+  img_source="$image_bin"
+  while IFS=$'\t' read -r ws wl bo nm; do
+    [ -z "$ws" ] && continue
+    case "$ws" in \#*) continue;; esac
+    img_block_start+=("$((ws))")
+    img_block_len+=("$wl")
+    img_block_off+=("$bo")
+    img_block_name+=("$nm")
+  done < "$image_map"
+  [ "${#img_block_start[@]}" -gt 0 ] || { echo "image_map.tsv had no valid rows: $image_map" >&2; exit 1; }
+  echo "Loaded image: $(stat -c%s "$img_source") bytes across ${#img_block_start[@]} initialized block(s)"
+else
+  img_source="$Fw"
+  fw_size=$(stat -c%s "$Fw" 2>/dev/null || stat -f%z "$Fw")
+  img_block_start+=("$((Base))")
+  img_block_len+=("$((fw_size / 2))")
+  img_block_off+=(0)
+  img_block_name+=("flash")
+fi
+
+# resolve_word <wordAddr> -> sets out_off, out_avail, out_name (or returns 1).
+resolve_word() {
+  local wa=$1 i n=${#img_block_start[@]}
+  for (( i=0; i<n; i++ )); do
+    local s=${img_block_start[$i]} l=${img_block_len[$i]} o=${img_block_off[$i]}
+    if [ "$wa" -ge "$s" ] && [ "$wa" -lt "$((s + l))" ]; then
+      out_off=$(( o + (wa - s) * 2 ))
+      out_avail=$(( s + l - wa ))
+      out_name=${img_block_name[$i]}
+      return 0
+    fi
+  done
+  return 1
+}
 
 # ---------- BFS with dis2000 as disassembler --------------------------------
 # Records:
@@ -123,17 +212,15 @@ call_re='^(LCR|LC|FFC)$'
 decode_from() {  # <seed_word_hex> <source_tag>
   local seed_hex="$1" src="$2"
   local seed=$((16#${seed_hex#0x}))
-  local off=$(( (seed - base) * 2 ))
-  if [ "$off" -lt 0 ] || [ $((off + 2)) -gt "$img_size" ]; then
-    printf '%s\tOOR\t0\t%s\n' "$seed_hex" "$src" >> "$regions_tsv"
+  if ! resolve_word "$seed"; then
+    printf '%s\t0\tOOR:%s\n' "$seed_hex" "$src" >> "$regions_tsv"
     return
   fi
-  local words_to_end=$(( img_words - (seed - base) ))
-  local span=$(( maxSpan < words_to_end ? maxSpan : words_to_end ))
+  local span=$(( maxSpan < out_avail ? maxSpan : out_avail ))
   local bin="$work/reg_${seed_hex}.bin"
   local asm="$work/reg_${seed_hex}.asm"
   local obj="$work/reg_${seed_hex}.obj"
-  dd if="$Fw" of="$bin" bs=1 skip="$off" count=$((span * 2)) status=none
+  dd if="$img_source" of="$bin" bs=1 skip="$out_off" count=$((span * 2)) status=none
   {
     printf '        .text\n'
     hexdump -v -e '1/2 "%04x\n"' "$bin" | awk '{ printf "        .word 0x%s\n", $1 }'
@@ -233,10 +320,12 @@ while [ "${#queue[@]}" -gt 0 ]; do
     [ -z "$t" ] && continue
     t_norm=$(printf '0x%x' $((16#${t#0x})))
     [ -n "${visited[$t_norm]:-}" ] && continue
-    # Prune out-of-image early so the queue does not fill with nonsense pointed
-    # to by mis-decoded operand words.
+    # Any target that lives in an initialized block (flash or materialized
+    # RAM) is fair game for BFS to visit; anything else is an unresolved OOR
+    # (indirect target the compiler baked in, or a call into MMIO). Same
+    # check we do at seed-visit time in decode_from.
     t_dec=$((16#${t_norm#0x}))
-    if [ "$t_dec" -lt "$base" ] || [ "$t_dec" -ge "$img_end" ]; then
+    if ! resolve_word "$t_dec"; then
       printf 'oor-call\t%s\tfrom=%s\n' "$t_norm" "$seed_norm" >> "$unresolved_tsv"
       continue
     fi
@@ -246,25 +335,32 @@ done
 
 echo "BFS: $processed seed(s) processed, $(wc -l < "$regions_tsv") region(s) recorded"
 
-# ---------- our-side decode: ONE headless import for all regions ------------
+# ---------- our-side decode: ONE headless call for all regions ------------
+# ANALYZED mode: -process the analyzed program so RAM-resident ramfunc bytes
+# are readable at their run addresses (a fresh .bin import has zeroes there).
+# FLASH-ONLY mode: -import the raw .bin at $Base with BinaryLoader.
 ws="$work/run"
-mkdir -p "$ws/proj" "$ws/scripts"
+mkdir -p "$ws/scripts"
 cp "$module/ghidra_scripts/DumpFwParityOurs.java" "$ws/scripts/"
 our_dump="$OutDir/our_dump.tsv"
+rm -f "$our_dump"
 
-# BinaryLoader with -loader-block-base for the correct absolute base. Without it
-# every region's start_word points outside the (address-0) block and every entry
-# reports MISS_MEM. -loader-block-name gives the block a readable name in the
-# listing (does not affect addressing).
-#
-# The base is in BYTES, so multiply by 2 for the wordsize-2 ram space.
-base_word=$(printf '0x%x' "$base")
-JAVA_TOOL_OPTIONS="-Dc28x.parity.regions.in=$regions_tsv -Dc28x.parity.regions.out=$our_dump" \
-  "$GHIDRA_INSTALL_DIR/support/analyzeHeadless" "$ws/proj" "bs_$(basename "$Fw" .bin)" \
-    -import "$Fw" -processor "TMS320C28x:LE:32:default" \
-    -loader BinaryLoader -loader-baseAddr "$base_word" \
-    -scriptPath "$ws/scripts" -postScript DumpFwParityOurs.java -noanalysis -overwrite \
-    -max-cpu 2 >/dev/null 2>&1 || true
+if [ "$analyzed_mode" -eq 1 ]; then
+  JAVA_TOOL_OPTIONS="-Dc28x.parity.regions.in=$regions_tsv -Dc28x.parity.regions.out=$our_dump" \
+    "$GHIDRA_INSTALL_DIR/support/analyzeHeadless" "$proj_dir" "$proj_name" \
+      -process "$seeds_program" -readOnly -noanalysis \
+      -scriptPath "$ws/scripts" -postScript DumpFwParityOurs.java \
+      -max-cpu 2 >/dev/null 2>&1 || true
+else
+  mkdir -p "$ws/proj"
+  base_word=$(printf '0x%x' "$base")
+  JAVA_TOOL_OPTIONS="-Dc28x.parity.regions.in=$regions_tsv -Dc28x.parity.regions.out=$our_dump" \
+    "$GHIDRA_INSTALL_DIR/support/analyzeHeadless" "$ws/proj" "bs_$(basename "$Fw" .bin)" \
+      -import "$Fw" -processor "TMS320C28x:LE:32:default" \
+      -loader BinaryLoader -loader-baseAddr "$base_word" \
+      -scriptPath "$ws/scripts" -postScript DumpFwParityOurs.java -noanalysis -overwrite \
+      -max-cpu 2 >/dev/null 2>&1 || true
+fi
 
 [ -f "$our_dump" ] || { echo "our-side dump did not produce output" >&2; exit 1; }
 
@@ -359,7 +455,43 @@ awk -v titxt="$ti_dump_tsv" -v ourstxt="$our_dump" -f "$report_awk" \
   done
 } > "$OutDir/report_sorted.txt"
 
+# ---------- reachability diff (analyzed mode only) ---------------------------
+# For every region BFS visited (via regions.tsv), check whether our analyzer
+# has a function at that entry. Absence = a function dis2000 reaches from
+# data-side seeds that our analyzer never bound as a function -- usually an
+# inbound call our decoder didn't recognize.
+unrooted_tsv=""
+if [ "$analyzed_mode" -eq 1 ]; then
+  unrooted_tsv="$OutDir/unrooted.tsv"
+  # Load our function set into an associative array; a bash 4+ hashmap lookup
+  # is O(1) per region -- linear scans over $functions_tsv would be O(N*M).
+  declare -A our_fns=()
+  while IFS=$'\t' read -r ew lw nm; do
+    [ -z "$ew" ] && continue
+    case "$ew" in \#*) continue;; esac
+    our_fns[$((ew))]=1
+  done < "$functions_tsv"
+  {
+    printf '# entry_word\tsource_of_reach\n'
+    while IFS=$'\t' read -r ew lw src; do
+      [ -z "$ew" ] && continue
+      case "$src" in OOR:*|ASM_FAIL:*) continue;; esac
+      wa=$((ew))
+      if [ -z "${our_fns[$wa]:-}" ]; then
+        printf '0x%x\t%s\n' "$wa" "$src"
+      fi
+    done < "$regions_tsv"
+  } > "$unrooted_tsv"
+  unrooted_count=$(grep -c '^0x' "$unrooted_tsv" || true)
+  {
+    printf '\n--- REACHABILITY (BFS-visited entries NOT bound as functions: %d) ---\n' "$unrooted_count"
+    grep '^0x' "$unrooted_tsv" | head -30 | sed 's/^/  /'
+  } >> "$OutDir/report_sorted.txt"
+  echo "  reachability: $unrooted_count BFS entries not bound as functions"
+fi
+
 echo "  regions: $regions_tsv"
 echo "  TI dump: $ti_dump_tsv"
 echo "  our dump: $our_dump"
 echo "  report: $OutDir/report_sorted.txt"
+[ -n "$unrooted_tsv" ] && echo "  unrooted: $unrooted_tsv"

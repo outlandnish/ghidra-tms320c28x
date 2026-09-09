@@ -37,16 +37,35 @@
 #        -Seed 0x820e0 [-Seed 0x82f10 ...] [-Seeds seeds.tsv] [-MaxSpan 4096] [-OutDir out\]
 
 param(
-  [Parameter(Mandatory)][string]$Fw,
-  [int]$Base       = 0x82000,
-  [string[]]$Seed  = @(),
-  [string]$Seeds   = "",
-  [int]$MaxSpan    = 4096,
-  [string]$OutDir  = "",
-  [string]$Ghidra  = $env:GHIDRA_INSTALL_DIR,
-  [string]$Ti      = $env:C2000WARE,
-  [string]$Module  = (Split-Path -Parent $PSScriptRoot),
-  [string]$Work    = $null
+  # Two modes:
+  #   FLASH-ONLY: -Fw <bin> -Base <addr> (-Seed | -Seeds). Byte source is the
+  #     raw firmware image; our-side dump runs on a fresh flat import. BFS can
+  #     only reach code that lives in flash -- ramfunc call targets in RAM run
+  #     addresses look out-of-range and are dropped as OOR.
+  #   ANALYZED-PROGRAM: -SeedsProject + -SeedsProgram (against a program that
+  #     has been through SeedFunctions + Materialize{Sections,CopyTable} +
+  #     MarkComponentRegistry). The seed extractor runs, DumpFwParityImage
+  #     dumps ALL initialized blocks (flash + materialized RAM) as one image,
+  #     and BFS + our-side both walk that unified image. This is the mode that
+  #     covers ramfuncs, since ramfunc bytes only exist in the analyzed program.
+  # -Fw stays valid in analyzed-program mode; if given it is ignored in favor
+  # of the extracted image.
+  [string]$Fw           = "",
+  [int]$Base            = 0x82000,
+  [string[]]$Seed       = @(),
+  [string]$Seeds        = "",
+  [string]$SeedsProject = "",
+  [string]$SeedsProgram = "",
+  [int]$MaxSpan         = 4096,
+  # BFS is level-based; with -Parallel N > 1 each level's regions are decoded
+  # by up to N runspaces concurrently. Requires PowerShell 7+ (ForEach-Object
+  # -Parallel); silently falls back to serial when running under Windows PS 5.1.
+  [int]$Parallel        = 1,
+  [string]$OutDir       = "",
+  [string]$Ghidra       = $env:GHIDRA_INSTALL_DIR,
+  [string]$Ti           = $env:C2000WARE,
+  [string]$Module       = (Split-Path -Parent $PSScriptRoot),
+  [string]$Work         = $null
 )
 
 . "$PSScriptRoot\_env.ps1"
@@ -56,7 +75,11 @@ if (-not $PSBoundParameters.ContainsKey('Ti'))     { $Ti     = $env:C2000WARE }
 if (-not $Work) { $Work = Get-C28xScratchRoot -Module $Module -Kind "fwbs" }
 if (-not $Ti)     { throw "Point -Ti (or `$env:C2000WARE / .c28x.env) at the TI CGT install (with bin\asm2000.exe, bin\dis2000.exe)." }
 if (-not $Ghidra) { throw "Point -Ghidra (or `$env:GHIDRA_INSTALL_DIR / .c28x.env) at your Ghidra install." }
-if (-not (Test-Path $Fw)) { throw "no such firmware image: $Fw" }
+$AnalyzedMode = ($SeedsProject -and $SeedsProgram)
+if (-not $AnalyzedMode) {
+  if (-not $Fw) { throw "flash-only mode: -Fw <bin> is required (or use -SeedsProject + -SeedsProgram for the analyzed-program mode)." }
+  if (-not (Test-Path $Fw)) { throw "no such firmware image: $Fw" }
+}
 $ErrorActionPreference = "Stop"
 $TiBin = "$Ti\bin"
 if (-not $OutDir) { $OutDir = Join-Path $Module "tests\out\fw_bootstrap" }
@@ -70,23 +93,116 @@ function Parse-HexAddr([string]$s) {
   if ($t -match '^([0-9a-fA-F]+)$')      { return [Convert]::ToInt32($t, 16) }
   return [int]$t
 }
-foreach ($s in $Seed) {
-  $seedList.Add(@{ addr = (Parse-HexAddr $s); src = "explicit" })
-}
-if ($Seeds) {
-  foreach ($ln in Get-Content $Seeds) {
+function Load-SeedsFile([string]$path, [string]$src) {
+  foreach ($ln in Get-Content $path) {
     $t = ($ln -split '#',2)[0].Trim()
     if (-not $t) { continue }
     $col1 = ($t -split '\s+')[0]
-    $seedList.Add(@{ addr = (Parse-HexAddr $col1); src = "file" })
+    $seedList.Add(@{ addr = (Parse-HexAddr $col1); src = $src }) | Out-Null
   }
 }
-if ($seedList.Count -eq 0) { throw "no seeds -- give -Seed or -Seeds" }
 
-# ---------- image cache ------------------------------------------------------
-$img = [IO.File]::ReadAllBytes($Fw)
-$imgWords = [int]($img.Length / 2)
-$imgEnd = $Base + $imgWords
+# -SeedsProject / -SeedsProgram chain the seed extractor + image extractor into
+# the sweep so users don't have to remember to run either by hand. Requires a
+# project that has been through SeedFunctions signal D (so c_int00 exists),
+# Materialize{Sections,CopyTable} (so ramfunc bytes are present at run addrs),
+# and MarkComponentRegistry's PIE + registry passes (so seed sources fire). If
+# any is missing the extractors still run but emit near-empty outputs -- the
+# throws below catch the two hard cases (no seeds / no image bytes).
+$imageBin = ""
+$imageMap = ""
+$functionsTsv = ""
+if ($AnalyzedMode) {
+  $seedsAuto    = Join-Path $OutDir "seeds_auto.tsv"
+  $imageBin     = Join-Path $OutDir "image.bin"
+  $imageMap     = Join-Path $OutDir "image_map.tsv"
+  $functionsTsv = Join-Path $OutDir "functions.tsv"
+  $projDir  = Split-Path -Parent $SeedsProject
+  $projName = [IO.Path]::GetFileNameWithoutExtension($SeedsProject)
+  $wsSeeds  = Join-Path $Work "seedxtract"
+  Remove-Item -Recurse -Force $wsSeeds -ErrorAction SilentlyContinue
+  New-Item -ItemType Directory -Force "$wsSeeds\scripts" | Out-Null
+  Copy-Item "$Module\ghidra_scripts\DumpFwParitySeeds.java"     "$wsSeeds\scripts\" -Force
+  Copy-Item "$Module\ghidra_scripts\DumpFwParityImage.java"     "$wsSeeds\scripts\" -Force
+  Copy-Item "$Module\ghidra_scripts\DumpFwParityFunctions.java" "$wsSeeds\scripts\" -Force
+  # All three scripts read -D options via getScriptArgs() and System.getProperty.
+  # JAVA_TOOL_OPTIONS is the survivable path for the latter, since analyzeHeadless
+  # drops everything after `=` in the -postScriptArgs CLI form.
+  $savedJTO = $env:JAVA_TOOL_OPTIONS
+  $env:JAVA_TOOL_OPTIONS = "-Dc28x.parity.seeds.out=$seedsAuto -Dc28x.parity.image.bytes=$imageBin -Dc28x.parity.image.map=$imageMap -Dc28x.parity.functions.out=$functionsTsv"
+  Push-Location $wsSeeds
+  $prevEA = $ErrorActionPreference; $ErrorActionPreference = "Continue"
+  try {
+    & "$Ghidra\support\analyzeHeadless.bat" $projDir $projName `
+      -process $SeedsProgram -readOnly -noanalysis `
+      -scriptPath "$wsSeeds\scripts" `
+      -postScript DumpFwParitySeeds.java `
+      -postScript DumpFwParityImage.java `
+      -postScript DumpFwParityFunctions.java `
+      -max-cpu 2 2>&1 | Out-Null
+  } finally {
+    $ErrorActionPreference = $prevEA
+    Pop-Location
+    $env:JAVA_TOOL_OPTIONS = $savedJTO
+  }
+  if (-not (Test-Path $seedsAuto)) { throw "seed extractor produced no output -- is $SeedsProgram in project $SeedsProject analyzed?" }
+  if (-not (Test-Path $imageBin) -or -not (Test-Path $imageMap)) { throw "image extractor produced no output -- is $SeedsProgram in project $SeedsProject analyzed?" }
+  if (-not (Test-Path $functionsTsv)) { throw "functions extractor produced no output" }
+  Load-SeedsFile $seedsAuto "auto"
+}
+foreach ($s in $Seed) {
+  $seedList.Add(@{ addr = (Parse-HexAddr $s); src = "explicit" }) | Out-Null
+}
+if ($Seeds) { Load-SeedsFile $Seeds "file" }
+if ($seedList.Count -eq 0) { throw "no seeds -- give -Seed, -Seeds, or -SeedsProject+-SeedsProgram" }
+Write-Host ("Loaded {0} seed(s)" -f $seedList.Count)
+
+# ---------- image cache + word-address lookup --------------------------------
+# In FLASH-ONLY mode $imgBytes is the raw firmware and there is one implicit
+# block starting at $Base with $imgBytes.Length/2 words. In ANALYZED-PROGRAM
+# mode $imgBytes is the concatenated bytes of every initialized block from the
+# analyzed program (flash + materialized RAM), addressed through $imgBlocks.
+if ($AnalyzedMode) {
+  $imgBytes = [IO.File]::ReadAllBytes($imageBin)
+  $imgBlocks = New-Object System.Collections.Generic.List[object]
+  foreach ($ln in Get-Content -LiteralPath $imageMap) {
+    $t = ($ln -split '#',2)[0].Trim()
+    if (-not $t) { continue }
+    $p = $t -split "\s+", 4
+    if ($p.Count -lt 3) { continue }
+    $imgBlocks.Add(@{
+      wStart  = (Parse-HexAddr $p[0])
+      wLen    = [int]$p[1]
+      byteOff = [int]$p[2]
+      name    = if ($p.Count -ge 4) { $p[3] } else { "" }
+    }) | Out-Null
+  }
+  if ($imgBlocks.Count -eq 0) { throw "image_map.tsv had no valid rows: $imageMap" }
+  Write-Host ("Loaded image: {0} bytes across {1} initialized block(s)" -f $imgBytes.Length, $imgBlocks.Count)
+} else {
+  $imgBytes = [IO.File]::ReadAllBytes($Fw)
+  $imgBlocks = New-Object System.Collections.Generic.List[object]
+  $imgBlocks.Add(@{
+    wStart  = $Base
+    wLen    = [int]($imgBytes.Length / 2)
+    byteOff = 0
+    name    = "flash"
+  }) | Out-Null
+}
+
+# Resolve a word address to a (byteOff, wordsAvailable) pair, or $null if the
+# address is outside every initialized block. wordsAvailable caps a slice at
+# the block boundary so we never sew adjacent blocks together across a gap.
+function Resolve-Word([int]$wordAddr) {
+  foreach ($b in $imgBlocks) {
+    if ($wordAddr -ge $b.wStart -and $wordAddr -lt ($b.wStart + $b.wLen)) {
+      $off  = [int]$b.byteOff + ($wordAddr - $b.wStart) * 2
+      $avail = $b.wStart + $b.wLen - $wordAddr
+      return @{ byteOff = $off; wordsAvail = $avail; block = $b.name }
+    }
+  }
+  return $null
+}
 
 # Return mnemonics: what ENDS a region during BFS. Everything else keeps the
 # linear decode going. All four documented forms are single-word.
@@ -105,25 +221,47 @@ $visited = @{}
 $queue = New-Object System.Collections.Queue
 foreach ($s in $seedList) { $queue.Enqueue($s) | Out-Null }
 
-# We reuse a single .asm/.obj filename per invocation to avoid piling up thousands
-# of temp files -- asm2000 recreates .obj each call.
-$regAsm = Join-Path $Work "region.asm"
-$regObj = Join-Path $Work "region.obj"
+# The worker body: no side effects, no file writes -- decoding a region is a
+# pure function from (seed, src, image, config) to a result hashtable. The
+# main thread does all file I/O after collecting the level's results. That is
+# what makes ForEach-Object -Parallel safe: N runspaces write nothing shared.
+#
+# The body is stored as a STRING (not a scriptblock literal) because
+# ForEach-Object -Parallel explicitly refuses to accept scriptblock variables
+# via $using: (it warns "A ForEach-Object -Parallel using variable cannot be a
+# script block ... can result in undefined behavior"). Both branches -- serial
+# and parallel -- rehydrate the string via [scriptblock]::Create so the exact
+# same body runs either way. Resolve-Word-equivalent logic is inlined so
+# runspaces don't need to inherit parent-scope functions.
+$DecodeSource = @'
+param($seed, $src, $imgBytesRef, $imgBlocks, $maxSpan, $workDir, $tiBin, $endMnems, $callMnems)
 
-# ---------- BFS --------------------------------------------------------------
-function Decode-Region([int]$seed, [string]$src) {
-  # slice bytes
-  $off = ($seed - $Base) * 2
-  if ($off -lt 0 -or ($off + 2) -gt $img.Length) {
-    Add-Content -LiteralPath $regionsTsv -Value ("0x{0:x}`t0`tOOR:{1}" -f $seed, $src)
-    return @()
+  # inline Resolve-Word: returns @{byteOff, wordsAvail, name} or $null
+  $res = $null
+  foreach ($b in $imgBlocks) {
+    if ($seed -ge $b.wStart -and $seed -lt ($b.wStart + $b.wLen)) {
+      $res = @{
+        byteOff    = [int]$b.byteOff + ($seed - $b.wStart) * 2
+        wordsAvail = $b.wStart + $b.wLen - $seed
+        name       = $b.name
+      }
+      break
+    }
   }
-  $wordsToEnd = $imgWords - ($seed - $Base)
-  $span = [Math]::Min($MaxSpan, $wordsToEnd)
-  $bytes = New-Object byte[] ($span * 2)
-  [Array]::Copy($img, $off, $bytes, 0, $span * 2)
+  if (-not $res) {
+    return @{ seed = $seed; src = $src; skip = "OOR"; targets = @() }
+  }
 
-  # .word directives from raw slice bytes
+  $span = [Math]::Min($maxSpan, [int]$res.wordsAvail)
+  $bytes = New-Object byte[] ($span * 2)
+  [Array]::Copy($imgBytesRef, [int]$res.byteOff, $bytes, 0, $span * 2)
+
+  # Per-worker filenames -- ForEach-Object -Parallel runs N runspaces on the
+  # SAME cwd, so a shared region.asm/region.obj would race. Encoding the seed
+  # word in the filename makes each concurrent asm2000 self-contained.
+  $tag = "reg_{0:x8}" -f $seed
+  $regAsm = Join-Path $workDir "$tag.asm"
+  $regObj = Join-Path $workDir "$tag.obj"
   $sb = [Text.StringBuilder]::new(); [void]$sb.AppendLine("        .text")
   for ($i = 0; $i -lt $span; $i++) {
     $w = [int]$bytes[$i*2] + [int]$bytes[$i*2+1]*256
@@ -131,25 +269,22 @@ function Decode-Region([int]$seed, [string]$src) {
   }
   [IO.File]::WriteAllText($regAsm, $sb.ToString())
 
-  # asm2000 -> obj -> dis2000
-  Push-Location $Work
-  & "$TiBin\asm2000.exe" -v28 (Split-Path -Leaf $regAsm) -o=(Split-Path -Leaf $regObj) 2>&1 | Out-Null
-  $rc = $LASTEXITCODE
-  if ($rc -ne 0 -or -not (Test-Path $regObj)) {
+  Push-Location $workDir
+  try {
+    & "$tiBin\asm2000.exe" -v28 (Split-Path -Leaf $regAsm) -o=(Split-Path -Leaf $regObj) 2>&1 | Out-Null
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $regObj)) {
+      return @{ seed = $seed; src = $src; skip = "ASM_FAIL"; targets = @() }
+    }
+    $dis = & "$tiBin\dis2000.exe" -i (Split-Path -Leaf $regObj) 2>&1
+  } finally {
     Pop-Location
-    Add-Content -LiteralPath $regionsTsv -Value ("0x{0:x}`t0`tASM_FAIL:{1}" -f $seed, $src)
-    return @()
+    Remove-Item -LiteralPath $regAsm,$regObj -ErrorAction SilentlyContinue
   }
-  $dis = & "$TiBin\dis2000.exe" -i (Split-Path -Leaf $regObj) 2>&1
-  Pop-Location
 
-  # parse: dis2000 line is `<8 hex WORD address>  <4 hex opcode word>  <MNEM>  <ops>`.
-  # Multi-word instructions put follow-on words on their OWN line WITHOUT a mnem,
-  # so those lines fail the regex and we skip them naturally. `||` prefix marks
-  # repeated or parallel instructions; strip it so the real mnem wins.
   $endWrel = -1
   $lines = New-Object System.Collections.Generic.List[string]
   $targets = New-Object System.Collections.Generic.List[int]
+  $unresolved = New-Object System.Collections.Generic.List[string]
   foreach ($ln in $dis) {
     if ($ln -match '^\s*([0-9a-fA-F]{8})\s+[0-9a-fA-F]{4}\s+(\|\|)?\s*([A-Z][A-Z0-9_]*)\s*(.*)$') {
       $wrel = [Convert]::ToInt32($Matches[1], 16)
@@ -158,14 +293,17 @@ function Decode-Region([int]$seed, [string]$src) {
       $wa   = $seed + $wrel
       $text = if ($ops) { "$mnem $ops" } else { $mnem }
       $lines.Add(("{0:x8}`t{1:x8}`t{2}" -f $seed, $wa, $text)) | Out-Null
-      # call target extraction: LCR|LC|FFC with a literal 0x... operand.
       if ($callMnems.Contains($mnem)) {
         foreach ($tok in ($ops -split '[\s,]+')) {
           if ($tok -match '^0[xX]([0-9a-fA-F]+)') {
             $t = [Convert]::ToInt32($Matches[1], 16)
-            if ($t -ge $Base -and $t -lt $imgEnd) { $targets.Add($t) } else {
-              Add-Content -LiteralPath $unresolvedTsv -Value ("oor-call`t0x{0:x}`tfrom=0x{1:x}" -f $t, $wa)
+            # inline Resolve check
+            $ok = $false
+            foreach ($b in $imgBlocks) {
+              if ($t -ge $b.wStart -and $t -lt ($b.wStart + $b.wLen)) { $ok = $true; break }
             }
+            if ($ok) { $targets.Add($t) }
+            else { $unresolved.Add(("oor-call`t0x{0:x}`tfrom=0x{1:x}" -f $t, $wa)) }
             break
           }
         }
@@ -174,59 +312,127 @@ function Decode-Region([int]$seed, [string]$src) {
     }
   }
   $lenWords = if ($endWrel -ge 0) { $endWrel + 1 } else {
-    Add-Content -LiteralPath $unresolvedTsv -Value ("no-return-hit`t0x{0:x}`tspan={1}`t{2}" -f $seed, $span, $src)
+    $unresolved.Add(("no-return-hit`t0x{0:x}`tspan={1}`t{2}" -f $seed, $span, $src)) | Out-Null
     $span
   }
-  Add-Content -LiteralPath $regionsTsv -Value ("0x{0:x}`t{1}`t{2}" -f $seed, $lenWords, $src)
-  if ($lines.Count -gt 0) { Add-Content -LiteralPath $tiDumpTsv -Value $lines.ToArray() }
-  Add-Content -LiteralPath $tiDumpTsv -Value ("{0:x8}`tEOR`t{1}" -f $seed, $lenWords)
-  return $targets.ToArray()
+  return @{
+    seed       = $seed
+    src        = $src
+    lenWords   = $lenWords
+    lines      = $lines.ToArray()
+    targets    = $targets.ToArray()
+    unresolved = $unresolved.ToArray()
+  }
+'@
+$DecodeBlock = [scriptblock]::Create($DecodeSource)
+
+# Persist a batch of worker results and enqueue their targets. Runs serially in
+# the main thread; all file writes go through here so nothing contends.
+function Persist-BatchResults($results) {
+  $regionLines     = New-Object System.Collections.Generic.List[string]
+  $dumpLines       = New-Object System.Collections.Generic.List[string]
+  $unresolvedLines = New-Object System.Collections.Generic.List[string]
+  foreach ($r in $results) {
+    if ($r.skip) {
+      $regionLines.Add(("0x{0:x}`t0`t{1}:{2}" -f $r.seed, $r.skip, $r.src)) | Out-Null
+      continue
+    }
+    $regionLines.Add(("0x{0:x}`t{1}`t{2}" -f $r.seed, $r.lenWords, $r.src)) | Out-Null
+    foreach ($ln in $r.lines) { $dumpLines.Add($ln) | Out-Null }
+    $dumpLines.Add(("{0:x8}`tEOR`t{1}" -f $r.seed, $r.lenWords)) | Out-Null
+    foreach ($u in $r.unresolved) { $unresolvedLines.Add($u) | Out-Null }
+    foreach ($t in $r.targets) {
+      if ($visited.Contains($t)) { continue }
+      $queue.Enqueue(@{ addr = $t; src = ("from:0x{0:x}" -f $r.seed) }) | Out-Null
+    }
+  }
+  if ($regionLines.Count     -gt 0) { Add-Content -LiteralPath $regionsTsv    -Value $regionLines.ToArray() }
+  if ($dumpLines.Count       -gt 0) { Add-Content -LiteralPath $tiDumpTsv     -Value $dumpLines.ToArray() }
+  if ($unresolvedLines.Count -gt 0) { Add-Content -LiteralPath $unresolvedTsv -Value $unresolvedLines.ToArray() }
 }
+
+$useParallel = ($Parallel -gt 1 -and $PSVersionTable.PSVersion.Major -ge 7)
+if ($Parallel -gt 1 -and -not $useParallel) {
+  Write-Warning "-Parallel $Parallel ignored: needs PowerShell 7+, current is $($PSVersionTable.PSVersion). Running serial."
+}
+Write-Host ("BFS: {0}" -f ($(if ($useParallel) { "parallel x$Parallel" } else { "serial" })))
 
 $processed = 0
 while ($queue.Count -gt 0) {
-  $entry = $queue.Dequeue()
-  $addr  = $entry.addr
-  $src   = $entry.src
-  if ($visited.Contains($addr)) { continue }
-  $visited[$addr] = $true
-  $processed++
-  $newTargets = Decode-Region -seed $addr -src $src
-  foreach ($t in $newTargets) {
-    if ($visited.Contains($t)) { continue }
-    $queue.Enqueue(@{ addr = $t; src = ("from:0x{0:x}" -f $addr) }) | Out-Null
+  # Drain the current queue into a level and dedup against visited. Level-based
+  # BFS is what makes parallel decode safe -- every seed in the batch is
+  # independent because we've already committed to visiting all of them.
+  $level = New-Object System.Collections.Generic.List[object]
+  while ($queue.Count -gt 0) {
+    $e = $queue.Dequeue()
+    if ($visited.Contains($e.addr)) { continue }
+    $visited[$e.addr] = $true
+    $level.Add(@{ addr = [int]$e.addr; src = [string]$e.src }) | Out-Null
   }
+  if ($level.Count -eq 0) { break }
+
+  if ($useParallel) {
+    # Rehydrate the decode body per runspace from its source string ($using:
+    # forbids scriptblock values), and invoke with positional args pulled from
+    # $using: primitives. The parallel workers each build the scriptblock
+    # exactly once and then reuse it for every $_ they process in that runspace.
+    $results = $level | ForEach-Object -Parallel {
+      $blk = [scriptblock]::Create($using:DecodeSource)
+      & $blk $_.addr $_.src $using:imgBytes $using:imgBlocks $using:MaxSpan $using:Work $using:TiBin $using:endMnems $using:callMnems
+    } -ThrottleLimit $Parallel
+  } else {
+    $results = foreach ($e in $level) {
+      & $DecodeBlock $e.addr $e.src $imgBytes $imgBlocks $MaxSpan $Work $TiBin $endMnems $callMnems
+    }
+  }
+  Persist-BatchResults $results
+  $processed += $level.Count
 }
 Write-Host ("BFS: {0} seed(s) processed, {1} region(s) recorded" -f $processed, ((Get-Content $regionsTsv).Count))
 
-# ---------- our-side decode: ONE headless import for all regions ------------
+# ---------- our-side decode: ONE headless call for all regions ------------
+# ANALYZED-PROGRAM mode: -process against the analyzed program (so RAM-resident
+# ramfunc bytes are readable at their run addresses -- a fresh import of the
+# raw .bin has zeroes there).
+# FLASH-ONLY mode: -import the raw .bin at $Base with BinaryLoader; ramfunc
+# regions are unreachable but the flash coverage is complete.
 $ws = Join-Path $Work "run"
 Remove-Item -Recurse -Force $ws -ErrorAction SilentlyContinue
-New-Item -ItemType Directory -Force "$ws\proj","$ws\scripts" | Out-Null
+New-Item -ItemType Directory -Force "$ws\scripts" | Out-Null
 Copy-Item "$Module\ghidra_scripts\DumpFwParityOurs.java" "$ws\scripts\" -Force
 $ourDump = Join-Path $OutDir "our_dump.tsv"
+Remove-Item -LiteralPath $ourDump -ErrorAction SilentlyContinue
 
-# BinaryLoader with -loader-baseAddr for the correct absolute base. This flag is
-# in WORDS (matches every other address in the wordsize=2 space; see
-# docs/C28X_IMAGE_SETUP.md and docs/ANALYSIS-MIGRATION.md). Without it every
-# region's start_word points outside the (address-0) block and the sweep
-# degrades to all MISS_MEM.
-$baseWord = "0x{0:x}" -f $Base
 $savedJTO = $env:JAVA_TOOL_OPTIONS
 $env:JAVA_TOOL_OPTIONS = "-Dc28x.parity.regions.in=$regionsTsv -Dc28x.parity.regions.out=$ourDump"
-Push-Location $ws
-# JDK 25 emits sun.misc.Unsafe deprecation warnings on stderr; loosen error action
-# so a single warning does not abort the whole run under `Stop`.
 $prevEA = $ErrorActionPreference; $ErrorActionPreference = "Continue"
 try {
-  & "$Ghidra\support\analyzeHeadless.bat" "$ws\proj" ("bs_" + (Split-Path -Leaf $Fw)) `
-    -import $Fw -processor "TMS320C28x:LE:32:default" `
-    -loader BinaryLoader -loader-baseAddr $baseWord `
-    -scriptPath "$ws\scripts" -postScript DumpFwParityOurs.java -noanalysis -overwrite `
-    -max-cpu 2 2>&1 | Out-Null
+  if ($AnalyzedMode) {
+    $projDir  = Split-Path -Parent $SeedsProject
+    $projName = [IO.Path]::GetFileNameWithoutExtension($SeedsProject)
+    & "$Ghidra\support\analyzeHeadless.bat" $projDir $projName `
+      -process $SeedsProgram -readOnly -noanalysis `
+      -scriptPath "$ws\scripts" -postScript DumpFwParityOurs.java `
+      -max-cpu 2 2>&1 | Out-Null
+  } else {
+    New-Item -ItemType Directory -Force "$ws\proj" | Out-Null
+    # BinaryLoader with -loader-baseAddr for the correct absolute base. The flag
+    # is in WORDS (matches every other address in the wordsize=2 space; see
+    # docs/C28X_IMAGE_SETUP.md and docs/ANALYSIS-MIGRATION.md). Without it every
+    # region's start_word points outside the (address-0) block and the sweep
+    # degrades to all MISS_MEM.
+    $baseWord = "0x{0:x}" -f $Base
+    Push-Location $ws
+    try {
+      & "$Ghidra\support\analyzeHeadless.bat" "$ws\proj" ("bs_" + (Split-Path -Leaf $Fw)) `
+        -import $Fw -processor "TMS320C28x:LE:32:default" `
+        -loader BinaryLoader -loader-baseAddr $baseWord `
+        -scriptPath "$ws\scripts" -postScript DumpFwParityOurs.java -noanalysis -overwrite `
+        -max-cpu 2 2>&1 | Out-Null
+    } finally { Pop-Location }
+  }
 } finally {
   $ErrorActionPreference = $prevEA
-  Pop-Location
   $env:JAVA_TOOL_OPTIONS = $savedJTO
 }
 if (-not (Test-Path $ourDump)) { throw "our-side dump did not produce output" }
@@ -305,9 +511,57 @@ $rl.Add("") | Out-Null; $rl.Add("--- SKEW-HIST (top 30 by count) ---") | Out-Nul
 foreach ($e in ($skewHist.GetEnumerator() | Sort-Object -Property Value -Descending | Select-Object -First 30)) {
   $rl.Add(("{0}`tTI={1}`tsample=0x{2}" -f $e.Value, $e.Key, $skewEx[$e.Key])) | Out-Null
 }
+
+# ---------- reachability diff (analyzed mode only) ---------------------------
+# For every region BFS visited (via regions.tsv), check whether our analyzer
+# has a function at that entry. Presence = the analyzer independently rooted
+# the same thing dis2000-driven flow reached. Absence = a function dis2000
+# reaches from data-side seeds that our analyzer never bound as a function
+# entry: usually an inbound call our decoder didn't recognize (a call-shaped
+# encoding that decodes as something else, or a call-fixup we're missing).
+$unrootedTsv = ""
+if ($AnalyzedMode) {
+  $ourFns = New-Object System.Collections.Generic.HashSet[int]
+  foreach ($ln in @(Get-Content -LiteralPath $functionsTsv)) {
+    $t = ($ln -split '#',2)[0].Trim()
+    if (-not $t) { continue }
+    $col1 = ($t -split "\t")[0]
+    [void]$ourFns.Add((Parse-HexAddr $col1))
+  }
+  $unrootedTsv = Join-Path $OutDir "unrooted.tsv"
+  $u = New-Object System.Collections.Generic.List[string]
+  $u.Add("# entry_word`tsource_of_reach") | Out-Null
+  $unrootedCount = 0
+  foreach ($ln in @(Get-Content -LiteralPath $regionsTsv)) {
+    $p = ([string]$ln) -split "`t", 3
+    if ($p.Count -lt 3) { continue }
+    $src = $p[2]
+    if ($src -like "OOR:*" -or $src -like "ASM_FAIL:*") { continue }
+    $wa = Parse-HexAddr $p[0]
+    if (-not $ourFns.Contains($wa)) {
+      $u.Add(("0x{0:x}`t{1}" -f $wa, $src)) | Out-Null
+      $unrootedCount++
+    }
+  }
+  Set-Content -LiteralPath $unrootedTsv -Value $u.ToArray() -Encoding ascii
+  $rl.Add("") | Out-Null
+  $rl.Add(("--- REACHABILITY (BFS-visited entries NOT bound as functions: {0}) ---" -f $unrootedCount)) | Out-Null
+  # Show only the first 30 to keep the report scannable; full list in unrooted.tsv.
+  $shown = 0
+  foreach ($ln in @(Get-Content -LiteralPath $unrootedTsv)) {
+    if ($shown -ge 30) { break }
+    $t = ($ln -split '#',2)[0].Trim()
+    if (-not $t) { continue }
+    $rl.Add("  $t") | Out-Null
+    $shown++
+  }
+  Write-Host ("  reachability: {0} BFS entries not bound as functions" -f $unrootedCount) -ForegroundColor Yellow
+}
+
 Set-Content -LiteralPath $report -Value $rl.ToArray() -Encoding ascii
 
 Write-Host ("  regions:  {0}" -f $regionsTsv)
 Write-Host ("  TI dump:  {0}" -f $tiDumpTsv)
 Write-Host ("  our dump: {0}" -f $ourDump)
 Write-Host ("  report:   {0}" -f $report)
+if ($unrootedTsv) { Write-Host ("  unrooted: {0}" -f $unrootedTsv) }
