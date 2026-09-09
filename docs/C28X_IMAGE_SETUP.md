@@ -17,9 +17,16 @@ Every step is a script in the **TMS320C28x** Script-Manager category.
 | 4d | `MarkComponentRegistry.java` | Turns the materialized RAM dispatch table into actual call-graph **references**. 4/4b/4c restore the bytes; without this the graph never sees the indirect edges and every handler still looks dead. Finds the table structurally, reads each dispatcher's descriptor field offset out of the code, creates functions at proven call targets, and recovers a dispatcher's own function when nothing calls it either. Sites with no discovered table behind them go to **base resolution** and the **strided-table** walk — see §Step 4d. Idempotent; `-Dc28x.reg.dryRun` to preview. |
 | 5 | `FinalizeRamfuncs.java` | Post-analysis cleanup: rebuild bodies, clear stale flow bookmarks, repair conflicts. Run it **after** analysis has settled. |
 | 5b | `MergeSplitFunctions.java` | Reunite functions step 2 cut in two at a mid-function register push it mistook for a prologue. The far half keeps the `LRETR` and inherits no callers, so it and everything it calls read as dead. See §Step 5b. Idempotent; `-Dc28x.split.dryRun` to preview. |
-| 8 | `ReachabilityReport.java` | What is actually reachable from `_c_int00`, and *why* the rest is not. Run last — it is only as good as the reference graph. |
 | 6 | `RetypeWideMemory.java` | Retype 32/64-bit memory operands to kill `CONCAT22`/`CONCAT44` in the decompiler. |
-| 7 | `SweepResidualMarks.java` + verify | Classify leftover `Bad Instruction` marks, delete only the provably cosmetic ones, and confirm against a known-good baseline. |
+| 7 | `SweepResidualMarks.java` + verify | Classify leftover `Bad Instruction` marks, delete only the provably cosmetic ones, and confirm against a known-good baseline. **Dry run by default — pass `apply` to delete.** |
+| 8 | `ReachabilityReport.java` | What is actually reachable from `_c_int00`, and *why* the rest is not. Run last — it is only as good as the reference graph. |
+
+**Run the steps in the order they are numbered.** This table was for a while listed 5, 5b,
+**8**, 6, 7 — with the step whose description says *"run last"* sitting third from last. The
+migration runbook was written by transcribing the tail of this table and inherited the
+scramble, dropping step 7 from its pipeline listing; a 20-image rollout then ran without any
+residual-mark cleanup and nobody noticed, because nothing downstream fails when it is
+missing.
 
 ### The byte-swap
 
