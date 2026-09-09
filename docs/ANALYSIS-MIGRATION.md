@@ -97,8 +97,16 @@ pass A   -import <bin> -loader BinaryLoader -loader-baseAddr <base> \
 
 pass B   -process <name>                    (auto-analysis runs here)
          MarkComponentRegistry -> FinalizeRamfuncs -> MergeSplitFunctions
-         -> FinalizeRamfuncs -> RetypeWideMemory -> ReachabilityReport
+         -> FinalizeRamfuncs -> RetypeWideMemory -> SweepResidualMarks apply
+         -> ReachabilityReport
 ```
+
+That pass-B list **is** the image-setup pipeline; keep it in step with
+`docs/C28X_IMAGE_SETUP.md` rather than reconstructing it from memory. `SweepResidualMarks`
+(step 7) is easy to leave out because nothing downstream fails without it — the migration
+still completes, reachability is unaffected, and the only symptom is a pile of Error
+bookmarks that look like real findings. On one rollout it was omitted for all 20 images and
+went unnoticed until someone asked. It is a dry run by default, so `apply` is required.
 
 Stage each dump under the **target program name** first — headless names the program after the
 file it imports.
@@ -244,6 +252,7 @@ steps and 21,453 words.
 - [ ] language + jar installed as a matched pair; disasm / phase / emu suites pass
 - [ ] `$USER_HOME/ghidra_scripts` diffed against the repo
 - [ ] Phase 3 — pilot one image, read the log, then batch
+- [ ] pass B matches `C28X_IMAGE_SETUP.md` step for step, `SweepResidualMarks apply` included
 - [ ] every image reached the startup handoff (or is a known, understood refusal)
 - [ ] Phase 4 — merge **then** ImportAnnotations, richest source first
 - [ ] Phase 5 — documented counts equal or higher; every shortfall accounted for
