@@ -21,6 +21,10 @@ tests/ti_*.bin
 tests/ti_*.txt
 tests/*.sidebyside.txt
 
+# fw-parity bootstrap harness output (regions.tsv / dumps / reports). Large,
+# regenerable from the firmware image + the bootstrap harness. Never committed.
+tests/out/fw_bootstrap/
+
 # Scratch reference extraction (full instruction detail is large; regenerate from PDF)
 docs/c28x/ch6_instruction_detail.txt
 
