@@ -48,6 +48,8 @@
 //   c28x.emu.enterIndirect   (bool, default false)  step INTO indirect calls (.pinit ctors)
 //   c28x.emu.ramBlocks       (regex, default below) which blocks may be written back
 //   c28x.emu.disasm          (bool, default true)   disassemble written regions that are called
+//   c28x.emu.mmio            (csv,  default PLL)    peripheral reads to answer, 0xWORD=0xVALUE,...
+//                                                   ("none" to disable) -- see MMIO_DEFAULT below
 //
 // @category TMS320C28x
 import ghidra.app.emulator.EmulatorHelper;
@@ -72,7 +74,7 @@ public class EmulateStartup extends GhidraScript {
     // arg is read separately below and is unaffected.
     // Clear first: system properties are JVM-global and survive between script runs in one Ghidra
     // session, so a flag passed once would stay set for every later run in that session.
-    // Clear only what a PREVIOUS RUN OF THIS SCRIPT promoted, though -- not every c28x.emu.*
+    // Clear only what a PREVIOUS RUN OF THIS SCRIPT promo1ted, though -- not every c28x.emu.*
     // property. A blanket clear also destroys a genuine JVM -D, which is the only way to set
     // these on Windows: analyzeHeadless.bat truncates a script argument at its first '=', so
     // docs/C28X_IMAGE_SETUP.md tells you to pass them through JAVA_TOOL_OPTIONS instead. Wiping
@@ -93,6 +95,57 @@ public class EmulateStartup extends GhidraScript {
             System.setProperty(k, eq > 0 ? kv.substring(eq + 1) : "true");
             PROMOTED.add(k);
         }
+    }
+
+    // Peripheral status registers the firmware POLLS but never writes, paired with the value the
+    // silicon would eventually present. An uninitialized read yields zero, which for a status bit
+    // means "not ready" -- so a wait-for-ready loop spins forever and no step budget rescues it.
+    // Answering the read is better than skipping the enclosing function: the rest of that function
+    // still runs and its RAM writes are kept.
+    //
+    // Deliberately tiny: only the bit these images actually spin on. The rest of the catalogue is
+    // recorded below rather than enabled, because answering a poll the firmware never reaches
+    // cannot help, and answering one WRONG sends the replay down a path the silicon never takes.
+    // Add them per-image with -Dc28x.emu.mmio=0xWORD=0xVALUE,... ; -Dc28x.emu.mmio=none disables.
+    //
+    // Addresses come from the C2000Ware F2837xD package, which pins them exactly -- bases from
+    // headers/cmd/F2837xD_Headers_nonBIOS_cpu1.cmd (CLKCFG 0x5D200, MEMCFG 0x5F400, FLASH0CTRL
+    // 0x5F800, DEVCFG 0x5D000), field offsets from the register structs in headers/include, and
+    // the polls themselves from common/source. That package beats the TRM prose here: exact and
+    // machine-readable. Cross-checked against firmware, which reaches SYSPLLSTS as
+    // `MOVW DP,#0x1748 ; TBIT @0x16,#0x0 ; SB back,NTC` -- (0x1748<<6)|0x16 = 0x5d216.
+    //
+    // Startup polls TI's own reference code performs, and the value that releases each:
+    //   0x5d216=0x1  ClkCfgRegs.SYSPLLSTS bit0 LOCKS       F2837xD_SysCtrl.c:616,731   [DEFAULT]
+    //   0x5d220=0x1  ClkCfgRegs.AUXPLLSTS bit0 LOCKS (bit1 SLIPS must read 0)  SysCtrl.c:1000,1074
+    //   FlashPumpSemaphoreRegs.PUMPREQUEST.PUMP_OWNERSHIP              SysCtrl.c:446,451
+    //   CpuTimer1/2Regs.TCR.TIF        -- a timed delay; 1 expires it immediately   SysCtrl.c:809
+    //   DevCfgRegs.LPMSTAT.CPU2LPMSTAT -- CPU1 waiting on CPU2                      SysCtrl.c:1269
+    //   IpcRegs.IPCSTS                 -- inter-core handshake, set by the OTHER core
+    //
+    // The last two wait on the paired CPU, not on silicon. Answering them makes one core's replay
+    // proceed as though the other had booted -- a claim about the system, not the chip -- so they
+    // stay off by default even though they would unblock a hang.
+    private static final String MMIO_DEFAULT =
+        "0x5d216=0x1";   // ClkCfgRegs+0x16 = SYSPLLSTS, bit 0 LOCKS -- system PLL reports locked
+
+    Map<Long,Integer> parseMmio() {
+        String spec = System.getProperty("c28x.emu.mmio", MMIO_DEFAULT).trim();
+        Map<Long,Integer> m = new LinkedHashMap<>();
+        if (spec.isEmpty() || spec.equalsIgnoreCase("none")) return m;
+        for (String kv : spec.split(",")) {
+            String e = kv.trim();
+            if (e.isEmpty()) continue;
+            int eq = e.indexOf('=');
+            if (eq <= 0) { println("  ignoring malformed c28x.emu.mmio entry: " + e); continue; }
+            try {
+                m.put(Long.decode(e.substring(0, eq).trim()),
+                      Integer.decode(e.substring(eq + 1).trim()) & 0xffff);
+            } catch (NumberFormatException nfe) {
+                println("  ignoring malformed c28x.emu.mmio entry: " + e);
+            }
+        }
+        return m;
     }
 
     @Override
@@ -173,8 +226,32 @@ public class EmulateStartup extends GhidraScript {
             // not written yet (a .cinit record's destination, a zeroed .bss). Faulting on that
             // would abort the replay, so uninitialized reads yield zeros -- which is what the
             // silicon's RAM holds after reset for our purposes.
+            //
+            // Zero is the WRONG answer for a peripheral status bit the firmware waits to go high,
+            // though: `TBIT @0x16,#0x0 ; SB back,NTC` on SYSPLLSTS.LOCKS never falls through, and
+            // no step budget rescues it. Answering those few reads with the value the silicon
+            // would eventually present is strictly better than -Dc28x.emu.skip over the enclosing
+            // function, because the rest of that function still executes and its RAM writes are
+            // kept. Only registers the firmware never WRITES need this: a write lands in the
+            // emulator's own memory state, so a write-then-poll handshake already reads back.
+            final Map<Long,Integer> mmio = parseMmio();
+            if (!mmio.isEmpty()) {
+                StringBuilder sb = new StringBuilder();
+                for (Map.Entry<Long,Integer> e : mmio.entrySet())
+                    sb.append(String.format(" %05x=%04x", e.getKey(), e.getValue()));
+                println("modelled peripheral reads:" + sb);
+            }
             emu.setMemoryFaultHandler(new MemoryFaultHandler() {
-                public boolean uninitializedRead(Address a, int size, byte[] buf, int bufOffset) { return true; }
+                public boolean uninitializedRead(Address a, int size, byte[] buf, int bufOffset) {
+                    long base = a.getOffset() / 2;
+                    for (int i = 0; i + 1 < size; i += 2) {
+                        Integer v = mmio.get(base + i / 2);
+                        if (v == null) continue;
+                        buf[bufOffset + i]     = (byte) (v & 0xff);
+                        buf[bufOffset + i + 1] = (byte) ((v >> 8) & 0xff);
+                    }
+                    return true;
+                }
                 public boolean unknownAddress(Address a, boolean write) { return true; }
             });
             emu.enableMemoryWriteTracking(true);
