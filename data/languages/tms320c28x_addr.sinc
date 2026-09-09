@@ -145,16 +145,21 @@ loc16: "*0++"    is ctx_AMODE=0 & loc_full8=0b10111011 { export *[ram]:2 XAR0; }
 loc16: "*0--"    is ctx_AMODE=0 & loc_full8=0b10111100 { export *[ram]:2 XAR0; }
 
 # --- Circular indirect addressing (XAR6, XAR1) -- Table 5-1 §5.6.3 ---------------
-# *AR6%++: address = XAR6, then XAR6 post-increments with a circular wrap keyed
-# by XAR1[7:0] (if XAR6[7:0] == XAR1[7:0], XAR6[7:0] = 0; else XAR6[15:0] += 1
-# for 16-bit / += 2 for 32-bit; XAR6[31:16] unchanged). We DO NOT model the
-# wrap -- straight post-increment is the standard approximation used elsewhere
-# in this file (BR0 modes, ARPn modes). The wrap is a runtime property of the
-# buffer size the compiler picked, and modeling it needs XAR1 as constant
-# context. See docs/c28x/ch5_addressing_modes.txt §5.6.3.
+# *AR6%++: address = XAR6, then AR6 post-increments with a circular wrap keyed
+# by AR1[7:0]. Per SPRU430F: if AR6[7:0] == AR1[7:0] then AR6[7:0] = 0 (upper 8
+# bits of AR6 preserved); else AR6 += 1 (for loc16) or += 2 (for loc32). The
+# check is on the PRE-increment low byte. Only AR6 (== XAR6[15:0]) participates;
+# XAR6[31:16] is never touched. AR1 is a runtime value -- constant context is
+# NOT required; the check reads the current AR1.
+# Emulation: covered by EmuModuloTest (wrap, no-wrap, upper-byte preserve).
 loc16: "*AR6%++"  is ctx_AMODE=0 & loc_full8=0b10111111 {
     local a:4 = XAR6;
-    XAR6 = XAR6 + 1;
+    if (AR6:1 == AR1:1) goto <wrap>;
+    AR6 = AR6 + 1;
+    goto <done>;
+  <wrap>
+    AR6 = AR6 & 0xFF00;
+  <done>
     export *[ram]:2 a;
 }
 
@@ -232,6 +237,11 @@ loc32: "*0++"    is ctx_AMODE=0 & loc_full8=0b10111011 { export *[ram]:4 XAR0; }
 loc32: "*0--"    is ctx_AMODE=0 & loc_full8=0b10111100 { export *[ram]:4 XAR0; }
 loc32: "*AR6%++" is ctx_AMODE=0 & loc_full8=0b10111111 {
     local a:4 = XAR6;
-    XAR6 = XAR6 + 2;
+    if (AR6:1 == AR1:1) goto <wrap>;
+    AR6 = AR6 + 2;
+    goto <done>;
+  <wrap>
+    AR6 = AR6 & 0xFF00;
+  <done>
     export *[ram]:4 a;
 }

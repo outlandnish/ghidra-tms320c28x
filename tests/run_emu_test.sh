@@ -63,6 +63,7 @@ cp "$module/ghidra_scripts/EmuMovAccFlagsTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuLeftoverFamilyTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuLoopTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuFwGapsTest.java" "$tmp/scripts/"
+cp "$module/ghidra_scripts/EmuModuloTest.java" "$tmp/scripts/"
 cp "$module/tests/fpu_flags.bin" "$module/tests/fpu_cond.bin" "$tmp/"
 
 fail=0
@@ -108,6 +109,7 @@ run_suite EmuMovAccFlagsTest fpu_flags.bin    # issue #110: MOV family N/Z audit
 run_suite EmuLeftoverFamilyTest fpu_flags.bin # issue #112: INC/DEC C + NORM ext56 forms
 run_suite EmuLoopTest fpu_flags.bin           # issue #114: LOOPZ / LOOPNZ N/Z semantics
 run_suite EmuFwGapsTest fpu_flags.bin         # issue #118: AND ACC,#imm<<# N/Z + TBIT TC (fw-parity gaps)
+run_suite EmuModuloTest fpu_flags.bin         # issue #127 follow-up: *AR6%++ circular wrap (loc16/loc32)
 
 if [ "$fail" -eq 0 ]; then
   echo "emulation semantics: OK"
