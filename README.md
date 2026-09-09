@@ -77,36 +77,45 @@ This is a **word-addressable** architecture (1 address = 16 bits, not 8).
 > **byte** offset (= word × 2), while TI's `dis2000` prints **word** addresses. Divide by 2
 > when comparing the two — this trips up every script that walks the listing.
 
-### Analyzing a headerless raw image — recommended script workflow
+### Analyzing a headerless raw image — the script pipeline
 
 A raw firmware `.bin` has no symbols or entry points, so Ghidra's analyzer finds almost
-nothing. The bundled scripts (Script Manager, category **TMS320C28x**) recover the code and
-separate it from the embedded data tables. Run them in this order after **import + set base**:
+nothing. The bundled scripts (Script Manager, category **TMS320C28x**) recover the code,
+separate it from the embedded data tables, replay the startup's flash→RAM copies, and rebuild
+the call graph. Run them **in this order** — the numbering matches
+[docs/C28X_IMAGE_SETUP.md](docs/C28X_IMAGE_SETUP.md):
 
-1. **`SeedFunctions.java`** — create functions from the bytes: absolute **call targets**
-   (LCR/LC/FFC, high-confidence — something calls them) plus **prologue patterns**
-   (SP-push/frame-setup runs). It also adds call-site→target references (so the call graph
-   is visible) and runs an **entropy/code-likeness filter** so prologue matches that land in
-   data don't become bogus functions. Two filters exist because the two signals fail
-   differently: a prologue match goes wrong by landing *in a data table*, which entropy
-   catches, while a call match goes wrong by inventing a target *from two adjacent words of a
-   numeric table*, which it does not — a table of small numbers is low-entropy and its high
-   bytes are all legitimate opcodes. So call targets get a **boundary gate** instead:
-   backward linear-sweep resynchronization, which refuses a "target" that turns out to sit in
-   the middle of a real instruction. Reads only initialized memory. Tune via `-Dc28x.seed.*`
-   (see the script header).
-2. **`MarkJumpTables.java`** — switch/case **pointer tables** (word-pairs forming in-image
-   code addresses) get mis-decoded as bogus instructions; this marks them as `pointer` data
-   with refs to their targets. Skips runs inside defined functions.
-3. **`MarkDataTables.java`** — **float-constant tables** (gain curves, LUTs, calibration)
-   likewise decode as garbage; this marks high-confidence (`≥90%` sane-float) runs as
-   `Float4` arrays and removes the 0-xref false-seeds they spawned.
-4. **`MaterializeSections.java`** — replays the C-runtime startup's flash→RAM section copies
-   (`.ramfunc` / `.cinit`) so the **RAM-resident code** the app runs from LS/D/GS RAM becomes real
-   and its flash callers resolve. Also marks the flash **load images** back to data (dropping the
-   phantom duplicate functions decoded from them).
-5. **`FinalizeRamfuncs.java`** — run **after** auto-analysis settles: rebuilds ramfunc bodies that
-   were bound before analysis finished decoding them.
+| # | Script | What it does |
+|---|--------|--------------|
+| 0 | *import + set base* | Load the raw `.bin` as `TMS320C28x:LE:32:default` (F28377D) or `…:f2812`; base = the flash **word** address the dump starts at. |
+| 1 | `SetupF28377D` / `SetupF2812` | Map the device memory — peripheral frames **and the on-chip RAM banks**. Takes `CPU1`/`CPU2` on F28377D. |
+| 2 | `SeedFunctions` | Functions from absolute **call targets** (LCR/LC/FFC) and **prologue patterns**, plus call-site→target refs. Also recovers `_c_int00` and registers it as an entry point — the only flow anchor a headerless dump has. |
+| 3 | `MarkJumpTables`, `MarkDataTables` | Mark switch/case **pointer tables** and **float const pools** as data so they stop decoding as garbage. |
+| 4 | `MaterializeSections` **or** `MaterializeCopyTable` | Copy the flash **load** images to their RAM **run** addresses, so `.ramfunc` code becomes real and its flash callers resolve. Which one depends on the startup copy mechanism — `NO copy routine found` from the first means try the second. |
+| 4c | `EmulateStartup` | The general alternative to 4: **run the image's own `_c_int00`** and keep the RAM it writes. Covers mechanisms neither materializer implements (the `.cinit` walk TI emits inline). Dry run unless passed `apply`. |
+| 4d | `MarkComponentRegistry` | Turn the materialized dispatch tables into call-graph **references**, and root the handlers behind them. |
+| 5 | `FinalizeRamfuncs` | Run **after** auto-analysis settles: rebuild ramfunc bodies, clear stale flow bookmarks, repair disassembly conflicts. |
+| 5b | `MergeSplitFunctions` | Reunite functions step 2 cut in two at a mid-function register push it mistook for a prologue. |
+| 6 | `RetypeWideMemory` | Retype 32/64-bit memory operands to kill `CONCAT22`/`CONCAT44` in the decompiler. |
+| 7 | `SweepResidualMarks` | Classify the leftover `Bad Instruction` / `Error` marks and delete only the provably cosmetic ones. Dry run unless passed `apply`. |
+| 8 | `ReachabilityReport` | What is actually reachable from `_c_int00`, and *why* the rest is not. Run last — it is only as good as the reference graph. |
+
+**Step 1 is not optional and it comes first.** Mapping the RAM is what lets calls into it
+resolve at all; without it step 4 has nowhere to copy to.
+
+**Steps 4, 4c/4d and 5b are three different jobs, and stopping after the first is the common
+mistake.** Materializing restores the *bytes*, the call graph is built from *references*, and
+rooting decides what is live. On a component-dispatch image, doing only step 4 leaves live
+handlers indistinguishable from dead code: measured at **2.5%** reachable out of steps 0–4,
+**49.4%** once 4d has run, and **~80%** with the rest of the pipeline.
+
+Steps 2 and 3 each carry a filter, because the two seed signals fail differently. A prologue
+match goes wrong by landing *in a data table*, which an entropy/code-likeness test catches; a
+call match goes wrong by inventing a target *from two adjacent words of a numeric table*,
+which it does not — such a table is low-entropy and its high bytes are all legitimate opcodes.
+Call targets get a **boundary gate** instead: backward linear-sweep resynchronization, which
+refuses a "target" that turns out to sit in the middle of a real instruction. Tune via
+`-Dc28x.seed.*` (see the script header).
 
 > **Note:** the module disables Ghidra's **"Non-Returning Functions - Discovered"** and **"Shared
 > Return Calls"** analyzers by default (via `enableNoReturnAnalysis` / `enableSharedReturnAnalysis` in
@@ -114,21 +123,33 @@ separate it from the embedded data tables. Run them in this order after **import
 > (`.ramfunc`) non-returning and delete their real flash callers. Re-enable per-program in *Analysis
 > Options* if you want genuine non-returning detection on a specific image.
 
-See **[docs/C28X_IMAGE_SETUP.md](docs/C28X_IMAGE_SETUP.md)** for the full pipeline, the section-copy
-mechanism, and details of the no-return analyzer opt-out.
+See **[docs/C28X_IMAGE_SETUP.md](docs/C28X_IMAGE_SETUP.md)** for the full pipeline — each step's
+mechanism and tuning properties, the two copy-table variants, what to do when neither
+materializer detects the copy, and the measurements behind the numbers above. To move existing
+analysis onto a rebuilt module, see
+**[docs/ANALYSIS-MIGRATION.md](docs/ANALYSIS-MIGRATION.md)**.
 
-### Optional: label the device peripherals
+#### What the setup scripts label
 
-Pick the script for your target (Script Manager, category **TMS320C28x**) to map the
-device memory and label its peripheral frames so XREFs resolve to readable register names:
+- **F28377D** — `ghidra_scripts/SetupF28377D.java`: the F2837xD peripheral frames + on-chip RAM
+  split into its datasheet banks (`M0`/`M1`, `LS0-5`, `D0`/`D1`, `GS0-15`, CLA/CPU MSGRAMs) with
+  correct perms, including the D_CAN **CANA/CANB** message RAM. Pass `CPU1` or `CPU2` — CPU1 has
+  device-unique peripherals (UPP/XBAR/USBA/DEV_CFG) that are only labeled when the arg matches.
+- **F2812** — `ghidra_scripts/SetupF2812.java`: the F281x memory map (SARAM/Flash/OTP/Boot ROM/
+  PIE-vect, optional XINTF zones) plus **eCAN-A**, **EV-A/EV-B**, **ADC**, **SCI-A/B**, **SPI-A**,
+  **GPIO**, **SysCtrl/PLL/WD**, **PIE**, **CPU timers**, **XINT**, **XINTF**, **CSM**
+  field-by-field. Select the `TMS320C28x:LE:32:f2812` language at import for the matching
+  volatile-MMIO ranges + F281x vectors.
 
-- **F28377D** — `ghidra_scripts/SetupF28377D.java` (maps the F2837xD frames + on-chip
-  RAM, including the D_CAN **CANA/CANB** registers; prompts for CPU1/CPU2).
-- **F2812** — `ghidra_scripts/SetupF2812.java` (maps the F281x memory map — SARAM/Flash/
-  OTP/Boot ROM/PIE-vect, optional XINTF zones — and labels **eCAN-A**, **EV-A/EV-B**,
-  **ADC**, **SCI-A/B**, **SPI-A**, **GPIO**, **SysCtrl/PLL/WD**, **PIE**, **CPU timers**,
-  **XINT**, **XINTF**, **CSM** field-by-field). Select the `TMS320C28x:LE:32:f2812`
-  language at import for the matching volatile-MMIO ranges + F281x vectors.
+#### If the image drives the CLA
+
+The pipeline will materialize the Control Law Accelerator's program RAM and then leave it
+completely undecoded, because the C28x SLEIGH cannot read a CLA instruction. The signature is
+an LS bank that is initialized and mostly non-zero yet holds **zero** instructions and **zero**
+functions while its neighbours hold hundreds. The CLA is a separate language
+(`TMS320C28x:LE:32:cla`), so its code has to be a separate **program**: `ExportClaProgram` →
+import at `-loader-baseAddr 0x8000` → `SetupClaProgram` → `SyncClaLabels` to carry names and
+data types between the two. See [docs/C28X_IMAGE_SETUP.md](docs/C28X_IMAGE_SETUP.md).
 
 ### Rebuilding the `.sla` (only if you edit the spec)
 
@@ -160,9 +181,17 @@ device memory and label its peripheral frames so XREFs resolve to readable regis
 - **[docs/SLEIGH-IDIOMS.md](docs/SLEIGH-IDIOMS.md)** — SLEIGH idioms & gotchas (each
   backed by a real compiler error). Read before writing constructors.
 - **[docs/TESTING.md](docs/TESTING.md)** — the disasm regression harness.
+- **[docs/C28X_IMAGE_SETUP.md](docs/C28X_IMAGE_SETUP.md)** — the analysis pipeline in full:
+  every step above, the startup copy mechanisms, the CLA, and the measurements.
 - **[docs/ANALYSIS-MIGRATION.md](docs/ANALYSIS-MIGRATION.md)** — moving existing analysis
   onto an updated module: decode changes only take effect on re-disassembly, so this is a
   fresh import plus replaying the documentation onto it.
+- **[docs/EMULATION.md](docs/EMULATION.md)** — running C28x code in Ghidra's emulator, and
+  the state modifier that covers what SLEIGH alone cannot.
+- **[docs/PCODE-GAPS-METHODOLOGY.md](docs/PCODE-GAPS-METHODOLOGY.md)** — the playbook for
+  turning a "won't decompile / `halt_baddata`" report into a verified SLEIGH fix.
+- **[docs/WORKTREES.md](docs/WORKTREES.md)** — several branches at once, and the
+  one-module-per-Ghidra-install footgun that makes naive worktrees bite.
 
 ## Status
 
