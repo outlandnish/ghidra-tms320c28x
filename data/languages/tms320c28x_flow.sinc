@@ -149,6 +149,24 @@ ffcdest: reloc  is op_hi8=0x00 & op_lo_76=0b11 & loc_off6 ; imm16  [ reloc = (lo
     if (taken) goto rel16dest;
 }
 
+# BAR 16bitOffset,ARn,ARm,EQ/NEQ    1000 1111 1CNNNMMM : ssss ssss ssss ssss
+# Branch-on-Auxiliary-Register-comparison (SPRU430F ch.6). Two-word: word1 low byte
+# encodes (bit7=1 fixed, bit6=cond 0=EQ/1=NEQ, bits5:3=ARn, bits2:0=ARm); word2 is
+# the 16-bit signed PC-relative offset (target = inst_next + simm16). Verified
+# against asm2000 across all 8 register combinations + both conditions.
+:BAR rel16dest, bar_arn, loc_areg16, "EQ"
+  is rpt_phase=1 & op_hi8=0x8F & loc_b7=1 & bar_condbit=0 & bar_arn & loc_areg16
+   ; simm16 & rel16dest
+{
+    if (bar_arn == loc_areg16) goto rel16dest;
+}
+:BAR rel16dest, bar_arn, loc_areg16, "NEQ"
+  is rpt_phase=1 & op_hi8=0x8F & loc_b7=1 & bar_condbit=1 & bar_arn & loc_areg16
+   ; simm16 & rel16dest
+{
+    if (bar_arn != loc_areg16) goto rel16dest;
+}
+
 # BF 16bitOffset,COND   0101 0110 1100 COND : CCCC CCCC CCCC CCCC  (branch fast,
 # PC-relative like B). word1 = 0x56C0 | COND; word2 = signed offset. The COND lives
 # in the low nibble of word1 (cond4); the rel target uses word2 (simm16).
