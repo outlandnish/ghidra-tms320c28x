@@ -478,18 +478,12 @@ foreach ($ln in @(Get-Content -LiteralPath $ourDump)) {
   $ourMnem[$key] = ($p[2] -split '\s+')[0].ToUpper()
 }
 
-$total = 0; $agree = 0; $wrong = 0; $undef = 0; $skew = 0; $opdiff = 0; $dataSkip = 0
+$total = 0; $agree = 0; $wrong = 0; $undef = 0; $skew = 0; $opdiff = 0
 $wrongHist = @{}; $undefHist = @{}; $skewHist = @{}
 $wrongEx = @{}; $undefEx = @{}; $skewEx = @{}
 foreach ($k in @($tiMnem.Keys)) {
   $tim = $tiMnem[$k]; $tit = $tiTxt[$k]
   $word = ($k -split '\|')[1]
-  # <DATA>: our-side detected that this word lives inside a defined Data instance
-  # in the analyzed program (BSS zero-fill, literal pool, data table). It is not a
-  # spec bug -- the analyzer correctly classified the byte as data and refused to
-  # disassemble it. Excluding these from $total keeps the summary honest; a BFS
-  # walk into BSS used to swamp UNDEF with thousands of ITRAP0 hits (bytes 0x0000).
-  if ($ourMnem.Contains($k) -and $ourMnem[$k] -eq "<DATA>") { $dataSkip++; continue }
   $total++
   if (-not $ourMnem.Contains($k)) {
     $skew++; $skewHist[$tim] = 1 + ($skewHist[$tim] -as [int])
@@ -513,7 +507,7 @@ foreach ($k in @($tiMnem.Keys)) {
   if ($tit.ToLower() -ne $ourTxt[$k].ToLower()) { $opdiff++ }
 }
 
-$summary = "SUMMARY total=$total agree=$agree wrong=$wrong undef=$undef skew=$skew opdiff=$opdiff data_skip=$dataSkip"
+$summary = "SUMMARY total=$total agree=$agree wrong=$wrong undef=$undef skew=$skew opdiff=$opdiff"
 Write-Host $summary -ForegroundColor Cyan
 
 $report = Join-Path $OutDir "report_sorted.txt"
