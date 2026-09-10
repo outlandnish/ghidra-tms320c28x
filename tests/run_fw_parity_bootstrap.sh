@@ -400,12 +400,6 @@ END {
   for (k in ti_mnem) {
     tim = ti_mnem[k]
     tit = ti[k]
-    # <DATA>: our-side detected the word lives inside a defined Data instance in
-    # the analyzed program (BSS zero-fill, literal pool, data table). Not a spec
-    # bug -- the analyzer classified the byte as data and refused to disassemble.
-    # Excluding these keeps the summary honest; a BFS walk into BSS used to swamp
-    # UNDEF with thousands of ITRAP0 hits (bytes 0x0000).
-    if ((k in ours_mnem) && ours_mnem[k] == "<DATA>") { data_skip++; continue }
     total++
     if (!(k in ours_mnem)) {
       skew++
@@ -434,10 +428,10 @@ END {
   # And ours-only lines: instructions we decoded where TI did not. Rare but
   # worth reporting -- usually means our decoder consumed data as code past a
   # length skew and produced a spurious mnem-line.
-  for (k in ours_mnem) if (!(k in ti_mnem) && ours_mnem[k] != "<UNDEF>" && ours_mnem[k] != "<DATA>") ours_only++
+  for (k in ours_mnem) if (!(k in ti_mnem) && ours_mnem[k] != "<UNDEF>") ours_only++
 
-  printf "SUMMARY total=%d agree=%d wrong=%d undef=%d skew=%d opdiff=%d ours_only=%d data_skip=%d\n",
-    total, agree, wrong, undef, skew, opdiff, ours_only, data_skip
+  printf "SUMMARY total=%d agree=%d wrong=%d undef=%d skew=%d opdiff=%d ours_only=%d\n",
+    total, agree, wrong, undef, skew, opdiff, ours_only
   print "---WRONG-HIST---"
   for (p in wrong_hist) printf "%d\t%s\tsample=0x%s\n", wrong_hist[p], p, wrong_ex[p]
   print "---UNDEF-HIST---"

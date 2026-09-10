@@ -18,11 +18,22 @@
 // BinaryLoader -loader-block-base <base_bytes>) or every word address in
 // regions.tsv falls outside memory and the sweep degrades to all-UNDEF.
 //
+// Uses PseudoDisassembler, NOT the Listing. This is deliberate: the analyzed program's
+// listing has pre-existing Data classifications from auto-analysis (BSS zero-fill,
+// literal pools, addresses that flow-analysis missed because a prior ITRAP0 terminated
+// the walk). The stock `disassemble(a)` refuses to overwrite defined Data, so those
+// addresses came back as <UNDEF> or <DATA> and the region walk fell one word out of
+// alignment with TI -- cascading a single blocked byte into 3-4 downstream SKEW hits.
+// PseudoDisassembler decodes the raw bytes without touching the Listing, so the harness
+// sees exactly what our SLEIGH would produce given the bytes and nothing else. The
+// previous <DATA> filter existed to work around the same Listing-blocked mechanism and
+// is no longer needed: a BSS region of zero-fill decodes to ITRAP0 on both sides now
+// (agree, not <UNDEF>).
 // @category TMS320C28x
 import ghidra.app.script.GhidraScript;
+import ghidra.app.util.PseudoDisassembler;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSpace;
-import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.mem.Memory;
 import java.io.BufferedReader;
@@ -57,8 +68,9 @@ public class DumpFwParityOurs extends GhidraScript {
 
         AddressSpace ram = currentProgram.getAddressFactory().getDefaultAddressSpace();
         Memory mem = currentProgram.getMemory();
+        PseudoDisassembler pdis = new PseudoDisassembler(currentProgram);
         StringBuilder sb = new StringBuilder();
-        int ok = 0, missMem = 0, undef = 0, data = 0;
+        int ok = 0, missMem = 0, undef = 0;
 
         for (long[] r : regions) {
             long startWord = r[0], lenWords = r[1];
@@ -71,24 +83,14 @@ public class DumpFwParityOurs extends GhidraScript {
             }
             long consumed = 0;
             while (a.compareTo(end) < 0) {
-                if (getInstructionAt(a) == null) disassemble(a);
-                Instruction ins = getInstructionAt(a);
                 long w = a.getOffset() / 2;
+                Instruction ins;
+                try { ins = pdis.disassemble(a); } catch (Exception e) { ins = null; }
                 if (ins == null) {
-                    // Distinguish "address holds Data" (BFS overshot into BSS / a
-                    // literal-pool / an initialized data blob) from a real decode
-                    // failure. Data is not a spec bug; leaving it in the UNDEF
-                    // bucket buries the real bugs under BSS zero-fill floods.
-                    Data d = getDataContaining(a);
-                    if (d != null && d.isDefined()) {
-                        sb.append(String.format("%08x\t%08x\t<DATA>\n", startWord, w));
-                        data++;
-                    } else {
-                        sb.append(String.format("%08x\t%08x\t<UNDEF>\n", startWord, w));
-                        undef++;
-                    }
+                    sb.append(String.format("%08x\t%08x\t<UNDEF>\n", startWord, w));
                     a = a.add(2);
                     consumed += 1;
+                    undef++;
                     continue;
                 }
                 // Clean the operand string: Ghidra prints operands separated by ", " already,
@@ -105,8 +107,8 @@ public class DumpFwParityOurs extends GhidraScript {
         }
 
         try (FileWriter fw = new FileWriter(out)) { fw.write(sb.toString()); }
-        println(String.format("DumpFwParityOurs: %d regions, %d insns, %d UNDEF, %d DATA, %d unmapped",
-            regions.size(), ok, undef, data, missMem));
+        println(String.format("DumpFwParityOurs: %d regions, %d insns, %d UNDEF, %d unmapped",
+            regions.size(), ok, undef, missMem));
     }
 
     // JVM system property first, then -Dkey=value in script args (analyzeHeadless
