@@ -40,3 +40,15 @@ define pcodeop VCRC32L;     # CRC-32 on the low half
 :VMOV32 loc32, "VSTATUS"  is rpt_phase=1 & op16=0xE20D ; loc32  { loc32 = VSTATUS; }
 # VMOV32 VSTATUS, mem32  -- load status   0xE2B0
 :VMOV32 "VSTATUS", loc32  is rpt_phase=1 & op16=0xE2B0 ; loc32  { VSTATUS = loc32; }
+
+# =============================================================================
+# Viterbi shift-set (VCU4 subset used by CAN-CRC-adjacent code).
+# =============================================================================
+# VSETSHL #imm5    1110 0101 110i iiii   (single-word, 0xE5C0 | imm5)
+# VSETSHR #imm5    1110 0101 010i iiii   (single-word, 0xE540 | imm5)
+# Both set the internal Viterbi shift register; not modeled semantically since
+# they only affect the next VMSPL/VMSPR (also unmodelled). Present so real code
+# using them decodes and follows flow instead of stopping at UNDEF. Verified
+# against asm2000 (--vcu_support=vcu2) across imm5=0..31.
+:VSETSHL "#"vcu_imm5  is rpt_phase=1 & op_hi_11=0b11100101110 & vcu_imm5 { }
+:VSETSHR "#"vcu_imm5  is rpt_phase=1 & op_hi_11=0b11100101010 & vcu_imm5 { }
