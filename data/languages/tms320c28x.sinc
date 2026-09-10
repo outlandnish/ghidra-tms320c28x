@@ -46,6 +46,10 @@ define token instr16 (16)
     ax_bit    = (8,8)       # 0 = AL, 1 = AH  (the 'A' bit in 1001 xxxA ....)
     arsel3    = (8,10)      # 3-bit AR selector (the 'nnn' in 0111 1nnn ....) -> AR view
     arsel3x   = (8,10)      # same 3 bits attached to XARn (32-bit) for MOVZ zero-extend
+    arsel3n   = (8,10)      # same 3 bits with NO attach -- for pattern constraints on
+                            # the numeric value (MOVZ arsel3, loc16 must exclude n=6/7
+                            # since 0x5E/0x5F are the distinct MOV AR6/AR7 opcodes, not
+                            # MOVZ). Attached fields cannot appear in numeric compares.
     imm8      = (0,7)       # 8-bit immediate (CCCC CCCC, low byte)
     movst0_flags = (0,7)    # MOVST0's FLAG select mask. Its own field (not imm8) so that
                             # `attach names` can render TI's flag list -- imm8 is shared by
