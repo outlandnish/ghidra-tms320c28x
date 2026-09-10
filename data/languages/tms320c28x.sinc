@@ -57,6 +57,8 @@ define token instr16 (16)
     banz_n    = (0,2)       # ARn selector for BANZ (0000 0000 0000 1nnn)
     bar_arn   = (3,5)       # ARn selector for BAR (1000 1111 1CNNNMMM) -> attached to AR0..AR7
     bar_condbit = (6,6)     # BAR condition bit: 0=EQ, 1=NEQ
+    vcu_imm5  = (0,4)       # 5-bit shift immediate for VSETSHL / VSETSHR (VCU4)
+    op_hi_11  = (5,15)      # top 11 bits (VSETSHL/SHR: 1110 0101 C10 iiiii, C=1 SHL / 0 SHR)
     op_lo_hi5 = (3,7)       # bits 3..7 of low byte (BANZ: 00001 nnn -> this=00001)
     op_lo_76  = (6,7)       # bits 6..7 of the low byte (LCR #22bit group selector)
     op_lo_35  = (3,7)       # bits 3..7 of the low byte (LCR *XARn selector)
