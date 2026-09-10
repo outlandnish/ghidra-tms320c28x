@@ -92,6 +92,34 @@
     setNZ32(ACC);
 }
 
+# OR ACC,#16bit << #0..15    0011 1110 0001 SHFT : imm16    (2-word; SPRU430F p.315)
+# XOR ACC,#16bit << #0..15   0011 1110 0010 SHFT : imm16    (2-word; SPRU430F p.407)
+# Same 0x3E-prefix family as AND ACC,#imm16<<# above; only loc_hi4 differs
+# (0b0000 AND / 0b0001 OR / 0b0010 XOR). Verified against asm2000 across shifts.
+# Split on shft4==0 so shift-0 renders as `OR ACC,#imm16` (matches dis2000).
+:OR ACCreg, "#"imm16  is rpt_phase=1 & op_hi8=0x3E & loc_hi4=0b0001 & shft4=0 & ACCreg ; imm16 {
+    local v:4 = zext(imm16:2);
+    ACC = ACC | v;
+    setNZ32(ACC);
+}
+:OR ACCreg, "#"imm16^"<<#"^shft4  is rpt_phase=1 & op_hi8=0x3E & loc_hi4=0b0001 & shft4 & ACCreg ; imm16 {
+    local s:4 = zext(shft4:1);
+    local v:4 = zext(imm16:2) << s;
+    ACC = ACC | v;
+    setNZ32(ACC);
+}
+:XOR ACCreg, "#"imm16  is rpt_phase=1 & op_hi8=0x3E & loc_hi4=0b0010 & shft4=0 & ACCreg ; imm16 {
+    local v:4 = zext(imm16:2);
+    ACC = ACC ^ v;
+    setNZ32(ACC);
+}
+:XOR ACCreg, "#"imm16^"<<#"^shft4  is rpt_phase=1 & op_hi8=0x3E & loc_hi4=0b0010 & shft4 & ACCreg ; imm16 {
+    local s:4 = zext(shft4:1);
+    local v:4 = zext(imm16:2) << s;
+    ACC = ACC ^ v;
+    setNZ32(ACC);
+}
+
 # =============================================================================
 # CMP (compare = subtract, set flags, discard result)
 # =============================================================================

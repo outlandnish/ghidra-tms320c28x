@@ -1278,3 +1278,22 @@ define pcodeop iowrite;   # OUT / UOUT : iowrite(portAddr, value)
 :OUT "*("imm16"),"^loc16   is rpt_phase=1 & op_hi8=0xBC & loc16 ; imm16 {
     iowrite(imm16:2, loc16);
 }
+
+# =============================================================================
+# Stray misses from the fw-parity sweep after the harness fix surfaced them.
+# =============================================================================
+# MOVB loc16, AX.MSB   1100 100A LLLL LLLL   (single-word). Store MSB byte of
+# AX (bits 15..8) into low byte of [loc16]; high byte of [loc16] is zeroed per
+# SPRU430F. Peer to the existing MOVB AX.LSB store (op_hi7=0x1E) and MOVB
+# AX.MSB load (op_hi7=0x1C); this is the missing MSB store direction.
+:MOVB loc16, AX^".MSB"  is rpt_phase=1 & op_hi7=0x64 & AX & loc16 {
+    loc16 = (AX >> 8) & 0xFF;
+}
+
+# MOV XARn, PC   0011 1110 0101 1nnn   (single-word). Copies the PC of the next
+# instruction into XARn -- position-independent lookup idiom. C28x PC is a
+# 22-bit WORD address; SLEIGH's inst_next is byte-based, so shift right 1 to
+# match what hardware writes.
+:MOV loc_areg, "PC"  is rpt_phase=1 & op_hi8=0x3E & op_lo_hi5=0b01011 & loc_areg {
+    loc_areg = inst_next >> 1;
+}
