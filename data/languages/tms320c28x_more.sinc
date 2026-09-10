@@ -1250,3 +1250,31 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
     local a:4 = zext(imm16:2);
     *[ram]:2 a = loc16;
 }
+
+# =============================================================================
+# I/O port instructions (SPRU430F ch.6): IN / OUT / UOUT
+# =============================================================================
+# The C28x I/O space is architecturally distinct from data memory. All three
+# instructions are 2-word: word1 low byte = standard loc16 field, word2 = 16-bit
+# I/O port address (the "*(PA)" operand).
+#
+#   IN   loc16, *(PA)   1011 0100 LLLL LLLL : PPPP PPPP PPPP PPPP   (read from port)
+#   UOUT *(PA), loc16   1011 0000 LLLL LLLL : PPPP PPPP PPPP PPPP   (write, unprotected)
+#   OUT  *(PA), loc16   1011 1100 LLLL LLLL : PPPP PPPP PPPP PPPP   (write, protected)
+#
+# UOUT and OUT differ only in whether the write is gated by the I/O-space
+# protection bit; semantically they both move loc16 to the port. Modeled as
+# pcodeop intrinsics so the data flow is visible (loc16 -> port write is not
+# a memory access we can fold into a store). Verified against asm2000.
+define pcodeop ioread;    # IN         : value = ioread(portAddr)
+define pcodeop iowrite;   # OUT / UOUT : iowrite(portAddr, value)
+
+:IN loc16, "*("imm16")"  is rpt_phase=1 & op_hi8=0xB4 & loc16 ; imm16 {
+    loc16 = ioread(imm16:2);
+}
+:UOUT "*("imm16"),"^loc16  is rpt_phase=1 & op_hi8=0xB0 & loc16 ; imm16 {
+    iowrite(imm16:2, loc16);
+}
+:OUT "*("imm16"),"^loc16   is rpt_phase=1 & op_hi8=0xBC & loc16 ; imm16 {
+    iowrite(imm16:2, loc16);
+}
