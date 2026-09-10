@@ -92,11 +92,26 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 # Display the 16-bit AR (arsel3) but WRITE the full 32-bit XARn (arsel3x) zero-extended,
 # so ARnH is cleared as MOVZ requires. (Writing only the 16-bit AR left ARnH stale and
 # the decompiler rebuilt XARn as CONCAT22(stale_hi, lo) at every pointer use.)
-:MOVZ arsel3, loc16  is rpt_phase=1 & op_hi5=0b01011 & arsel3 & arsel3x & loc16  {
+#
+# NOTE: arsel3 must be constrained to 0..5. The 0x5E/0x5F op_hi8 slots are the MOV
+# AR6/AR7 partial-write instructions (below), NOT MOVZ. Before the constraint this
+# constructor matched op_hi8=0x5E/0x5F too and MOV AR6/AR7 rendered as MOVZ -- silent
+# WRONG in the fw-parity sweep, and semantically different (MOVZ clears ARnH, MOV
+# doesn't).
+:MOVZ arsel3, loc16  is rpt_phase=1 & op_hi5=0b01011 & arsel3 & arsel3x & loc16
+                     & arsel3n!=0b110 & arsel3n!=0b111  {
     arsel3x = zext(loc16);
 }
 :MOVZ "AR6", loc16   is rpt_phase=1 & op_hi8=0x88 & loc16  { XAR6 = zext(loc16); }
 :MOVZ "AR7", loc16   is rpt_phase=1 & op_hi8=0x80 & loc16  { XAR7 = zext(loc16); }
+
+# --- MOV ARn, loc16 : PARTIAL write of AR6/AR7 (ARnH preserved). Only n=6/7 have
+# this encoding -- asm2000 rejects `MOV AR0..5, @...` as illegal. Writing AR6/AR7
+# (the 16-bit view) leaves ARnH intact, which is the defining semantic difference
+# from MOVZ. Missed pre-fix because the MOVZ arsel3 pattern above swallowed the
+# 0x5E/0x5F slots. Verified against asm2000: 0x5E00 = MOV AR6,@0, 0x5F00 = MOV AR7,@0.
+:MOV "AR6", loc16    is rpt_phase=1 & op_hi8=0x5E & loc16  { AR6 = loc16; }
+:MOV "AR7", loc16    is rpt_phase=1 & op_hi8=0x5F & loc16  { AR7 = loc16; }
 
 # MOVZ DP, #10bit   1011 10CC CCCC CCCC   -- load low 10 bits of DP, clear rest.
 # Snapshot to ctx_DP so downstream `@6bit` accesses resolve to constant absolute
