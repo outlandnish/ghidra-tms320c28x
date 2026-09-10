@@ -119,6 +119,14 @@ if ($AnalyzedMode) {
   $functionsTsv = Join-Path $OutDir "functions.tsv"
   $projDir  = Split-Path -Parent $SeedsProject
   $projName = [IO.Path]::GetFileNameWithoutExtension($SeedsProject)
+  # Ghidra headless: -process takes a bare filename glob. To target a program in a
+  # subfolder, the folder path must be appended to the project-name arg. Split
+  # $SeedsProgram into (folder, basename) so callers can pass either a bare name
+  # ("foo.bin") or a domain path ("/subdir/foo.bin").
+  $normalized  = $SeedsProgram -replace '^/+', ''
+  $programName = Split-Path -Leaf   $normalized
+  $folderPart  = Split-Path -Parent $normalized
+  $projArg     = if ($folderPart) { "$projName/$($folderPart -replace '\\','/')" } else { $projName }
   $wsSeeds  = Join-Path $Work "seedxtract"
   Remove-Item -Recurse -Force $wsSeeds -ErrorAction SilentlyContinue
   New-Item -ItemType Directory -Force "$wsSeeds\scripts" | Out-Null
@@ -133,8 +141,8 @@ if ($AnalyzedMode) {
   Push-Location $wsSeeds
   $prevEA = $ErrorActionPreference; $ErrorActionPreference = "Continue"
   try {
-    & "$Ghidra\support\analyzeHeadless.bat" $projDir $projName `
-      -process $SeedsProgram -readOnly -noanalysis `
+    & "$Ghidra\support\analyzeHeadless.bat" $projDir $projArg `
+      -process $programName -readOnly -noanalysis `
       -scriptPath "$wsSeeds\scripts" `
       -postScript DumpFwParitySeeds.java `
       -postScript DumpFwParityImage.java `
@@ -410,8 +418,14 @@ try {
   if ($AnalyzedMode) {
     $projDir  = Split-Path -Parent $SeedsProject
     $projName = [IO.Path]::GetFileNameWithoutExtension($SeedsProject)
-    & "$Ghidra\support\analyzeHeadless.bat" $projDir $projName `
-      -process $SeedsProgram -readOnly -noanalysis `
+    # Same subfolder-aware split as the seed extractor block above; -process wants
+    # a bare filename, folder appended to the project-name arg.
+    $normalized  = $SeedsProgram -replace '^/+', ''
+    $programName = Split-Path -Leaf   $normalized
+    $folderPart  = Split-Path -Parent $normalized
+    $projArg     = if ($folderPart) { "$projName/$($folderPart -replace '\\','/')" } else { $projName }
+    & "$Ghidra\support\analyzeHeadless.bat" $projDir $projArg `
+      -process $programName -readOnly -noanalysis `
       -scriptPath "$ws\scripts" -postScript DumpFwParityOurs.java `
       -max-cpu 2 2>&1 | Out-Null
   } else {
@@ -464,13 +478,19 @@ foreach ($ln in @(Get-Content -LiteralPath $ourDump)) {
   $ourMnem[$key] = ($p[2] -split '\s+')[0].ToUpper()
 }
 
-$total = 0; $agree = 0; $wrong = 0; $undef = 0; $skew = 0; $opdiff = 0
+$total = 0; $agree = 0; $wrong = 0; $undef = 0; $skew = 0; $opdiff = 0; $dataSkip = 0
 $wrongHist = @{}; $undefHist = @{}; $skewHist = @{}
 $wrongEx = @{}; $undefEx = @{}; $skewEx = @{}
 foreach ($k in @($tiMnem.Keys)) {
-  $total++
   $tim = $tiMnem[$k]; $tit = $tiTxt[$k]
   $word = ($k -split '\|')[1]
+  # <DATA>: our-side detected that this word lives inside a defined Data instance
+  # in the analyzed program (BSS zero-fill, literal pool, data table). It is not a
+  # spec bug -- the analyzer correctly classified the byte as data and refused to
+  # disassemble it. Excluding these from $total keeps the summary honest; a BFS
+  # walk into BSS used to swamp UNDEF with thousands of ITRAP0 hits (bytes 0x0000).
+  if ($ourMnem.Contains($k) -and $ourMnem[$k] -eq "<DATA>") { $dataSkip++; continue }
+  $total++
   if (-not $ourMnem.Contains($k)) {
     $skew++; $skewHist[$tim] = 1 + ($skewHist[$tim] -as [int])
     if (-not $skewEx.Contains($tim)) { $skewEx[$tim] = $word }
@@ -493,7 +513,7 @@ foreach ($k in @($tiMnem.Keys)) {
   if ($tit.ToLower() -ne $ourTxt[$k].ToLower()) { $opdiff++ }
 }
 
-$summary = "SUMMARY total=$total agree=$agree wrong=$wrong undef=$undef skew=$skew opdiff=$opdiff"
+$summary = "SUMMARY total=$total agree=$agree wrong=$wrong undef=$undef skew=$skew opdiff=$opdiff data_skip=$dataSkip"
 Write-Host $summary -ForegroundColor Cyan
 
 $report = Join-Path $OutDir "report_sorted.txt"

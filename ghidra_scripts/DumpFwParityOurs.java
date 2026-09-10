@@ -22,6 +22,7 @@
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.address.Address;
 import ghidra.program.model.address.AddressSpace;
+import ghidra.program.model.listing.Data;
 import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.mem.Memory;
 import java.io.BufferedReader;
@@ -57,7 +58,7 @@ public class DumpFwParityOurs extends GhidraScript {
         AddressSpace ram = currentProgram.getAddressFactory().getDefaultAddressSpace();
         Memory mem = currentProgram.getMemory();
         StringBuilder sb = new StringBuilder();
-        int ok = 0, missMem = 0, undef = 0;
+        int ok = 0, missMem = 0, undef = 0, data = 0;
 
         for (long[] r : regions) {
             long startWord = r[0], lenWords = r[1];
@@ -74,10 +75,20 @@ public class DumpFwParityOurs extends GhidraScript {
                 Instruction ins = getInstructionAt(a);
                 long w = a.getOffset() / 2;
                 if (ins == null) {
-                    sb.append(String.format("%08x\t%08x\t<UNDEF>\n", startWord, w));
+                    // Distinguish "address holds Data" (BFS overshot into BSS / a
+                    // literal-pool / an initialized data blob) from a real decode
+                    // failure. Data is not a spec bug; leaving it in the UNDEF
+                    // bucket buries the real bugs under BSS zero-fill floods.
+                    Data d = getDataContaining(a);
+                    if (d != null && d.isDefined()) {
+                        sb.append(String.format("%08x\t%08x\t<DATA>\n", startWord, w));
+                        data++;
+                    } else {
+                        sb.append(String.format("%08x\t%08x\t<UNDEF>\n", startWord, w));
+                        undef++;
+                    }
                     a = a.add(2);
                     consumed += 1;
-                    undef++;
                     continue;
                 }
                 // Clean the operand string: Ghidra prints operands separated by ", " already,
@@ -94,8 +105,8 @@ public class DumpFwParityOurs extends GhidraScript {
         }
 
         try (FileWriter fw = new FileWriter(out)) { fw.write(sb.toString()); }
-        println(String.format("DumpFwParityOurs: %d regions, %d insns, %d UNDEF, %d unmapped",
-            regions.size(), ok, undef, missMem));
+        println(String.format("DumpFwParityOurs: %d regions, %d insns, %d UNDEF, %d DATA, %d unmapped",
+            regions.size(), ok, undef, data, missMem));
     }
 
     // JVM system property first, then -Dkey=value in script args (analyzeHeadless
