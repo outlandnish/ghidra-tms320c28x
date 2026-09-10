@@ -55,6 +55,8 @@ define token instr16 (16)
     cond4hi   = (8,11)      # COND in bits 8..11 (SB: 0110 COND CCCC CCCC)
     sb_grp    = (12,15)     # top nibble = 0110 for SB
     banz_n    = (0,2)       # ARn selector for BANZ (0000 0000 0000 1nnn)
+    bar_arn   = (3,5)       # ARn selector for BAR (1000 1111 1CNNNMMM) -> attached to AR0..AR7
+    bar_condbit = (6,6)     # BAR condition bit: 0=EQ, 1=NEQ
     op_lo_hi5 = (3,7)       # bits 3..7 of low byte (BANZ: 00001 nnn -> this=00001)
     op_lo_76  = (6,7)       # bits 6..7 of the low byte (LCR #22bit group selector)
     op_lo_35  = (3,7)       # bits 3..7 of the low byte (LCR *XARn selector)
