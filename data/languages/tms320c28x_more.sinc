@@ -1019,6 +1019,21 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
     xarn_hi3 = xarn_hi3 + zext(sp7:1);
 }
 
+# ADRK #8bit    1111 1100 CCCC CCCC   -- XAR(ARP) += zext(imm8).
+# SBRK #8bit    1111 1101 CCCC CCCC   -- XAR(ARP) -= zext(imm8).
+# Both are ARP-selected register arithmetic (SPRU430F ch. 6). We do not track
+# ARP as state (see docs/DESIGN.md discussion of *,*++ etc.), so model as XAR0 --
+# the same silent-wrong-when-ARP!=0 convention the C2xLP ARP-implicit addressing
+# modes use. dis2000 renders these with no register in the listing (`SBRK #71`),
+# so a wrong-XAR here is invisible in the text; a future ARP model fixes both at
+# once. Neither instruction touches status flags.
+:ADRK "#"imm8  is rpt_phase=1 & op_hi8=0xFC & imm8 {
+    XAR0 = XAR0 + zext(imm8:1);
+}
+:SBRK "#"imm8  is rpt_phase=1 & op_hi8=0xFD & imm8 {
+    XAR0 = XAR0 - zext(imm8:1);
+}
+
 # --- 0xFF-prefix fixed/shift forms ------------------------------------------
 # ABS ACC          1111 1111 0101 0110  (ACC = |ACC|). SPRU430F: N/Z from result,
 # C cleared, V set if the input was 0x80000000 (the one value with no positive counterpart).
