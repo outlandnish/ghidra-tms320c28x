@@ -783,8 +783,10 @@ p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
 :SUBF32 f_ra, "#"^ctx_fimm16, f_rb  is rpt_phase=1 & op_hi8=0xE8 & op_lo_76=0b11 & fimm_lo6 ; f_ra & f_rb & fimm_hi10
         [ ctx_fimm16 = (fimm_lo6 << 10) | fimm_hi10; ] {
     local imm:4 = (zext(fimm_lo6:4) << 10 | zext(fimm_hi10:4)) << 16;
-    fpu_latch2($(FPK_SUB), f_rb, imm);
-    f_ra = f_rb f- imm;
+    # TI: "SUBF32 RaH, #16FHi, RbH" computes RaH = #16FHi:0 - RbH (immediate minus register),
+    # the reverse of the three-register form's RaH = RbH - RcH.
+    fpu_latch2($(FPK_SUB), imm, f_rb);
+    f_ra = imm f- f_rb;
 }
 
 # CMPF32 RaH, #16FHi   LSW: 1110 1000 0001 0III ; MSW: IIII IIII IIII Iaaa  (2-word)
