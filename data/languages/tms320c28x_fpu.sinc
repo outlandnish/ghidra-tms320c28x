@@ -520,25 +520,20 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
 }
 
 # RPTB label, loc16 / #RC   LSW: 1011 0101 Rbbb bbbb ; MSW: (0000 0000 loc16) or (imm16).
-# Zero-overhead block repeat: after the RPTB, the CPU runs the following RSIZE+1 words
-# and loops back RB_RC additional times. Now modeled entirely in SLEIGH via the RPTB
-# `^instruction` prefix wrapper in tms320c28x_rpt.sinc.
+# Zero-overhead block repeat: after the RPTB, the CPU runs the following RSIZE words
+# (the assembler accepts 9..127) and loops back RB_RC additional times. Modeled in
+# SLEIGH via the RPTB `^instruction` prefix wrapper in tms320c28x_rpt.sinc.
 #
-# HOW: the `rptb_end` sub-table below computes the block-end byte address as
-# `inst_start + RSIZE + 2` (the +2 accounts for RPTB itself being a 2-word insn,
-# so inst_next = inst_start + 2, and end = inst_next + RSIZE). It arms rptb_flag
-# on THAT address via globalset, so the wrapper fires on the last block insn:
-# there it decrements RB_RC and branches to RB_RSTART (= inst_next of the RPTB)
-# until the count is exhausted. `RB = zext(rsz)` is kept only so PUSH RB captures
-# the same value as before -- the packed 32-bit RB layout at 0x90 is not otherwise
-# reconstructed from the split RB_R* slots. Ported from mwdmwd/ghidra-c28x
-# (Apache-2.0); see THIRD-PARTY.md.
-# The `rptb_end` sub-table computes the block-end address as inst_next + RSIZE
-# (in the addressable-unit units SLEIGH uses for inst_start / inst_next, which
-# is word units in this wordsize=2 space). It arms rptb_flag=1 and rpt_phase=0
-# on that address via globalset, so the wrapper fires on the last block insn.
-# It also exports the address so the parent's display renders the block-end
-# label instead of a raw RSIZE integer (matching TI dis2000 syntax).
+# RSIZE is the block length in words and the label is EXCLUSIVE (asm2000/dis2000:
+# `RPTB endA, AR6` = b509 00a6 with a 9-word block puts endA at RPTB+2+9, the first
+# instruction after the block). The `rptb_end` sub-table computes that address as
+# `inst_start + RSIZE + 2` (word units in this wordsize=2 space), arms rptb_flag /
+# rpt_phase there via globalset, and exports it so the display renders the label
+# as dis2000 does. The wrapper loops back BEFORE executing the instruction at the
+# label, so that instruction (often the epilogue) runs once, after the last pass.
+# `RB = zext(rsz)` is kept only so PUSH RB captures the same value as before -- the
+# packed 32-bit RB layout at 0x90 is not otherwise reconstructed from the split RB_R*
+# slots. Ported from mwdmwd/ghidra-c28x (Apache-2.0); see THIRD-PARTY.md.
 rptb_end: rel  is rptb_rsz
         [ rel = inst_start + rptb_rsz + 2;
           rptb_flag=1; rpt_phase=0;
@@ -783,8 +778,10 @@ p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
 :SUBF32 f_ra, "#"^ctx_fimm16, f_rb  is rpt_phase=1 & op_hi8=0xE8 & op_lo_76=0b11 & fimm_lo6 ; f_ra & f_rb & fimm_hi10
         [ ctx_fimm16 = (fimm_lo6 << 10) | fimm_hi10; ] {
     local imm:4 = (zext(fimm_lo6:4) << 10 | zext(fimm_hi10:4)) << 16;
-    fpu_latch2($(FPK_SUB), f_rb, imm);
-    f_ra = f_rb f- imm;
+    # TI: "SUBF32 RaH, #16FHi, RbH" computes RaH = #16FHi:0 - RbH (immediate minus register),
+    # the reverse of the three-register form's RaH = RbH - RcH.
+    fpu_latch2($(FPK_SUB), imm, f_rb);
+    f_ra = imm f- f_rb;
 }
 
 # CMPF32 RaH, #16FHi   LSW: 1110 1000 0001 0III ; MSW: IIII IIII IIII Iaaa  (2-word)

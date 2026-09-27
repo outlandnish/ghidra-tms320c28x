@@ -474,8 +474,21 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 # These (ADD/AND/OR/XOR loc16,#16bit) are extremely common in init/config code.
 # word1 = opcode + loc ; word2 = 16-bit immediate.
 # =============================================================================
-# ADD loc16,#16bit   0000 1000 LLLL LLLL : iiii
-:ADD loc16, "#"imm16  is rpt_phase=1 & op_hi8=0x08 & loc16 ; imm16  { loc16 = loc16 + imm16:2; }
+# ADD loc16,#16bitSigned   0000 1000 LLLL LLLL : CCCC CCCC CCCC CCCC
+# SPRU430F 6.3 (p.133): N and Z are taken from the stored result, C is the carry out of the
+# 16-bit add, and V is set on signed overflow and cleared when there is none. This was
+# flag-silent, so a conditional branch after it read whatever an earlier instruction left.
+# Compilers use it as `x += k` on a register half too (`ADD @AL,#0xff01 ; SB ...,GT`).
+# Guarded by EmuAddLoc16ImmFlagsTest.
+:ADD loc16, "#"imm16  is rpt_phase=1 & op_hi8=0x08 & loc16 ; imm16  {
+    local m:2 = loc16;
+    local b:2 = imm16:2;
+    $(C) = carry(m, b);
+    $(V) = scarry(m, b);
+    m = m + b;
+    loc16 = m;
+    setNZ16(m);
+}
 # AND/OR/XOR loc16,#16bit   0001 1sss LLLL LLLL : iiii  (store-side R-M-W). N/Z from
 # result per SPRU430F. Were flag-silent -- see issue #108.
 :AND loc16, "#"imm16  is rpt_phase=1 & op_hi8=0x18 & loc16 ; imm16  { loc16 = loc16 & imm16:2; setNZ16(loc16); }

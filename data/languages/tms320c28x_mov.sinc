@@ -74,6 +74,13 @@
 # own TODO marker that decayed.
 # MOV loc16, ARn    0111 1nnn LLLL LLLL   -- store low 16 of XARn (n=0..7)
 # Top 5 bits = 01111 = 0x0F; bits 8..10 = arsel3 (attached to AR0..AR7).
+# SPRU430F: N/Z set only when loc16=@AX.
+:MOV "@AH", arsel3  is rpt_phase=1 & op_hi5=0x0F & ctx_AMODE=0 & loc_full8=0b10101000 & arsel3 {
+    AH = arsel3; setNZ16(AH);
+}
+:MOV "@AL", arsel3  is rpt_phase=1 & op_hi5=0x0F & ctx_AMODE=0 & loc_full8=0b10101001 & arsel3 {
+    AL = arsel3; setNZ16(AL);
+}
 :MOV loc16, arsel3  is rpt_phase=1 & op_hi5=0x0F & loc16 & arsel3  {
     loc16 = arsel3;
 }
@@ -161,6 +168,16 @@
 # MOVL loc32, XARn  -- per-register scattered opcodes (NOT a clean bit field).
 # XAR0=3A XAR1=B2 XAR2=AA XAR3=A2 XAR4=A8 XAR5=A0 XAR6=C2 XAR7=C3
 # Register name is literal display text (quoted) so it is not parsed as an operand.
+# SPRU430F: N/Z set only when loc32=@ACC. cl2000 null-checks pointers this way
+# (`MOVL @ACC,XAR1 ; SB ..,EQ`), so a flag-silent @ACC form skips the branch wrongly.
+:MOVL "@ACC", "XAR0"  is rpt_phase=1 & op_hi8=0x3A & ctx_AMODE=0 & loc_full8=0b10101001 { ACC = XAR0; setNZ32(ACC); }
+:MOVL "@ACC", "XAR1"  is rpt_phase=1 & op_hi8=0xB2 & ctx_AMODE=0 & loc_full8=0b10101001 { ACC = XAR1; setNZ32(ACC); }
+:MOVL "@ACC", "XAR2"  is rpt_phase=1 & op_hi8=0xAA & ctx_AMODE=0 & loc_full8=0b10101001 { ACC = XAR2; setNZ32(ACC); }
+:MOVL "@ACC", "XAR3"  is rpt_phase=1 & op_hi8=0xA2 & ctx_AMODE=0 & loc_full8=0b10101001 { ACC = XAR3; setNZ32(ACC); }
+:MOVL "@ACC", "XAR4"  is rpt_phase=1 & op_hi8=0xA8 & ctx_AMODE=0 & loc_full8=0b10101001 { ACC = XAR4; setNZ32(ACC); }
+:MOVL "@ACC", "XAR5"  is rpt_phase=1 & op_hi8=0xA0 & ctx_AMODE=0 & loc_full8=0b10101001 { ACC = XAR5; setNZ32(ACC); }
+:MOVL "@ACC", "XAR6"  is rpt_phase=1 & op_hi8=0xC2 & ctx_AMODE=0 & loc_full8=0b10101001 { ACC = XAR6; setNZ32(ACC); }
+:MOVL "@ACC", "XAR7"  is rpt_phase=1 & op_hi8=0xC3 & ctx_AMODE=0 & loc_full8=0b10101001 { ACC = XAR7; setNZ32(ACC); }
 :MOVL loc32, "XAR0"   is rpt_phase=1 & op_hi8=0x3A & loc32  { loc32 = XAR0; }
 :MOVL loc32, "XAR1"   is rpt_phase=1 & op_hi8=0xB2 & loc32  { loc32 = XAR1; }
 :MOVL loc32, "XAR2"   is rpt_phase=1 & op_hi8=0xAA & loc32  { loc32 = XAR2; }

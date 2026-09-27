@@ -67,19 +67,24 @@
     goto inst_start;
 }
 
-# RPTB wrapper: fires at the block-end address (globalset from the RPTB body's
-# rptb_end sub-table). Falls through when RB_RC is exhausted; otherwise
-# decrements RB_RC and jumps back to RB_RSTART (the first instruction of the
-# block, i.e. inst_next of the RPTB itself). RB_RA cleared on the falling-
-# through pass, matching hardware. `rpt_active=0` for mutual exclusion vs the
-# RPT wrapper above.
+# RPTB wrapper: fires on the instruction at the block-end label (globalset from the
+# RPTB body's rptb_end sub-table). The label is EXCLUSIVE -- the first instruction
+# AFTER the block (dis2000: `RPTB endA, AR6` with RSIZE 9 puts endA at RPTB+2+9) --
+# so the loop-back happens BEFORE that instruction runs: while the repeat is active
+# and RB_RC is non-zero, decrement RB_RC and jump back to RB_RSTART (inst_next of
+# the RPTB) without executing it. On the final pass RB_RA drops and the instruction
+# executes once, as on hardware. Arming the last block instruction instead is not
+# possible: its start depends on its length (1-3 words), unknown at RPTB decode.
+# `rpt_active=0` for mutual exclusion vs the RPT wrapper above.
 :^instruction  is rpt_phase=0 & rptb_flag=1 & rpt_active=0 & instruction  [ rpt_phase=1; ] {
-    build instruction;
-    if (RB_RC == 0) goto <done>;
+    if (RB_RA == 0) goto <run>;
+    if (RB_RC == 0) goto <last>;
     RB_RC = RB_RC - 1;
     goto [RB_RSTART];
-  <done>
+  <last>
     RB_RA = 0;
+  <run>
+    build instruction;
 }
 
 # =============================================================================
