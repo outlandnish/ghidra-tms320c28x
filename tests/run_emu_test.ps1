@@ -62,6 +62,7 @@ Copy-Item "$Module\ghidra_scripts\EmuLeftoverFamilyTest.java" "$ws\scripts\" -Fo
 Copy-Item "$Module\ghidra_scripts\EmuLoopTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuFwGapsTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuModuloTest.java" "$ws\scripts\" -Force
+Copy-Item "$Module\ghidra_scripts\EmuAddbAxSignTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuSubf32ImmTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuAddLoc16ImmFlagsTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\tests\fpu_flags.bin" "$ws\" -Force
@@ -119,6 +120,7 @@ Invoke-Suite "EmuLeftoverFamilyTest" "fpu_flags.bin"  # issue #112: INC/DEC C + 
 Invoke-Suite "EmuLoopTest" "fpu_flags.bin"            # issue #114: LOOPZ / LOOPNZ N/Z semantics
 Invoke-Suite "EmuFwGapsTest" "fpu_flags.bin"          # issue #118: AND ACC,#imm<<# N/Z + TBIT TC (fw-parity gaps)
 Invoke-Suite "EmuModuloTest" "fpu_flags.bin"          # issue #127 follow-up: *AR6%++ circular wrap (loc16/loc32)
+Invoke-Suite "EmuAddbAxSignTest" "fpu_flags.bin"      # ADDB AX,#8bitSigned sign-extends its constant
 Invoke-Suite "EmuSubf32ImmTest" "fpu_flags.bin"       # issue #138: SUBF32 RaH,#16FHi,RbH is imm - RbH
 Invoke-Suite "EmuAddLoc16ImmFlagsTest" "fpu_flags.bin" # ADD loc16,#16bitSigned sets N/Z/C/V
 
