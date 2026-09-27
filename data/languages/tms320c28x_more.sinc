@@ -279,9 +279,13 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
     setNZ32(ACC);
     applyOvcSigned(ACC);
 }
-# ADDB AX, #8bit    1001 110A CCCC CCCC
+# ADDB AX, #8bitSigned    1001 110A CCCC CCCC
+# SPRU430F 6.3 (p.135): the constant is a signed 8-bit value (-128..127), sign-extended before
+# the add. This is the one signed form among the 8-bit immediates: ADDB/SUBB ACC, CMPB, MOVB
+# and ANDB/ORB/XORB AX all zero-extend. There is no SUBB AX, so compilers write `AX - n` as
+# ADDB AX,#-n; zero extension turned `ADDB AL,#-2` into +254. Guarded by EmuAddbAxSignTest.
 :ADDB AX, "#"imm8   is rpt_phase=1 & op_hi7=0x4E & AX & imm8  {
-    local b:2 = zext(imm8:1);
+    local b:2 = sext(imm8:1);
     $(C) = carry(AX, b); $(V) = scarry(AX, b);
     AX = AX + b; setNZ16(AX);
 }
