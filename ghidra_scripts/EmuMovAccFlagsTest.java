@@ -24,6 +24,7 @@
 //     - MOVH @AH/@AL,P       (more.sinc, both pm_shift halves)
 //     - MOVH @AH/@AL,ACC<<1  (more.sinc)
 //     - MOV @AH/@AL,ACC<<#2..8 and MOVH @AH/@AL,ACC<<#2..8 (ext56.sinc, 2-word)
+//     - MOVL @ACC,XARn and MOV @AH/@AL,ARn (mov.sinc)
 //
 // Every case pre-seeds the asserted flag to its opposite; a body that leaves
 // the flag alone (the pre-fix state) will fail.
@@ -157,9 +158,19 @@ public class EmuMovAccFlagsTest extends GhidraScript {
                 "MOVL @ACC,XT : XT=0x80000000 -> ACC=XT, N=1 (issue #110 follow-up)");
             movlAtAccSrc(emu, sp, 0xABA9L, "XT", 0L, 0, 1,
                 "MOVL @ACC,XT : XT=0 -> ACC=0, Z=1");
+            // 15. MOVL @ACC,XARn -- cl2000's pointer null-check (`MOVL @ACC,XAR1 ; SB EQ`).
+            movlAtAccSrc(emu, sp, 0xB2A9L, "XAR1", 0x500L, 0, 0,
+                "MOVL @ACC,XAR1 : XAR1=0x500 -> ACC=0x500, Z=0");
+            movlAtAccSrc(emu, sp, 0xA8A9L, "XAR4", 0L, 0, 1,
+                "MOVL @ACC,XAR4 : XAR4=0 -> ACC=0, Z=1");
+            // 16. MOV @AX,ARn (op_hi5=0x0F, arsel3 in bits 8..10).
+            movAtAxAr(emu, sp, 0x7C00L | LOC_AL, "XAR4", 0x8000L, 1, 0,
+                "MOV @AL,AR4 : AR4=0x8000 -> AL=0x8000, N=1");
+            movAtAxAr(emu, sp, 0x7800L | LOC_AH, "XAR0", 0L, 0, 1,
+                "MOV @AH,AR0 : AR0=0 -> AH=0, Z=1");
 
             if (failures == 0) {
-                println("EmuMovAccFlagsTest.java> PASS: MOV family N/Z audit (issue #110, 18 cases)");
+                println("EmuMovAccFlagsTest.java> PASS: MOV family N/Z audit (issue #110, 22 cases)");
             } else {
                 println("EmuMovAccFlagsTest.java> FAIL: " + failures + " check(s) failed");
             }
@@ -364,6 +375,21 @@ public class EmuMovAccFlagsTest extends GhidraScript {
         emu.writeRegister("PC", here);
         if (!emu.step(monitor)) { fail(what, emu.getLastError()); return; }
         expect(what + " [ACC]", emu.readRegister("ACC").longValue() & 0xffffffffL, srcVal);
+        expect(what + " [N]", emu.readRegister("N").longValue(), wantN);
+        expect(what + " [Z]", emu.readRegister("Z").longValue(), wantZ);
+    }
+
+    private void movAtAxAr(EmulatorHelper emu, AddressSpace sp, long opWord, String srcReg,
+            long srcVal, long wantN, long wantZ, String what) throws Exception {
+        emu.writeRegister(srcReg, srcVal);
+        emu.writeRegister("ACC", 0x12345678L);
+        seedFlags(emu, wantN, wantZ);
+        long here = codeCursor; codeCursor += 4;
+        emu.writeMemoryValue(sp.getAddress(here * 2), 2, opWord);
+        emu.writeRegister("PC", here);
+        if (!emu.step(monitor)) { fail(what, emu.getLastError()); return; }
+        String reg = (opWord & 0xffL) == LOC_AH ? "AH" : "AL";
+        expect(what + " [" + reg + "]", emu.readRegister(reg).longValue() & 0xffffL, srcVal);
         expect(what + " [N]", emu.readRegister("N").longValue(), wantN);
         expect(what + " [Z]", emu.readRegister("Z").longValue(), wantZ);
     }
