@@ -258,6 +258,20 @@ macro applyOvcSigned(ovf, res) {
     OVC = OVC + (delta & apply_mask);
 }
 
+# OVM=1 saturation for signed ACC arithmetic (SPRU430F 2.3 + each op's OVM row): "the CPU
+# automatically fills ACC with a positive or negative saturation value" -- 0x7FFFFFFF on a
+# positive overflow, 0x80000000 on a negative one. Every applyOvcSigned site calls it right
+# after, because it is the same overflow: OVM=0 counts it in OVC, OVM=1 saturates instead.
+# `res` is the wrapped result, so its sign gives the direction (negative = wrapped from +MAX).
+# Call it BEFORE setNZ32: N and Z describe the final ACC. NEG/ABS use applyOvmSaturate32
+# instead -- their only overflow (the minimum input) saturates to +MAX.
+macro applyOvmSaturateSigned(ovf, res) {
+    local sat:1 = ovf & $(OVM);
+    local sat_mask:4 = 0 - zext(sat);
+    local limit:4 = 0x7FFFFFFF + zext(res s>= 0);  # +MAX if wrapped negative, else 0x80000000
+    res = (limit & sat_mask) | (res & ~sat_mask);
+}
+
 # Unsigned add variant: OVC += 1 on unsigned carry (C=1). Used by ADDUL /
 # ADDUL P / IMPYAL / IMACL per Table 2-5. NOTE: unlike signed OVC, SPRU430F
 # is explicit that "The OVM mode does not affect the OVCU counter" (see the

@@ -29,8 +29,8 @@
 # =============================================================================
 # ADDL/SUBL/SUBRL loc32,ACC  (read-modify-write; ACC is only a source). SPRU430F lists
 # N/Z/C/V and OVC for all three. Its rows say "ACC", but ACC is unchanged and SUBL's N row
-# names [loc32], so N/Z come from the stored result. These were flag-silent. OVM
-# saturation is not modeled, same as the other 32-bit add/sub forms.
+# names [loc32], so N/Z come from the stored result, and OVM saturates the stored value
+# (the manual's "ACC value will saturate" is the same copy-paste). These were flag-silent.
 # ADDL loc32,ACC    0x5601 : 0000 0000 LLLL LLLL
 :ADDL loc32, ACCreg  is rpt_phase=1 & op16=0x5601 ; loc32 & ACCreg  {
     local m:4 = loc32;
@@ -38,9 +38,10 @@
     local ovf:1 = scarry(m, ACC);
     $(V) = $(V) | ovf;
     m = m + ACC;
+    applyOvcSigned(ovf, m);
+    applyOvmSaturateSigned(ovf, m);
     loc32 = m;
     setNZ32(m);
-    applyOvcSigned(ovf, m);
 }
 # SUBL loc32,ACC    0x5641  (loc = loc - ACC)
 :SUBL loc32, ACCreg  is rpt_phase=1 & op16=0x5641 ; loc32 & ACCreg  {
@@ -49,9 +50,10 @@
     local ovf:1 = sborrow(m, ACC);
     $(V) = $(V) | ovf;
     m = m - ACC;
+    applyOvcSigned(ovf, m);
+    applyOvmSaturateSigned(ovf, m);
     loc32 = m;
     setNZ32(m);
-    applyOvcSigned(ovf, m);
 }
 # SUBRL loc32,ACC    0x5649  (reverse subtract: loc = ACC - loc)
 :SUBRL loc32, ACCreg is rpt_phase=1 & op16=0x5649 ; loc32 & ACCreg  {
@@ -60,9 +62,10 @@
     local ovf:1 = sborrow(ACC, m);
     $(V) = $(V) | ovf;
     m = ACC - m;
+    applyOvcSigned(ovf, m);
+    applyOvmSaturateSigned(ovf, m);
     loc32 = m;
     setNZ32(m);
-    applyOvcSigned(ovf, m);
 }
 # ADD ACC,loc16<<T   0x5623  (shift by T(3:0)). SPRU430F: N,Z,C,V per the 32-bit add
 # of ACC + (mext(loc16) << sh) -- same as the plain ADD ACC,loc16 sibling.
@@ -75,8 +78,9 @@
     local ovf:1 = scarry(ACC, addend);
     $(V) = $(V) | ovf;
     ACC = ACC + addend;
-    setNZ32(ACC);
     applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
 }
 # SUB ACC,loc16<<T   0x5627. SPRU430F: N,Z,C(inverted borrow),V.
 :SUB ACCreg, loc16^"<<T"  is rpt_phase=1 & op16=0x5627 ; loc16 & ACCreg  {
@@ -88,8 +92,9 @@
     local ovf:1 = sborrow(ACC, subend);
     $(V) = $(V) | ovf;
     ACC = ACC - subend;
-    setNZ32(ACC);
     applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
 }
 # MOV ACC,loc16<<T   0x5606
 :MOV ACCreg, loc16^"<<T"  is rpt_phase=1 & op16=0x5606 ; loc16 & ACCreg  {
@@ -139,8 +144,9 @@
     local ovf:1 = scarry(ACC, addend);
     $(V) = $(V) | ovf;
     ACC = ACC + addend;
-    setNZ32(ACC);
     applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
 }
 # ADDUL ACC,loc32    0x5653  (add unsigned 32). SPRU430F: N,Z,C,V; Table 2-5 groups
 # ADDUL under "Unsigned Instructions" -- OVC increments on unsigned carry (C=1), not
@@ -180,8 +186,9 @@
     local ovf:1 = sborrow(ACC, b);
     $(V) = $(V) | ovf;
     ACC = ACC - b;
-    setNZ32(ACC);
     applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
 }
 # ADDCL ACC,loc32   0x5640  (add 32-bit value plus carry to ACC). dis2000-confirmed (DIR).
 # SPRU430F: N/Z/C/V + OVC. Combined-addend pattern mirrors SUBBL above.
@@ -192,8 +199,9 @@
     local ovf:1 = scarry(ACC, b);
     $(V) = $(V) | ovf;
     ACC = ACC + b;
-    setNZ32(ACC);
     applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
 }
 # MOVU loc16,OVC    0x5628 : loc16  (STORE the 6-bit OVC into low bits of [loc16];
 # upper 10 bits of the target are zeroed). Was writing literal 0 -- fixed to write the
@@ -400,8 +408,9 @@ macro normAcc() {
     local ovf:1 = scarry(ACC, b);
     $(V) = $(V) | ovf;
     ACC = ACC + b;
-    setNZ32(ACC);
     applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
     local a:8 = sext(XT); local m:8 = sext(loc32); local r:8 = (a * m) >> 32; P = r:4;
 }
 :QMPYSL Preg, XTreg, loc32  is rpt_phase=1 & op16=0x5645 ; loc32 & Preg & XTreg {
@@ -410,8 +419,9 @@ macro normAcc() {
     local ovf:1 = sborrow(ACC, b);
     $(V) = $(V) | ovf;
     ACC = ACC - b;
-    setNZ32(ACC);
     applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
     local a:8 = sext(XT); local m:8 = sext(loc32); local r:8 = (a * m) >> 32; P = r:4;
 }
 :IMPYAL Preg, XTreg, loc32  is rpt_phase=1 & op16=0x564C ; loc32 & Preg & XTreg {
@@ -459,8 +469,9 @@ macro normAcc() {
     local ovf:1 = scarry(ACC, addend);
     $(V) = $(V) | ovf;
     ACC = ACC + addend;
-    setNZ32(ACC);
     applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
     local b:4 = sext(xt_lo);  local ml:4 = sext(tmp_lo);
     P = P + (b * ml);
 }
@@ -475,8 +486,9 @@ macro normAcc() {
     local ovf:1 = scarry(ACC, addend);
     $(V) = $(V) | ovf;
     ACC = ACC + addend;
-    setNZ32(ACC);
     applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
     local b:4 = sext(xt_lo);  local ml:4 = sext(tmp_lo);
     P = P + (b * ml);
     XAR7 = XAR7 + 2;   # post-increment (2 word-addresses = 32 bits)
@@ -487,8 +499,9 @@ macro normAcc() {
     local ovf:1 = scarry(ACC, b);
     $(V) = $(V) | ovf;
     ACC = ACC + b;
-    setNZ32(ACC);
     applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
     local a:8   = sext(loc32);
     local tmp:4 = *[ram]:4 XAR7;
     local m:8   = sext(tmp);
@@ -501,8 +514,9 @@ macro normAcc() {
     local ovf:1 = scarry(ACC, b);
     $(V) = $(V) | ovf;
     ACC = ACC + b;
-    setNZ32(ACC);
     applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
     local a:8   = sext(loc32);
     local tmp:4 = *[ram]:4 XAR7;
     local m:8   = sext(tmp);
@@ -548,8 +562,9 @@ macro normAcc() {
     local ovf:1 = scarry(ACC, b);
     $(V) = $(V) | ovf;
     ACC = ACC + b;
-    setNZ32(ACC);
     applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
     T = loc16; local t:4 = sext(T); P = t * t;
 }
 :SQRS loc16  is rpt_phase=1 & op16=0x5611 ; loc16 {
@@ -558,8 +573,9 @@ macro normAcc() {
     local ovf:1 = sborrow(ACC, b);
     $(V) = $(V) | ovf;
     ACC = ACC - b;
-    setNZ32(ACC);
     applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
     T = loc16; local t:4 = sext(T); P = t * t;
 }
 # ZALR ACC,loc16  0x5613 : loc16  -- AL = 0x8000 (round const), AH = [loc16]. dis2000-confirmed.

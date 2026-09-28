@@ -17,8 +17,9 @@
 //
 // Also covers the two conditional stores whose COND field was misread (MOVL loc32,ACC,COND
 // took it from the loc32 byte; MOV loc16,AX,COND never decoded it and always stored), and
-// MIN/MAX/MAXL/MAXCUL, which set V but cannot clear it, and ADDL/SUBL/SUBRL loc32,ACC, which
-// set no flags at all.
+// MIN/MAX/MAXL/MAXCUL, which set V but cannot clear it, ADDL/SUBL/SUBRL loc32,ACC, which set
+// no flags at all, and OVM=1 saturation: an ACC overflow fills ACC with 0x7FFFFFFF/0x80000000
+// instead of counting in OVC.
 //
 // Run headless (any TMS320C28x program works; the test writes its own code into the emulator):
 //   analyzeHeadless <proj> t -import tests/fpu_flags.bin \
@@ -118,6 +119,22 @@ public class EmuVFlagTest extends GhidraScript {
               out("mem32", 0xFFFFFFFEL, "N", 1, "C", 0));
             c("SUBRL [m],ACC: equal -> zero", w(0x5649, XAR4_0), in("ACC", 7, "mem32", 7),
               out("mem32", 0, "Z", 1, "C", 1));
+            // --- OVM=1: the overflow saturates ACC instead of counting in OVC; N/Z see the result
+            c("ADDB ACC,#1 OVM=1: saturates to +MAX", w(0x0901),
+              in("ACC", 0x7FFFFFFFL, "OVM", 1, "N", 1), out("ACC", 0x7FFFFFFFL, "V", 1, "OVC", 0, "N", 0));
+            c("SUBB ACC,#1 OVM=1: saturates to -MAX", w(0x1901),
+              in("ACC", 0x80000000L, "OVM", 1), out("ACC", 0x80000000L, "V", 1, "OVC", 0, "N", 1));
+            c("ADDB ACC,#1 OVM=1, no overflow: plain add", w(0x0901),
+              in("ACC", 5, "OVM", 1), out("ACC", 6, "V", 0));
+            c("ADDB ACC,#1 OVM=1, stale V: no saturation", w(0x0901),
+              in("ACC", 5, "OVM", 1, "V", 1), out("ACC", 6, "V", 1));
+            c("ADDL [m],ACC OVM=1: stored value saturates", w(0x5601, XAR4_0),
+              in("ACC", 1, "mem32", 0x7FFFFFFFL, "OVM", 1), out("mem32", 0x7FFFFFFFL, "N", 0, "V", 1, "OVC", 0));
+            // --- ADDU ACC,loc16: had no V/OVC/OVM at all ---------------------------------------
+            c("ADDU ACC OVM=0: V set, OVC counts", w(0x0DC4),
+              in("ACC", 0x7FFFFFFFL, "mem16", 1), out("ACC", 0x80000000L, "V", 1, "OVC", 1, "N", 1));
+            c("ADDU ACC OVM=1: saturates", w(0x0DC4),
+              in("ACC", 0x7FFFFFFFL, "mem16", 1, "OVM", 1), out("ACC", 0x7FFFFFFFL, "V", 1, "OVC", 0, "N", 0));
 
             if (failures == 0) println("EmuVFlagTest.java> PASS: V lifetime (" + cases + " cases)");
             else println("EmuVFlagTest.java> FAIL: " + failures + " check(s) failed");

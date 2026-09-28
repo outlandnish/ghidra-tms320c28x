@@ -35,8 +35,9 @@
     local ovf:1 = sborrow(ACC, b);
     $(V) = $(V) | ovf;
     ACC = ACC - b;
-    setNZ32(ACC);
     applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
     local a:4 = sext(T);
     local m:4 = sext(loc16);
     P = a * m;
@@ -63,8 +64,9 @@
     local ovf:1 = scarry(ACC, b);
     $(V) = $(V) | ovf;
     ACC = ACC + b;
-    setNZ32(ACC);
     applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
     local a:4 = sext(T);
     local m:4 = sext(loc16);
     P = a * m;
@@ -80,8 +82,9 @@
     local ovf:1 = scarry(ACC, b);
     $(V) = $(V) | ovf;
     ACC = ACC + b;
-    setNZ32(ACC);
     applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
     T = loc16;
     local tv:2 = T;
     local iv:2 = imm16;
@@ -110,8 +113,9 @@
     local ovf:1 = sborrow(ACC, b);
     $(V) = $(V) | ovf;
     ACC = ACC - b;
-    setNZ32(ACC);
     applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
     T = loc16;
 }
 
@@ -148,8 +152,9 @@
     local ovf:1 = scarry(ACC, b);
     $(V) = $(V) | ovf;
     ACC = ACC + b;
-    setNZ32(ACC);
     applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
     local pma:4 = zext(imm16:2);
     local pv:2 = *[ram]:2 pma;
     local a:4 = sext(loc16);
@@ -166,8 +171,9 @@
     local ovf:1 = scarry(ACC, b);
     $(V) = $(V) | ovf;
     ACC = ACC + b;
-    setNZ32(ACC);
     applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
     T = loc16;
 }
 
@@ -236,8 +242,9 @@
     local ovf:1 = scarry(ACC, b);
     $(V) = $(V) | ovf;
     ACC = ACC + b;
-    setNZ32(ACC);
     applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
 }
 :ADDL "ACC,P << PM"  is rpt_phase=1 & pm_shift=1 & op16=0x10AC  {
     local b:4; pshift(b);
@@ -245,8 +252,9 @@
     local ovf:1 = scarry(ACC, b);
     $(V) = $(V) | ovf;
     ACC = ACC + b;
-    setNZ32(ACC);
     applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
 }
 
 # SUBL ACC,P << PM   0001 0001 1010 1100. SPRU430F: N,Z,C(inverted borrow),V.
@@ -256,8 +264,9 @@
     local ovf:1 = sborrow(ACC, b);
     $(V) = $(V) | ovf;
     ACC = ACC - b;
-    setNZ32(ACC);
     applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
 }
 :SUBL "ACC,P << PM"  is rpt_phase=1 & pm_shift=1 & op16=0x11AC  {
     local b:4; pshift(b);
@@ -265,8 +274,9 @@
     local ovf:1 = sborrow(ACC, b);
     $(V) = $(V) | ovf;
     ACC = ACC - b;
-    setNZ32(ACC);
     applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
 }
 
 # CMPL ACC,P << PM   1111 1111 0101 1001   -- compare only; ACC unchanged

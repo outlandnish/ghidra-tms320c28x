@@ -150,8 +150,9 @@
     local ovf:1 = scarry(ACC, b);
     $(V) = $(V) | ovf;
     ACC = ACC + b;
-    setNZ32(ACC);
     applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
 }
 # SUBL ACC, loc32   0000 0011 LLLL LLLL
 :SUBL ACCreg, loc32 is rpt_phase=1 & op_hi8=0x03 & ACCreg & loc32  {
@@ -160,8 +161,9 @@
     local ovf:1 = sborrow(ACC, b);
     $(V) = $(V) | ovf;
     ACC = ACC - b;
-    setNZ32(ACC);
     applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
 }
 # CMPL ACC, loc32   0000 1111 LLLL LLLL
 # SPRU430F: N/Z/C only, V not affected. Infinite-precision N via 8-byte sext.
