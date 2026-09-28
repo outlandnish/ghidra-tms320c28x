@@ -32,10 +32,12 @@
 :MPYS Preg, Treg, loc16  is rpt_phase=1 & op_hi8=0x13 & Preg & Treg & loc16  {
     local b:4 = P;
     $(C) = !(ACC < b);
-    $(V) = sborrow(ACC, b);
+    local ovf:1 = sborrow(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC - b;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
-    applyOvcSigned(ACC);
     local a:4 = sext(T);
     local m:4 = sext(loc16);
     P = a * m;
@@ -59,10 +61,12 @@
 :MPYA Preg, Treg, loc16  is rpt_phase=1 & op_hi8=0x17 & Preg & Treg & loc16  {
     local b:4 = P;
     $(C) = carry(ACC, b);
-    $(V) = scarry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC + b;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
-    applyOvcSigned(ACC);
     local a:4 = sext(T);
     local m:4 = sext(loc16);
     P = a * m;
@@ -75,10 +79,12 @@
 :MPYA Preg, loc16, "#"imm16  is rpt_phase=1 & op_hi8=0x15 & Preg & loc16 ; imm16  {
     local b:4 = P;
     $(C) = carry(ACC, b);
-    $(V) = scarry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC + b;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
-    applyOvcSigned(ACC);
     T = loc16;
     local tv:2 = T;
     local iv:2 = imm16;
@@ -104,10 +110,12 @@
 :MOVS Treg, loc16  is rpt_phase=1 & op_hi8=0x11 & loc_full8!=0xAC & Treg & loc16  {
     local b:4 = P;
     $(C) = !(ACC < b);
-    $(V) = sborrow(ACC, b);
+    local ovf:1 = sborrow(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC - b;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
-    applyOvcSigned(ACC);
     T = loc16;
 }
 
@@ -141,10 +149,12 @@
 :MAC Preg, loc16, "*"imm16  is rpt_phase=1 & op_hi8=0x14 & Preg & loc16 ; imm16  {
     local b:4 = P;
     $(C) = carry(ACC, b);
-    $(V) = scarry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC + b;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
-    applyOvcSigned(ACC);
     local pma:4 = zext(imm16:2);
     local pv:2 = *[ram]:2 pma;
     local a:4 = sext(loc16);
@@ -158,10 +168,12 @@
 :MOVA Treg, loc16  is rpt_phase=1 & op_hi8=0x10 & loc_full8!=0xAC & Treg & loc16  {
     local b:4 = P;
     $(C) = carry(ACC, b);
-    $(V) = scarry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC + b;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
-    applyOvcSigned(ACC);
     T = loc16;
 }
 
@@ -227,36 +239,44 @@
 :ADDL "ACC,P << PM"  is rpt_phase=1 & pm_shift=0 & op16=0x10AC  {
     local b:4 = P;
     $(C) = carry(ACC, b);
-    $(V) = scarry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC + b;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
-    applyOvcSigned(ACC);
 }
 :ADDL "ACC,P << PM"  is rpt_phase=1 & pm_shift=1 & op16=0x10AC  {
     local b:4; pshift(b);
     $(C) = carry(ACC, b);
-    $(V) = scarry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC + b;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
-    applyOvcSigned(ACC);
 }
 
 # SUBL ACC,P << PM   0001 0001 1010 1100. SPRU430F: N,Z,C(inverted borrow),V.
 :SUBL "ACC,P << PM"  is rpt_phase=1 & pm_shift=0 & op16=0x11AC  {
     local b:4 = P;
     $(C) = !(ACC < b);
-    $(V) = sborrow(ACC, b);
+    local ovf:1 = sborrow(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC - b;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
-    applyOvcSigned(ACC);
 }
 :SUBL "ACC,P << PM"  is rpt_phase=1 & pm_shift=1 & op16=0x11AC  {
     local b:4; pshift(b);
     $(C) = !(ACC < b);
-    $(V) = sborrow(ACC, b);
+    local ovf:1 = sborrow(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC - b;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
-    applyOvcSigned(ACC);
 }
 
 # CMPL ACC,P << PM   1111 1111 0101 1001   -- compare only; ACC unchanged

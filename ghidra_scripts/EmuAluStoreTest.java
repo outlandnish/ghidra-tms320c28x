@@ -83,7 +83,9 @@ public class EmuAluStoreTest extends GhidraScript {
             // Start from the opposite of every expectation, so a flag the constructor
             // never writes reads back wrong instead of accidentally matching.
             emu.writeRegister("C", 1 - wantC);
-            emu.writeRegister("V", 1 - wantV);
+            // V is sticky (SPRU430F: "otherwise V is not affected"), so seed it clear: an opposite
+            // seed of 1 would correctly survive a non-overflowing op. EmuVFlagTest pins the stickiness.
+            emu.writeRegister("V", 0);
             emu.writeRegister("N", 1 - wantN);
             emu.writeRegister("Z", 1 - wantZ);
 

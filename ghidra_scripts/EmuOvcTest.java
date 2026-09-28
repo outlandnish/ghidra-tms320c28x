@@ -55,10 +55,11 @@ public class EmuOvcTest extends GhidraScript {
                 (long) -1 & 0xff, 0x7fffffffL,
                 "ADDL -ve overflow : OVC 0 -> -1");
 
-            // 3. OVM=1 suppresses: same setup as case 1, but with OVM set, OVC must stay 0.
+            // 3. OVM=1 suppresses: same setup as case 1, but with OVM set, OVC must stay 0 and
+            //    ACC saturates to 0x7FFFFFFF instead of wrapping (SPRU430F 2.3, ADDL's OVM row).
             testAddl(emu, sp, 1, 0, 0x7fffffffL, 1L,
-                0L, 0x80000000L,
-                "ADDL +ve overflow with OVM=1 : OVC unchanged");
+                0L, 0x7fffffffL,
+                "ADDL +ve overflow with OVM=1 : OVC unchanged, ACC saturates");
 
             // 4. Unsigned carry: ADDUL 0xffffffff + 1 -> 0. OVC += 1 via applyOvcUnsigned.
             testAddul(emu, sp, /*preOvc*/0, /*acc*/0xffffffffL, /*loc32*/1L,

@@ -92,10 +92,10 @@ public class EmuMacOvcTest extends GhidraScript {
                 /*preC*/1L, /*ovm*/0, /*wantAcc*/0x80000000L, /*wantOvc*/1L,
                 "ADDCL +ve overflow via +C : OVC 0 -> 1");
 
-            // 2. ADDCL under OVM=1: same setup, OVC must NOT change.
+            // 2. ADDCL under OVM=1: same setup, OVC must NOT change; ACC saturates to +MAX.
             testAddc32(emu, sp, 5, 0x7fffffffL, 0L, 1L, /*ovm*/1,
-                0x80000000L, /*wantOvc*/5L,
-                "ADDCL +ve overflow with OVM=1 : OVC unchanged");
+                0x7fffffffL, /*wantOvc*/5L,
+                "ADDCL +ve overflow with OVM=1 : OVC unchanged, ACC saturates");
 
             // 3. ADDCU: ACC=0x7fffffff + zext(loc16)=0 + C=1 -> 0x80000000, OVC 0 -> +1
             testAddc16(emu, sp, ADDCU, /*preOvc*/0, 0x7fffffffL, 0L, /*preC*/1L,
@@ -112,10 +112,10 @@ public class EmuMacOvcTest extends GhidraScript {
                 /*preP*/1L, /*wantAcc*/0x80000000L, /*wantOvc*/1L, /*ovm*/0,
                 "MOVA T,loc16 +ve overflow : OVC 0 -> 1");
 
-            // 6. MOVA under OVM=1 : OVC unchanged.
-            testMovaFamily(emu, sp, MOVA_T, 5, 0x7fffffffL, 1L, 0x80000000L,
+            // 6. MOVA under OVM=1 : OVC unchanged; ACC saturates to +MAX.
+            testMovaFamily(emu, sp, MOVA_T, 5, 0x7fffffffL, 1L, 0x7fffffffL,
                 /*wantOvc*/5L, 1,
-                "MOVA T,loc16 +ve overflow with OVM=1 : OVC unchanged");
+                "MOVA T,loc16 +ve overflow with OVM=1 : OVC unchanged, ACC saturates");
 
             // 7. MOVAD T,loc16: P=1, ACC=0x7fffffff -> 0x80000000, OVC 0 -> +1
             testMovaFamily(emu, sp, MOVAD_T, 0, 0x7fffffffL, 1L, 0x80000000L,

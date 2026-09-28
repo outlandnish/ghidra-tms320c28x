@@ -65,6 +65,7 @@ Copy-Item "$Module\ghidra_scripts\EmuModuloTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuAddbAxSignTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuSubf32ImmTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuAddLoc16ImmFlagsTest.java" "$ws\scripts\" -Force
+Copy-Item "$Module\ghidra_scripts\EmuVFlagTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\tests\fpu_flags.bin" "$ws\" -Force
 Copy-Item "$Module\tests\fpu_cond.bin" "$ws\" -Force
 
@@ -123,6 +124,7 @@ Invoke-Suite "EmuModuloTest" "fpu_flags.bin"          # issue #127 follow-up: *A
 Invoke-Suite "EmuAddbAxSignTest" "fpu_flags.bin"      # ADDB AX,#8bitSigned sign-extends its constant
 Invoke-Suite "EmuSubf32ImmTest" "fpu_flags.bin"       # issue #138: SUBF32 RaH,#16FHi,RbH is imm - RbH
 Invoke-Suite "EmuAddLoc16ImmFlagsTest" "fpu_flags.bin" # ADD loc16,#16bitSigned sets N/Z/C/V
+Invoke-Suite "EmuVFlagTest" "fpu_flags.bin"           # V is sticky; COND tests clear it; CMP64/MIN/MAX
 
 if ($fail -eq 0) { Write-Host "emulation semantics: OK" -ForegroundColor Green }
 else { exit 1 }

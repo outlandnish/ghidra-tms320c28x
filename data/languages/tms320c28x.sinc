@@ -243,18 +243,33 @@ macro mov_acc_mext_shift(in, shift) {
 # -32..+31 (wraps at boundaries); reset value is 0. OVM=1 suppresses updates
 # entirely (the OVM path saturates ACC instead, which is a separate hole).
 #
-# Called AFTER V (signed) or C (unsigned) has been set on the current
-# instruction. `res` is the ACC value AFTER the op -- the sign of the wrapped
+# `ovf` is THIS instruction's signed overflow -- not $(V), which is sticky (SPRU430F: set on
+# overflow, otherwise not affected), so a V left over from an earlier op must not count.
+# `res` is the ACC value AFTER the op -- the sign of the wrapped
 # result tells the OVERFLOW DIRECTION: negative result = wrapped from +MAX
 # (positive overflow, OVC += 1); non-negative result = wrapped from -MIN
 # (negative overflow, OVC -= 1). Branchless so the decompiler can constant-fold
-# when OVM and V are visible.
-macro applyOvcSigned(res) {
-    local apply:1 = $(V) & (~$(OVM));           # 1 iff we should update OVC
+# when OVM and the overflow are visible.
+macro applyOvcSigned(ovf, res) {
+    local apply:1 = ovf & (~$(OVM));           # 1 iff we should update OVC
     local pos_ovf:1 = (res s< 0);                # 1 iff +ve overflow direction
     local delta:1 = (pos_ovf << 1) - 1:1;        # +1 (pos) or -1 (neg), signed 1B
     local apply_mask:1 = 0:1 - apply;            # 0xff or 0
     OVC = OVC + (delta & apply_mask);
+}
+
+# OVM=1 saturation for signed ACC arithmetic (SPRU430F 2.3 + each op's OVM row): "the CPU
+# automatically fills ACC with a positive or negative saturation value" -- 0x7FFFFFFF on a
+# positive overflow, 0x80000000 on a negative one. Every applyOvcSigned site calls it right
+# after, because it is the same overflow: OVM=0 counts it in OVC, OVM=1 saturates instead.
+# `res` is the wrapped result, so its sign gives the direction (negative = wrapped from +MAX).
+# Call it BEFORE setNZ32: N and Z describe the final ACC. NEG/ABS use applyOvmSaturate32
+# instead -- their only overflow (the minimum input) saturates to +MAX.
+macro applyOvmSaturateSigned(ovf, res) {
+    local sat:1 = ovf & $(OVM);
+    local sat_mask:4 = 0 - zext(sat);
+    local limit:4 = 0x7FFFFFFF + zext(res s>= 0);  # +MAX if wrapped negative, else 0x80000000
+    res = (limit & sat_mask) | (res & ~sat_mask);
 }
 
 # Unsigned add variant: OVC += 1 on unsigned carry (C=1). Used by ADDUL /
@@ -281,17 +296,17 @@ macro applyOvcuBorrow() {
 # --- OVM-driven saturation for NEG/ABS overflow (SPRU430F) --------------------
 # NEG/ABS/NEG64 on the signed-minimum input wraps to itself under two's-complement
 # arithmetic -- which IS the OVM=0 result SPRU430F specifies. Under OVM=1 the
-# result must instead saturate to signed max. Callers must have already set
-# $(V) = 1 on the overflow case; these macros read V and OVM to decide whether
-# to overwrite the naturally-wrapped result. Branchless masking so the decompiler
+# result must instead saturate to signed max. `ovf` is this instruction's overflow
+# (not the sticky $(V)); with OVM it decides whether to overwrite the
+# naturally-wrapped result. Branchless masking so the decompiler
 # constant-folds where OVM/V are visible.
-macro applyOvmSaturate32(acc) {
-    local should_sat:1 = $(V) & $(OVM);
+macro applyOvmSaturate32(ovf, acc) {
+    local should_sat:1 = ovf & $(OVM);
     local sat_mask:4 = 0 - zext(should_sat);
     acc = (0x7FFFFFFF & sat_mask) | (acc & ~sat_mask);
 }
-macro applyOvmSaturate64AccP() {
-    local should_sat:1 = $(V) & $(OVM);
+macro applyOvmSaturate64AccP(ovf) {
+    local should_sat:1 = ovf & $(OVM);
     local sat_mask:4 = 0 - zext(should_sat);
     ACC = (0x7FFFFFFF & sat_mask) | (ACC & ~sat_mask);
     P   = (0xFFFFFFFF & sat_mask) | (P   & ~sat_mask);
