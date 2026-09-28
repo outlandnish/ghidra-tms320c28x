@@ -65,6 +65,8 @@ Copy-Item "$Module\ghidra_scripts\EmuModuloTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuAddbAxSignTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuSubf32ImmTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuAddLoc16ImmFlagsTest.java" "$ws\scripts\" -Force
+Copy-Item "$Module\ghidra_scripts\XrefResolveTest.java" "$ws\scripts\" -Force
+Copy-Item "$Module\ghidra_scripts\ResolveComputedPointerXrefs.java" "$ws\scripts\" -Force
 Copy-Item "$Module\tests\fpu_flags.bin" "$ws\" -Force
 Copy-Item "$Module\tests\fpu_cond.bin" "$ws\" -Force
 
@@ -123,6 +125,8 @@ Invoke-Suite "EmuModuloTest" "fpu_flags.bin"          # issue #127 follow-up: *A
 Invoke-Suite "EmuAddbAxSignTest" "fpu_flags.bin"      # ADDB AX,#8bitSigned sign-extends its constant
 Invoke-Suite "EmuSubf32ImmTest" "fpu_flags.bin"       # issue #138: SUBF32 RaH,#16FHi,RbH is imm - RbH
 Invoke-Suite "EmuAddLoc16ImmFlagsTest" "fpu_flags.bin" # ADD loc16,#16bitSigned sets N/Z/C/V
+# Not emulation: a script check that needs the same headless import. Builds its own blocks.
+Invoke-Suite "XrefResolveTest" "fpu_flags.bin"        # ResolveComputedPointerXrefs: READ/WRITE/RW refs, dry run, idempotent
 
 if ($fail -eq 0) { Write-Host "emulation semantics: OK" -ForegroundColor Green }
 else { exit 1 }

@@ -18,6 +18,7 @@ Every step is a script in the **TMS320C28x** Script-Manager category.
 | 5 | `FinalizeRamfuncs.java` | Post-analysis cleanup: rebuild bodies, clear stale flow bookmarks, repair conflicts. Run it **after** analysis has settled. |
 | 5b | `MergeSplitFunctions.java` | Reunite functions step 2 cut in two at a mid-function register push it mistook for a prologue. The far half keeps the `LRETR` and inherits no callers, so it and everything it calls read as dead. First deletes phantom call xrefs (source not an instruction start). See §Step 5b. Idempotent; `-Dc28x.split.dryRun` to preview. |
 | 6 | `RetypeWideMemory.java` | Retype 32/64-bit memory operands to kill `CONCAT22`/`CONCAT44` in the decompiler. |
+| 6b | `ResolveComputedPointerXrefs.java` | Add the data references for globals reached through a pointer register (`MOVL XARn,#addr ; … ; MOV AL,*+XARn[k]`), which the listing does not show, so a live reader of a global looks dead. A base is trusted only when every path into the deref agrees on it. Also answers "who touches this word" (`target=`) and "which element does each caller of this accessor read" (`accessor=`). **Dry run by default — pass `apply`.** |
 | 7 | `SweepResidualMarks.java` + verify | Go through the bookmarks: delete provably cosmetic `Error` marks and the `c28x-merged-split` notes 5b left, make each `Found Code` site a function, and list everything that looks like a wrong decode. Confirm against a known-good baseline. **Dry run by default — pass `apply`.** |
 | 8 | `ReachabilityReport.java` | What is actually reachable from `_c_int00`, and *why* the rest is not. Run last — it is only as good as the reference graph. |
 
@@ -649,6 +650,32 @@ those references resolvable; on the image above that is where 281 of 456 referen
 
 Unchanged; run last to clean up the decompiler's 32/64-bit reads. See its
 script header.
+
+## Step 6b — ResolveComputedPointerXrefs (globals reached through XARn)
+
+C code that touches a global through a pointer compiles to `MOVL XARn,#addr` followed by
+`*+XARn[k]` operands. The operand names a register, so no reference to the global is
+recorded and `References to` shows nothing for a live reader. The script re-derives each XARn
+per function with Ghidra's `SymbolicPropogator` and adds a READ / WRITE / READ_WRITE
+reference from the instruction to `base + k`.
+
+Two things it guards against, both covered by `XrefResolveTest` (run from `run_emu_test`):
+
+- **A base that differs across paths is not resolved.** `SymbolicPropogator.getRegisterValue`
+  reports one path's value at a join, so the script records every value the register held on
+  every visit and trusts it only when they agree. A second path replays only 16 instructions
+  past a join already visited, so a disagreement is also carried forward along the flow until
+  the register is overwritten.
+- **Propagation must not write.** It uses a plain `ContextEvaluatorAdapter`;
+  `ConstantPropagationContextEvaluator` creates references as a side effect, which made the
+  dry run write and put references on both sides of a join.
+
+Targets below `c28x.xref.minWord` (default `0xC000`) are skipped. On F28377D that is everything
+below GS RAM, including the peripheral frames and LS0-5; lower it for those or for F2812.
+
+Note that `runScript` and the Script Manager run the **first** script with a given name on the
+script path, and the per-user `ghidra_scripts` directory comes first. A personal copy with the
+same name shadows the repo's.
 
 ## Step 7 — Bookmark sweep + verification
 
