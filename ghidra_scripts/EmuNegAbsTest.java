@@ -223,7 +223,9 @@ public class EmuNegAbsTest extends GhidraScript {
         emu.writeRegister("N", wantN == 1 ? 0L : 1L);
         emu.writeRegister("Z", wantZ == 1 ? 0L : 1L);
         emu.writeRegister("C", wantC == 1 ? 0L : 1L);
-        emu.writeRegister("V", wantV == 1 ? 0L : 1L);
+        // V is sticky (SPRU430F: "otherwise V is not affected"), so seed it clear: an opposite
+        // seed of 1 would correctly survive a non-overflowing op. EmuVFlagTest pins the stickiness.
+        emu.writeRegister("V", 0);
     }
     private void checkFlagsNZCV(String what, EmulatorHelper emu, long wantN, long wantZ, long wantC, long wantV) throws Exception {
         expect(what + " [N]", emu.readRegister("N").longValue(), wantN);

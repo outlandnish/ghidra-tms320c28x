@@ -145,10 +145,12 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 :MOVAD "T", loc16   is rpt_phase=1 & op_hi8=0xA7 & loc16  {
     local b:4 = P;
     $(C) = carry(ACC, b);
-    $(V) = scarry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC + b;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
-    applyOvcSigned(ACC);
     T = loc16;
 }
 # DMOV loc16        1010 0101 LLLL LLLL  -- data move [loc16+1]=[loc16] (delay line)
@@ -239,10 +241,12 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 :SUBU ACCreg, loc16  is rpt_phase=1 & op_hi8=0x01 & ACCreg & loc16  {
     local b:4 = zext(loc16);
     $(C) = !(ACC < b);
-    $(V) = sborrow(ACC, b);
+    local ovf:1 = sborrow(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC - b;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
-    applyOvcSigned(ACC);
 }
 # SUBB ACC, #8bit   0001 1001 CCCC CCCC
 # Flags used to be missing entirely here (the body was just the subtract), exactly the hole the
@@ -257,10 +261,12 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 :SUBB ACCreg, "#"imm8  is rpt_phase=1 & op_hi8=0x19 & ACCreg & imm8  {
     local b:4 = zext(imm8:1);
     $(C) = !(ACC < b);
-    $(V) = sborrow(ACC, b);
+    local ovf:1 = sborrow(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC - b;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
-    applyOvcSigned(ACC);
 }
 # ADDB ACC, #8bit   0000 1001 CCCC CCCC
 # Flags matter here and used to be missing entirely (the body was just the add). SPRU430F has this
@@ -274,10 +280,12 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 :ADDB ACCreg, "#"imm8  is rpt_phase=1 & op_hi8=0x09 & ACCreg & imm8  {
     local b:4 = zext(imm8:1);
     $(C) = carry(ACC, b);
-    $(V) = scarry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC + b;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
-    applyOvcSigned(ACC);
 }
 # ADDB AX, #8bitSigned    1001 110A CCCC CCCC
 # SPRU430F 6.3 (p.135): the constant is a signed 8-bit value (-128..127), sign-extended before
@@ -286,7 +294,9 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 # ADDB AX,#-n; zero extension turned `ADDB AL,#-2` into +254. Guarded by EmuAddbAxSignTest.
 :ADDB AX, "#"imm8   is rpt_phase=1 & op_hi7=0x4E & AX & imm8  {
     local b:2 = sext(imm8:1);
-    $(C) = carry(AX, b); $(V) = scarry(AX, b);
+    $(C) = carry(AX, b);
+    local ovf:1 = scarry(AX, b);
+    $(V) = $(V) | ovf;
     AX = AX + b; setNZ16(AX);
 }
 # SUBCU ACC, loc16  0001 1111 LLLL LLLL   (16-bit conditional subtract; unsigned modulus-divide
@@ -324,10 +334,12 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 :XMACD Preg, loc16, "*("xpmaval")"  is rpt_phase=1 & op_hi8=0xA4 & Preg & loc16 ; imm16 & xpmaval {
     local b:4 = P;
     $(C) = carry(ACC, b);
-    $(V) = scarry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC + b;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
-    applyOvcSigned(ACC);
     local pv:2 = xpmaval;
     local a:4 = sext(loc16); local mb:4 = sext(pv);
     P = a * mb;
@@ -372,10 +384,12 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
 :XMAC Preg, loc16, "*("xpmaval")"  is rpt_phase=1 & op_hi8=0x84 & Preg & loc16 ; imm16 & xpmaval {
     local b:4 = P;
     $(C) = carry(ACC, b);
-    $(V) = scarry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC + b;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
-    applyOvcSigned(ACC);
     local pv:2 = xpmaval;
     local a:4 = sext(loc16); local mb:4 = sext(pv);
     P = a * mb;
@@ -484,7 +498,7 @@ lbdest: reloc  is op_hi8=0x00 & op_lo_76=0b01 & loc_off6 ; imm16  [ reloc = (loc
     local m:2 = loc16;
     local b:2 = imm16:2;
     $(C) = carry(m, b);
-    $(V) = scarry(m, b);
+    $(V) = scarry(m, b);                        # flag-audit-v: cleared (SPRU430F p.133)
     m = m + b;
     loc16 = m;
     setNZ16(m);
@@ -795,7 +809,7 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 # so a saturating math loop couldn't terminate.
 :SAT "ACC"  is rpt_phase=1 & op16=0xFF57 {
     local ovc_s:1 = OVC;
-    $(V) = (ovc_s != 0);
+    $(V) = (ovc_s != 0);                        # flag-audit-v: cleared (SAT: V = OVC != 0)
     $(C) = 0;
     if (ovc_s s<= 0) goto <not_pos>;
     ACC = 0x7FFFFFFF;
@@ -908,10 +922,15 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 # ADDU ACC, loc16   0000 1101 LLLL LLLL  -- add zero-extended 16-bit word to ACC.
 # Was MISSING — the truncation point in CAN_postRxEvent (word 0x0da0 = ADDU ACC,@AR0);
 # its empty slot orphaned the following word and broke the CFG. ACC = ACC + 0:[loc16].
+# SPRU430F lists V, signed OVC and OVM saturation for it as well; only C/N/Z were set.
 :ADDU ACCreg, loc16  is rpt_phase=1 & op_hi8=0x0D & ACCreg & loc16  {
     local b:4 = zext(loc16);
     $(C) = carry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC + b;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
 }
 # MOVH loc16, ACC<<1   1011 0011 LLLL LLLL  -- store high word of (ACC<<1) to loc16.
@@ -977,10 +996,12 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
     local cin:4 = zext($(C));
     local b:4 = zext(loc16) + cin;
     $(C) = carry(ACC, b);
-    $(V) = scarry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC + b;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
-    applyOvcSigned(ACC);
 }
 # SBBU ACC, loc16   0001 1101 LLLL LLLL  -- ACC = ACC - 0:[loc16] - ~C  (subtract unsigned w/ borrow)
 # SPRU430F: N/Z/C/V + OVC. Same combined-subtrahend shape as SUBBL.
@@ -988,10 +1009,12 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
     local nborrow:4 = zext($(C) == 0);   # ~C as 0/1  (borrow-in)
     local b:4 = zext(loc16) + nborrow;   # combined subtrahend
     $(C) = !(ACC < b);
-    $(V) = sborrow(ACC, b);
+    local ovf:1 = sborrow(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC - b;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
-    applyOvcSigned(ACC);
 }
 
 # CLRC mode   0010 1001 CCCC CCCC  -- clear status bits per 8-bit mask (counterpart
@@ -1075,12 +1098,13 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 # input==0x80000000; OVM=1 saturates ACC to 0x7FFFFFFF (positive max), OVM=0 wraps.
 # Was missing OVM saturation -- see issue #106.
 :ABS "ACC"   is rpt_phase=1 & op16=0xFF56 {
-    $(V) = (ACC == 0x80000000);
+    local ovf:1 = (ACC == 0x80000000);
+    $(V) = $(V) | ovf;
     $(C) = 0;
     if (ACC s>= 0) goto <positive>;
     ACC = -ACC;
     <positive>
-    applyOvmSaturate32(ACC);
+    applyOvmSaturate32(ovf, ACC);
     setNZ32(ACC);
 }
 # MOVL P,ACC       1111 1111 0101 1010
@@ -1103,10 +1127,12 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
     mext(v, imm16:2);
     local addend:4 = v << s;
     $(C) = carry(ACC, addend);
-    $(V) = scarry(ACC, addend);
+    local ovf:1 = scarry(ACC, addend);
+    $(V) = $(V) | ovf;
     ACC = ACC + addend;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
-    applyOvcSigned(ACC);
 }
 # LSL ACC,#1..16   1111 1111 0011 SHFT  (logical shift left ACC; SHFT=0 -> 16). Single
 # word. C = last bit shifted out (= ACC bit 32-sh, pre-shift); N/Z from the result.
@@ -1153,17 +1179,20 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
     mext(v, imm16:2);
     local subend:4 = v << s;
     $(C) = !(ACC < subend);
-    $(V) = sborrow(ACC, subend);
+    local ovf:1 = sborrow(ACC, subend);
+    $(V) = $(V) | ovf;
     ACC = ACC - subend;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
-    applyOvcSigned(ACC);
 }
 # NOT AX   1111 1111 0101 111A  (complement AL/AH; A=bit0).
 :NOT AXb0  is rpt_phase=1 & op_hi8=0xFF & op_lo71=0b0101111 & AXb0  { AXb0 = ~AXb0; setNZ16(AXb0); }
 # NEG AX   1111 1111 0101 110A  (negate AL/AH; A=bit0). dis2000-confirmed (DIR image).
 :NEG AXb0  is rpt_phase=1 & op_hi8=0xFF & op_lo71=0b0101110 & AXb0  {
     $(C) = (AXb0 == 0);  # carry set only when result is 0 (per SPRU430F)
-    $(V) = (AXb0 == 0x8000);
+    local ovf:1 = (AXb0 == 0x8000);
+    $(V) = $(V) | ovf;
     AXb0 = -AXb0;
     setNZ16(AXb0);
 }
@@ -1178,10 +1207,12 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
     local b:4;
     mext(b, loc16);
     $(C) = carry(ACC, b);
-    $(V) = scarry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC + b;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
-    applyOvcSigned(ACC);
 }
 # SUB ACC, loc16 <<#0   1010 1110 LLLL LLLL  (single word; SUB counterpart of the
 # 0x81 ADD base form). Was the truncation behind word 0xae3e.
@@ -1189,19 +1220,23 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
     local b:4;
     mext(b, loc16);
     $(C) = !(ACC < b);
-    $(V) = sborrow(ACC, b);
+    local ovf:1 = sborrow(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC - b;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
-    applyOvcSigned(ACC);
 }
 # ADD ACC, loc16 <<#16   0000 0101 LLLL LLLL  (single word; add loc<<16 to ACC).
 :ADD ACCreg, loc16^"<<#16"  is rpt_phase=1 & op_hi8=0x05 & ACCreg & loc16 {
     local v:4 = zext(loc16) << 16;
     $(C) = carry(ACC, v);
-    $(V) = scarry(ACC, v);
+    local ovf:1 = scarry(ACC, v);
+    $(V) = $(V) | ovf;
     ACC = ACC + v;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
-    applyOvcSigned(ACC);
 }
 # SUB ACC, loc16 <<#16   0000 0100 LLLL LLLL  (single word; subtract loc<<16 from ACC).
 # Completes the ACC,loc16<<#16 family (MOV=0x25, ADD=0x05 above; SUB=0x04 was the
@@ -1209,10 +1244,12 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 :SUB ACCreg, loc16^"<<#16"  is rpt_phase=1 & op_hi8=0x04 & ACCreg & loc16 {
     local v:4 = zext(loc16) << 16;
     $(C) = !(ACC < v);
-    $(V) = sborrow(ACC, v);
+    local ovf:1 = sborrow(ACC, v);
+    $(V) = $(V) | ovf;
     ACC = ACC - v;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
-    applyOvcSigned(ACC);
 }
 # CMP loc16, #16bitSigned   0001 1011 LLLL LLLL : iiii  (2-word; flags only).
 # SPRU430F ch. 6 p.178: N/Z/C, V not affected. Was missing C entirely and used
@@ -1240,7 +1277,8 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 :SUB loc16, AX  is rpt_phase=1 & op_hi7=0x3A & loc16 & AX  {
     local m:2 = loc16;
     $(C) = !(m < AX);
-    $(V) = sborrow(m, AX);
+    local ovf:1 = sborrow(m, AX);
+    $(V) = $(V) | ovf;
     loc16 = m - AX;
     setNZ16(loc16);
 }
@@ -1249,7 +1287,8 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 :SUBR loc16, AX  is rpt_phase=1 & op_hi7=0x75 & loc16 & AX  {
     local m:2 = loc16;
     $(C) = !(AX < m);
-    $(V) = sborrow(AX, m);
+    local ovf:1 = sborrow(AX, m);
+    $(V) = $(V) | ovf;
     loc16 = AX - m;
     setNZ16(loc16);
 }
@@ -1258,7 +1297,8 @@ attach variables [ xarn_hi3 ] [ XAR0 XAR1 XAR2 XAR3 XAR4 XAR5 XAR6 XAR7 ];
 :ADD loc16, AX  is rpt_phase=1 & op_hi7=0x39 & loc16 & AX  {
     local m:2 = loc16;
     $(C) = carry(m, AX);
-    $(V) = scarry(m, AX);
+    local ovf:1 = scarry(m, AX);
+    $(V) = $(V) | ovf;
     loc16 = m + AX;
     setNZ16(loc16);
 }

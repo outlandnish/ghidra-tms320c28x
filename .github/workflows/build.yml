@@ -59,6 +59,11 @@ jobs:
       - name: Invariant — every constructor carries the RPT phase bit
         run: bash tests/run_phase_check.sh
 
+      # Same class: flag semantics that decode parity cannot see. Pass 4 is the sticky-V
+      # rule -- a `$(V) = scarry(...)` overwrite erases an earlier overflow and still lists fine.
+      - name: Invariant — flag audit (missing flags, OVC, sticky V)
+        run: python3 tests/flag_audit.py
+
       - name: Resolve Ghidra release asset
         id: ghidra
         env:

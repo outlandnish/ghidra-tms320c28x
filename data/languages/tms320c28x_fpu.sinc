@@ -847,7 +847,7 @@ p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
 
     local sel_ov:1 = sel_lvf || sel_luf;
     local ovval:1  = (sel_lvf && STF_LV) || (sel_luf && STF_LU);
-    $(V) = (sel_ov && ovval) || (!sel_ov && $(V));
+    $(V) = (sel_ov && ovval) || (!sel_ov && $(V));   # flag-audit-v: copied from STF
 
     local sel_n:1 = sel_nf || sel_ni;
     local nval:1  = (sel_nf && STF_NF) || (sel_ni && STF_NI);

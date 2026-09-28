@@ -56,7 +56,7 @@ param(
   [string]$Module = (Split-Path -Parent $PSScriptRoot),
   [string[]]$Cases = @("addr_modes", "mov_movz", "misc_batch", "io_ports", "vcu_setsh", "bar", "modulo_addr", "sbrk_adrk", "fpu_display", "fpu_parallel", "fpu_flags", "c2xlp",
                        "cla_all", "traps", "mac_ext56", "shifts", "bitops", "loops_intr",
-                       "fw_gaps")
+                       "fw_gaps", "cond_moves")
 )
 # Cases not listed here run on the core C28x language.
 $ProcessorOf = @{ "cla_all" = "TMS320C28x:LE:32:cla" }
