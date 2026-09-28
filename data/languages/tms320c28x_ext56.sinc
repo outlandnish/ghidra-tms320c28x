@@ -27,12 +27,43 @@
 # =============================================================================
 # Common ALU forms (real semantics).  word1 = 0x56<sub>, word2 = loc.
 # =============================================================================
+# ADDL/SUBL/SUBRL loc32,ACC  (read-modify-write; ACC is only a source). SPRU430F lists
+# N/Z/C/V and OVC for all three. Its rows say "ACC", but ACC is unchanged and SUBL's N row
+# names [loc32], so N/Z come from the stored result. These were flag-silent. OVM
+# saturation is not modeled, same as the other 32-bit add/sub forms.
 # ADDL loc32,ACC    0x5601 : 0000 0000 LLLL LLLL
-:ADDL loc32, ACCreg  is rpt_phase=1 & op16=0x5601 ; loc32 & ACCreg  { loc32 = loc32 + ACC; }
-# SUBL loc32,ACC    0x5641
-:SUBL loc32, ACCreg  is rpt_phase=1 & op16=0x5641 ; loc32 & ACCreg  { loc32 = loc32 - ACC; }
+:ADDL loc32, ACCreg  is rpt_phase=1 & op16=0x5601 ; loc32 & ACCreg  {
+    local m:4 = loc32;
+    $(C) = carry(m, ACC);
+    local ovf:1 = scarry(m, ACC);
+    $(V) = $(V) | ovf;
+    m = m + ACC;
+    loc32 = m;
+    setNZ32(m);
+    applyOvcSigned(ovf, m);
+}
+# SUBL loc32,ACC    0x5641  (loc = loc - ACC)
+:SUBL loc32, ACCreg  is rpt_phase=1 & op16=0x5641 ; loc32 & ACCreg  {
+    local m:4 = loc32;
+    $(C) = !(m < ACC);                          # C set when no borrow
+    local ovf:1 = sborrow(m, ACC);
+    $(V) = $(V) | ovf;
+    m = m - ACC;
+    loc32 = m;
+    setNZ32(m);
+    applyOvcSigned(ovf, m);
+}
 # SUBRL loc32,ACC    0x5649  (reverse subtract: loc = ACC - loc)
-:SUBRL loc32, ACCreg is rpt_phase=1 & op16=0x5649 ; loc32 & ACCreg  { loc32 = ACC - loc32; }
+:SUBRL loc32, ACCreg is rpt_phase=1 & op16=0x5649 ; loc32 & ACCreg  {
+    local m:4 = loc32;
+    $(C) = !(ACC < m);
+    local ovf:1 = sborrow(ACC, m);
+    $(V) = $(V) | ovf;
+    m = ACC - m;
+    loc32 = m;
+    setNZ32(m);
+    applyOvcSigned(ovf, m);
+}
 # ADD ACC,loc16<<T   0x5623  (shift by T(3:0)). SPRU430F: N,Z,C,V per the 32-bit add
 # of ACC + (mext(loc16) << sh) -- same as the plain ADD ACC,loc16 sibling.
 :ADD ACCreg, loc16^"<<T"  is rpt_phase=1 & op16=0x5623 ; loc16 & ACCreg  {
@@ -41,10 +72,11 @@
     mext(b, loc16);
     local addend:4 = b << sh;
     $(C) = carry(ACC, addend);
-    $(V) = scarry(ACC, addend);
+    local ovf:1 = scarry(ACC, addend);
+    $(V) = $(V) | ovf;
     ACC = ACC + addend;
     setNZ32(ACC);
-    applyOvcSigned(ACC);
+    applyOvcSigned(ovf, ACC);
 }
 # SUB ACC,loc16<<T   0x5627. SPRU430F: N,Z,C(inverted borrow),V.
 :SUB ACCreg, loc16^"<<T"  is rpt_phase=1 & op16=0x5627 ; loc16 & ACCreg  {
@@ -53,10 +85,11 @@
     mext(b, loc16);
     local subend:4 = b << sh;
     $(C) = !(ACC < subend);
-    $(V) = sborrow(ACC, subend);
+    local ovf:1 = sborrow(ACC, subend);
+    $(V) = $(V) | ovf;
     ACC = ACC - subend;
     setNZ32(ACC);
-    applyOvcSigned(ACC);
+    applyOvcSigned(ovf, ACC);
 }
 # MOV ACC,loc16<<T   0x5606
 :MOV ACCreg, loc16^"<<T"  is rpt_phase=1 & op16=0x5606 ; loc16 & ACCreg  {
@@ -103,10 +136,11 @@
     mext(b, loc16);
     local addend:4 = b << sh;
     $(C) = carry(ACC, addend);
-    $(V) = scarry(ACC, addend);
+    local ovf:1 = scarry(ACC, addend);
+    $(V) = $(V) | ovf;
     ACC = ACC + addend;
     setNZ32(ACC);
-    applyOvcSigned(ACC);
+    applyOvcSigned(ovf, ACC);
 }
 # ADDUL ACC,loc32    0x5653  (add unsigned 32). SPRU430F: N,Z,C,V; Table 2-5 groups
 # ADDUL under "Unsigned Instructions" -- OVC increments on unsigned carry (C=1), not
@@ -114,7 +148,8 @@
 :ADDUL ACCreg, loc32 is rpt_phase=1 & op16=0x5653 ; loc32 & ACCreg  {
     local b:4 = loc32;
     $(C) = carry(ACC, b);
-    $(V) = scarry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC + b;
     setNZ32(ACC);
     applyOvcUnsigned();
@@ -129,7 +164,8 @@
 :SUBUL ACCreg, loc32 is rpt_phase=1 & op16=0x5655 ; loc32 & ACCreg  {
     local b:4 = loc32;
     $(C) = !(ACC < b);
-    $(V) = sborrow(ACC, b);
+    local ovf:1 = sborrow(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC - b;
     setNZ32(ACC);
     applyOvcuBorrow();
@@ -141,10 +177,11 @@
     local nborrow:4 = zext($(C) == 0);   # ~C as 0/1  (borrow-in)
     local b:4 = loc32 + nborrow;         # combined subtrahend
     $(C) = !(ACC < b);
-    $(V) = sborrow(ACC, b);
+    local ovf:1 = sborrow(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC - b;
     setNZ32(ACC);
-    applyOvcSigned(ACC);
+    applyOvcSigned(ovf, ACC);
 }
 # ADDCL ACC,loc32   0x5640  (add 32-bit value plus carry to ACC). dis2000-confirmed (DIR).
 # SPRU430F: N/Z/C/V + OVC. Combined-addend pattern mirrors SUBBL above.
@@ -152,10 +189,11 @@
     local cin:4 = zext($(C));
     local b:4 = loc32 + cin;
     $(C) = carry(ACC, b);
-    $(V) = scarry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC + b;
     setNZ32(ACC);
-    applyOvcSigned(ACC);
+    applyOvcSigned(ovf, ACC);
 }
 # MOVU loc16,OVC    0x5628 : loc16  (STORE the 6-bit OVC into low bits of [loc16];
 # upper 10 bits of the target are zeroed). Was writing literal 0 -- fixed to write the
@@ -192,7 +230,8 @@
 :ADDUL Preg, loc32   is rpt_phase=1 & op16=0x5657 ; loc32 & Preg  {
     local b:4 = loc32;
     $(C) = carry(P, b);
-    $(V) = scarry(P, b);
+    local ovf:1 = scarry(P, b);
+    $(V) = $(V) | ovf;
     P = P + b;
     setNZ32(P);
     applyOvcUnsigned();
@@ -202,7 +241,8 @@
 :SUBUL Preg, loc32   is rpt_phase=1 & op16=0x565d ; loc32 & Preg  {
     local b:4 = loc32;
     $(C) = !(P < b);
-    $(V) = sborrow(P, b);
+    local ovf:1 = sborrow(P, b);
+    $(V) = $(V) | ovf;
     P = P - b;
     setNZ32(P);
     applyOvcuBorrow();
@@ -214,6 +254,7 @@
     $(Z) = (ACC == v);
     $(N) = (ACC s< v);
     if (ACC s>= v) goto inst_next;
+    $(V) = 1;                                   # SPRU430F: set when ACC is replaced; never cleared
     ACC = v;
 }
 # MINL ACC,loc32     0x5650. Sets N/Z from the signed compare so a following MINCUL P,loc32
@@ -223,6 +264,7 @@
     $(Z) = (ACC == v);
     $(N) = (ACC s< v);
     if (ACC s<= v) goto inst_next;
+    $(V) = 1;                                   # SPRU430F: set when ACC is replaced; never cleared
     ACC = v;
 }
 # MAXCUL P,loc32     0x5651  (conditional UNSIGNED max of the low word, using N/Z from the
@@ -232,6 +274,8 @@
 :MAXCUL Preg, loc32  is rpt_phase=1 & op16=0x5651 ; loc32 & Preg  {
     local v:4 = loc32;
     local doset:1 = ($(N) != 0) | (($(Z) != 0) & (P < v));
+    # SPRU430F: V is set only on the Z=1 unsigned-compare load, otherwise unchanged.
+    $(V) = $(V) | (($(N) == 0) & ($(Z) != 0) & (P < v));
     if (doset == 0) goto inst_next;
     P = v;
 }
@@ -242,6 +286,8 @@
 :MINCUL Preg, loc32  is rpt_phase=1 & op16=0x5659 ; loc32 & Preg  {
     local v:4 = loc32;
     local doset:1 = ($(N) == 0) & (($(Z) == 0) | (P > v));
+    # SPRU430F: V is set only on the Z=1 unsigned-compare load, otherwise unchanged.
+    $(V) = $(V) | (($(N) == 0) & ($(Z) != 0) & (P > v));
     if (doset == 0) goto inst_next;
     P = v;
 }
@@ -264,7 +310,7 @@
 #   OVC = 0 in all cases. C cleared. N/Z reflect the combined 64-bit value.
 :SAT64 "ACC:P"  is rpt_phase=1 & op16=0x563e {
     local ovc_s:1 = OVC;
-    $(V) = (ovc_s != 0);
+    $(V) = (ovc_s != 0);                        # flag-audit-v: cleared (SAT64: V = OVC != 0)
     $(C) = 0;
     if (ovc_s s<= 0) goto <not_pos>;
     ACC = 0x7FFFFFFF;
@@ -351,25 +397,28 @@ macro normAcc() {
 :QMPYAL Preg, XTreg, loc32  is rpt_phase=1 & op16=0x5646 ; loc32 & Preg & XTreg {
     local b:4 = P;
     $(C) = carry(ACC, b);
-    $(V) = scarry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC + b;
     setNZ32(ACC);
-    applyOvcSigned(ACC);
+    applyOvcSigned(ovf, ACC);
     local a:8 = sext(XT); local m:8 = sext(loc32); local r:8 = (a * m) >> 32; P = r:4;
 }
 :QMPYSL Preg, XTreg, loc32  is rpt_phase=1 & op16=0x5645 ; loc32 & Preg & XTreg {
     local b:4 = P;
     $(C) = !(ACC < b);
-    $(V) = sborrow(ACC, b);
+    local ovf:1 = sborrow(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC - b;
     setNZ32(ACC);
-    applyOvcSigned(ACC);
+    applyOvcSigned(ovf, ACC);
     local a:8 = sext(XT); local m:8 = sext(loc32); local r:8 = (a * m) >> 32; P = r:4;
 }
 :IMPYAL Preg, XTreg, loc32  is rpt_phase=1 & op16=0x564C ; loc32 & Preg & XTreg {
     local b:4 = P;
     $(C) = carry(ACC, b);
-    $(V) = scarry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC + b;
     setNZ32(ACC);
     applyOvcUnsigned();
@@ -407,10 +456,11 @@ macro normAcc() {
     local a:4 = sext(xt_hi);  local mh:4 = sext(tmp_hi);
     local addend:4 = a * mh;
     $(C) = carry(ACC, addend);
-    $(V) = scarry(ACC, addend);
+    local ovf:1 = scarry(ACC, addend);
+    $(V) = $(V) | ovf;
     ACC = ACC + addend;
     setNZ32(ACC);
-    applyOvcSigned(ACC);
+    applyOvcSigned(ovf, ACC);
     local b:4 = sext(xt_lo);  local ml:4 = sext(tmp_lo);
     P = P + (b * ml);
 }
@@ -422,10 +472,11 @@ macro normAcc() {
     local a:4 = sext(xt_hi);  local mh:4 = sext(tmp_hi);
     local addend:4 = a * mh;
     $(C) = carry(ACC, addend);
-    $(V) = scarry(ACC, addend);
+    local ovf:1 = scarry(ACC, addend);
+    $(V) = $(V) | ovf;
     ACC = ACC + addend;
     setNZ32(ACC);
-    applyOvcSigned(ACC);
+    applyOvcSigned(ovf, ACC);
     local b:4 = sext(xt_lo);  local ml:4 = sext(tmp_lo);
     P = P + (b * ml);
     XAR7 = XAR7 + 2;   # post-increment (2 word-addresses = 32 bits)
@@ -433,10 +484,11 @@ macro normAcc() {
 :QMACL "P,"loc32",*XAR7"  is rpt_phase=1 & op16=0x564F ; xar7_mode=0xC7 & loc32 {
     local b:4 = P;
     $(C) = carry(ACC, b);
-    $(V) = scarry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC + b;
     setNZ32(ACC);
-    applyOvcSigned(ACC);
+    applyOvcSigned(ovf, ACC);
     local a:8   = sext(loc32);
     local tmp:4 = *[ram]:4 XAR7;
     local m:8   = sext(tmp);
@@ -446,10 +498,11 @@ macro normAcc() {
 :QMACL "P,"loc32",*XAR7++"  is rpt_phase=1 & op16=0x564F ; xar7_mode=0x87 & loc32 {
     local b:4 = P;
     $(C) = carry(ACC, b);
-    $(V) = scarry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC + b;
     setNZ32(ACC);
-    applyOvcSigned(ACC);
+    applyOvcSigned(ovf, ACC);
     local a:8   = sext(loc32);
     local tmp:4 = *[ram]:4 XAR7;
     local m:8   = sext(tmp);
@@ -460,7 +513,8 @@ macro normAcc() {
 :IMACL "P,"loc32",*XAR7"  is rpt_phase=1 & op16=0x564D ; xar7_mode=0xC7 & loc32 {
     local b:4 = P;
     $(C) = carry(ACC, b);
-    $(V) = scarry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC + b;
     setNZ32(ACC);
     applyOvcUnsigned();
@@ -473,7 +527,8 @@ macro normAcc() {
 :IMACL "P,"loc32",*XAR7++"  is rpt_phase=1 & op16=0x564D ; xar7_mode=0x87 & loc32 {
     local b:4 = P;
     $(C) = carry(ACC, b);
-    $(V) = scarry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC + b;
     setNZ32(ACC);
     applyOvcUnsigned();
@@ -490,19 +545,21 @@ macro normAcc() {
 :SQRA loc16  is rpt_phase=1 & op16=0x5615 ; loc16 {
     local b:4 = P;
     $(C) = carry(ACC, b);
-    $(V) = scarry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC + b;
     setNZ32(ACC);
-    applyOvcSigned(ACC);
+    applyOvcSigned(ovf, ACC);
     T = loc16; local t:4 = sext(T); P = t * t;
 }
 :SQRS loc16  is rpt_phase=1 & op16=0x5611 ; loc16 {
     local b:4 = P;
     $(C) = !(ACC < b);
-    $(V) = sborrow(ACC, b);
+    local ovf:1 = sborrow(ACC, b);
+    $(V) = $(V) | ovf;
     ACC = ACC - b;
     setNZ32(ACC);
-    applyOvcSigned(ACC);
+    applyOvcSigned(ovf, ACC);
     T = loc16; local t:4 = sext(T); P = t * t;
 }
 # ZALR ACC,loc16  0x5613 : loc16  -- AL = 0x8000 (round const), AH = [loc16]. dis2000-confirmed.
@@ -608,8 +665,11 @@ macro normAcc() {
 # =============================================================================
 # Conditional store (MOVL loc32,ACC,COND) -- 0x5648, COND in word2.
 # =============================================================================
-:MOVL loc32, ACCreg, CC  is rpt_phase=1 & op16=0x5648 ; cond4 & CC & loc32 & ACCreg {
-    local take:1 = CC;
+# SPRU430F: word2 is 0000 COND LLLL LLLL -- COND is bits 8..11 (cond4hi / CC8). This read
+# cond4 (bits 0..3), i.e. the low nibble of the loc32 byte, so the listed condition and the
+# emulated predicate were both wrong.
+:MOVL loc32, ACCreg, CC8  is rpt_phase=1 & op16=0x5648 ; cond4hi & CC8 & loc32 & ACCreg {
+    local take:1 = CC8;
     if (take == 0) goto inst_next;
     loc32 = ACC;
 }
@@ -917,13 +977,21 @@ macro arp_xar_ptr(p) {
 # NOTE: MAX is 0111 001A (op_lo71=0b0111001), NOT 000A — the manual's opcode wraps two
 # lines (0101 0110 0111 / 001A 0000...) and reads as one 16-bit LSW. dis2000-confirmed
 # (0x5673 = MAX AH); the earlier 0b0111000 was wrong and left 0x5672/0x5673 undecoded.
+# SPRU430F: N = (AX < [loc16]) and Z = (AX == [loc16]) for both; V is set when AX is
+# replaced (MIN: AX > [loc16]; MAX: AX < [loc16]) and is never cleared.
 :MIN AXb0, loc16  is rpt_phase=1 & op_hi8=0x56 & op_lo71=0b0111010 & AXb0 ; loc16  {
-    if (AXb0 s<= loc16) goto inst_next;
-    AXb0 = loc16;
+    local m:2 = loc16;
+    $(N) = (AXb0 s< m); $(Z) = (AXb0 == m);
+    if (AXb0 s<= m) goto inst_next;
+    $(V) = 1;
+    AXb0 = m;
 }
 :MAX AXb0, loc16  is rpt_phase=1 & op_hi8=0x56 & op_lo71=0b0111001 & AXb0 ; loc16  {
-    if (AXb0 s>= loc16) goto inst_next;
-    AXb0 = loc16;
+    local m:2 = loc16;
+    $(N) = (AXb0 s< m); $(Z) = (AXb0 == m);
+    if (AXb0 s>= m) goto inst_next;
+    $(V) = 1;
+    AXb0 = m;
 }
 # FLIP AX  0101 0110 0111 000A  (bit-reverse AL/AH). dis2000-confirmed (0x5670/0x5671 —
 # previously MIS-DECODED as the 2-word MAX, which consumed an extra word and skewed flow).
@@ -970,12 +1038,13 @@ macro arp_xar_ptr(p) {
 :ABSTC "ACC"  is rpt_phase=1 & op16=0x565f  {
     local wasNeg:1 = (ACC s< 0);
     $(TC) = $(TC) ^ wasNeg;
-    $(V) = (ACC == 0x80000000);
+    local ovf:1 = (ACC == 0x80000000);
+    $(V) = $(V) | ovf;
     $(C) = 0;
     if (ACC s>= 0) goto <positive>;
     ACC = -ACC;
   <positive>
-    applyOvmSaturate32(ACC);
+    applyOvmSaturate32(ovf, ACC);
     setNZ32(ACC);
 }
 # NEGTC ACC  0101 0110 0011 0010  (if TC==1, negate ACC). Pairs with ABSTC in the
@@ -987,9 +1056,10 @@ macro arp_xar_ptr(p) {
 # Was missing C, V, and OVM saturation -- see issue #106.
 :NEGTC "ACC"  is rpt_phase=1 & op16=0x5632  {
     if ($(TC) == 0) goto <flags_only>;
-    $(V) = (ACC == 0x80000000);
+    local ovf:1 = (ACC == 0x80000000);
+    $(V) = $(V) | ovf;
     ACC = -ACC;
-    applyOvmSaturate32(ACC);
+    applyOvmSaturate32(ovf, ACC);
     $(C) = (ACC == 0);
   <flags_only>
     setNZ32(ACC);
@@ -1010,8 +1080,12 @@ macro arp_xar_ptr(p) {
 }
 # CMP64 ACC:P  0101 0110 0101 1110  (compare 64-bit ACC:P vs 0; set N/Z, Z from both).
 :CMP64 "ACC:P"  is rpt_phase=1 & op16=0x565e  {
+    # SPRU430F: N is the sign of ACC corrected by V (a 32-bit high-word op that overflowed
+    # flipped bit 31), then V is cleared. This is the consumer sticky V exists for: the
+    # documented 64-bit compare is CMP64 (clear V) ; SUBUL P ; SUBBL ACC ; CMP64 ; SB GT.
     local v:8 = (zext(ACC) << 32) | zext(P);
-    $(N) = (v s< 0); $(Z) = (v == 0);
+    $(N) = (ACC s< 0) ^ ($(V) != 0); $(Z) = (v == 0);
+    $(V) = 0;                                   # flag-audit-v: cleared
 }
 # NEG64 ACC:P  0101 0110 0101 1000  (negate the 64-bit ACC:P pair). dis2000-confirmed;
 # reached only via a branch shadow (after SB ...,GEQ), so the fall-through sweep missed it.
@@ -1023,9 +1097,10 @@ macro arp_xar_ptr(p) {
 # (stays 0x8000000000000000). Was missing C, V, and OVM saturation -- see issue #106.
 :NEG64 "ACC:P"  is rpt_phase=1 & op16=0x5658  {
     local v:8 = (zext(ACC) << 32) | zext(P);
-    $(V) = (v == 0x8000000000000000);
+    local ovf:1 = (v == 0x8000000000000000);
+    $(V) = $(V) | ovf;
     v = -v; ACC = v(4); P = v(0);
-    applyOvmSaturate64AccP();
+    applyOvmSaturate64AccP(ovf);
     local isZero:1 = (ACC == 0) & (P == 0);
     $(N) = (ACC s< 0);
     $(Z) = isZero;
@@ -1074,9 +1149,12 @@ macro arp_xar_ptr(p) {
 # the low half of XT; high half = sign). XT low 16 = loc16, T (high) = sign-extend.
 :MOVX "TL", loc16  is rpt_phase=1 & op16=0x5621 ; loc16  { XT = sext(loc16); }
 # MOV loc16,AX,COND  0101 0110 0010 101A : 0000 COND LLLL LLLL  (store AX if COND).
-# COND in word2 bits 8-11; modeled flow-preserving (store AX unconditionally so the
-# def survives — the exact predicate isn't decoded here).
-:MOV loc16, AXb0, "COND"  is rpt_phase=1 & op_hi8=0x56 & op_lo71=0b0010101 & AXb0 ; loc16  { loc16 = AXb0; }
+# COND in word2 bits 8-11 (cond4hi / CC8). Was a literal "COND" with an unconditional store.
+:MOV loc16, AXb0, CC8  is rpt_phase=1 & op_hi8=0x56 & op_lo71=0b0010101 & AXb0 ; cond4hi & CC8 & loc16  {
+    local take:1 = CC8;
+    if (take == 0) goto inst_next;
+    loc16 = AXb0;
+}
 # MOV loc16,ACC<<#2..8  0101 0110 0010 1101 : 0000 0SHF LLLL LLLL  (save low word of
 # ACC<<SHF). SHF in word2 bits 8-10; store the low word of the shifted ACC.
 # SPRU430F p.259: N/Z conditioned on the destination -- set from AX only when loc16=@AX.

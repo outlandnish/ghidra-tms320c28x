@@ -1,0 +1,19 @@
+# Conditional forms that test V -- which CLEARS V when the condition is OV/NOV (SPRU430F:
+# "if the V flag is tested by the condition, then V is cleared") -- plus CMP64, which consumes
+# the sticky V, and MIN/MAX, which set it. Bytes from cl2000 -v28 and verified against
+# dis2000's decode. MOVL loc32,ACC,COND and MOV loc16,AX,COND carry COND in word2 bits 8..11;
+# MOVL used to read it from the loc32 byte and MOV printed a literal "COND". The SB lines
+# print the resolved target where dis2000 prints the raw displacement (4).
+# Byte columns are little-endian per 16-bit word.
+0x0	4856c401	MOVL *+XAR4[0],ACC,EQ
+0x2	4856c40b	MOVL *+XAR4[0],ACC,OV
+0x4	48560502	MOVL @0x5,ACC,GT
+0x6	2a56c400	MOV *+XAR4[0],AL,NEQ
+0x8	2b56c404	MOV *+XAR4[0],AH,LT
+0xa	2a56050b	MOV @0x5,AL,OV
+0xc	b156c412	MOVB *+XAR4[0],#0x12,EQ
+0xe	7256c400	MAX AL,*+XAR4[0]
+0x10	7556c400	MIN AH,*+XAR4[0]
+0x12	5e56	CMP64 ACC:P
+0x13	046b	SB 0x00000017,OV
+0x14	046a	SB 0x00000018,NOV

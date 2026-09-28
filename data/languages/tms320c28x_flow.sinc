@@ -20,6 +20,9 @@
 # COND condition codes (4-bit, SPRU430F B-instruction table). The CC subtable
 # exports a 1-byte boolean = "branch taken". Flags live in ST0 (@define'd in the
 # .slaspec): $(Z) $(N) $(C) $(V) $(TC).
+# NOV/OV also CLEAR V: every COND user (B/SB/BF/XB/XCALL/XRETC, MOVL/MOVB ...,COND) reads
+# "if the V flag is tested by the condition, then V is cleared" in SPRU430F. V is otherwise
+# sticky -- the arithmetic ops only ever set it -- so this is how code consumes an overflow.
 # =============================================================================
 CC: "NEQ"   is cond4=0x0 { local c:1 = ($(Z) == 0);              export c; }
 CC: "EQ"    is cond4=0x1 { local c:1 = ($(Z) != 0);              export c; }
@@ -31,8 +34,8 @@ CC: "HI"    is cond4=0x6 { local c:1 = (($(C)!=0) && ($(Z)==0)); export c; }
 CC: "HIS"   is cond4=0x7 { local c:1 = ($(C) != 0);              export c; }
 CC: "LO"    is cond4=0x8 { local c:1 = ($(C) == 0);              export c; }
 CC: "LOS"   is cond4=0x9 { local c:1 = (($(C)==0) || ($(Z)!=0)); export c; }
-CC: "NOV"   is cond4=0xa { local c:1 = ($(V) == 0);              export c; }
-CC: "OV"    is cond4=0xb { local c:1 = ($(V) != 0);              export c; }
+CC: "NOV"   is cond4=0xa { local c:1 = ($(V) == 0); $(V) = 0;    export c; }
+CC: "OV"    is cond4=0xb { local c:1 = ($(V) != 0); $(V) = 0;    export c; }
 CC: "NTC"   is cond4=0xc { local c:1 = ($(TC) == 0);             export c; }
 CC: "TC"    is cond4=0xd { local c:1 = ($(TC) != 0);             export c; }
 CC: "NBIO"  is cond4=0xe { local c:1 = 0:1;                      export c; } # BIO not modeled
@@ -49,8 +52,8 @@ CC8: "HI"   is cond4hi=0x6 { local c:1 = (($(C)!=0) && ($(Z)==0)); export c; }
 CC8: "HIS"  is cond4hi=0x7 { local c:1 = ($(C) != 0);              export c; }
 CC8: "LO"   is cond4hi=0x8 { local c:1 = ($(C) == 0);              export c; }
 CC8: "LOS"  is cond4hi=0x9 { local c:1 = (($(C)==0) || ($(Z)!=0)); export c; }
-CC8: "NOV"  is cond4hi=0xa { local c:1 = ($(V) == 0);              export c; }
-CC8: "OV"   is cond4hi=0xb { local c:1 = ($(V) != 0);              export c; }
+CC8: "NOV"  is cond4hi=0xa { local c:1 = ($(V) == 0); $(V) = 0;    export c; }
+CC8: "OV"   is cond4hi=0xb { local c:1 = ($(V) != 0); $(V) = 0;    export c; }
 CC8: "NTC"  is cond4hi=0xc { local c:1 = ($(TC) == 0);             export c; }
 CC8: "TC"   is cond4hi=0xd { local c:1 = ($(TC) != 0);             export c; }
 CC8: "NBIO" is cond4hi=0xe { local c:1 = 0:1;                      export c; }

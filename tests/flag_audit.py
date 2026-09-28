@@ -20,6 +20,14 @@
 #     these can (and did) set only N/Z without ever writing $(V), which
 #     kept pass 2 blind to them -- the SBBU hole was exactly this shape.
 #
+#   PASS 4: V overwrites. V is STICKY -- SPRU430F: "if an overflow occurs, V is
+#     set; otherwise V is not affected" -- and is cleared only by a COND test
+#     of it (the CC/CC8 NOV/OV rows) and a handful of ops that say so. A plain
+#     `$(V) = scarry(...)` clears a V an earlier instruction set, so a 64-bit
+#     add/compare chain (... ; CMP64) or a later SB ...,OV misses the overflow.
+#     Write `$(V) = $(V) | ovf;`, or annotate the line `# flag-audit-v: <why>`
+#     when SPRU430F documents that this op clears V.
+#
 # Exit non-zero on any un-annotated candidate. To exempt a constructor:
 #   # flag-audit: none       -- flagless BY SPRU430F (pass 1 opt-out)
 #   # flag-audit-ovc: none   -- V-writer that spec explicitly leaves OVC alone
@@ -54,6 +62,10 @@ DEST = re.compile(
 ARITH = re.compile(r'=\s*[^;]*[-+&|^]|<<|>>|\w\s*\*\s*\w')
 OPT_OUT = re.compile(r'#\s*flag-audit:\s*none')
 OPT_OUT_OVC = re.compile(r'#\s*flag-audit-ovc:\s*none')
+# Pass 4: a V write that is neither sticky (`$(V) | ...`) nor a set-only `= 1`.
+V_OVERWRITE = re.compile(r'\$\(V\)\s*=(?!=)(?!\s*(?:\$\(V\)\s*\||1\s*;))')
+OPT_OUT_V = re.compile(r'#\s*flag-audit-v:')
+CC_ROW = re.compile(r'^CC8?:')
 
 # Mnemonics whose defining act is an ALU-style compute. Extended as new
 # instructions with flag semantics are added; the guiding rule is "SPRU430F
@@ -168,6 +180,19 @@ def audit():
     return pass1, pass2, pass3, scanned
 
 
+def audit_v():
+    """Pass 4: line-level, so it also sees macros and sub-tables."""
+    hits = []
+    for path in sorted(glob.glob(os.path.join(LANG, '*.sinc'))):
+        for ln, line in enumerate(open(path).read().split('\n'), 1):
+            if CC_ROW.match(line) or OPT_OUT_V.search(line):
+                continue
+            code = line.split('#', 1)[0]
+            if V_OVERWRITE.search(code):
+                hits.append(('V', os.path.basename(path), ln, line.strip()))
+    return hits
+
+
 def report(hits, title, remedy):
     print(f'flag_audit: FAIL -- {title}')
     print(remedy + '\n')
@@ -178,9 +203,10 @@ def report(hits, title, remedy):
 
 def main():
     pass1, pass2, pass3, scanned = audit()
-    if not pass1 and not pass2 and not pass3:
+    pass4 = audit_v()
+    if not pass1 and not pass2 and not pass3 and not pass4:
         print(f'flag_audit: OK ({scanned} constructors scanned, '
-              f'0 pass-1, 0 pass-2, 0 pass-3 candidates)')
+              f'0 pass-1, 0 pass-2, 0 pass-3, 0 pass-4 candidates)')
         return 0
     if pass1:
         report(
@@ -195,7 +221,7 @@ def main():
             pass2,
             'ALU-family constructors write ACC and set $(V) but do NOT touch '
             'OVC.',
-            "Add applyOvcSigned(ACC) / applyOvcUnsigned() after the V write; "
+            "Add applyOvcSigned(ovf, ACC) / applyOvcUnsigned() after the V write; "
             "OR add\n`# flag-audit-ovc: none` if SPRU430F Table 2-5 explicitly"
             " excludes the\ninstruction from OVC accounting (e.g. CMP, CMPL, "
             "or non-ACC-destination forms).")
@@ -205,10 +231,18 @@ def main():
             pass3,
             'SPRU430F Table 2-5 OVC-affecting instructions write ACC but do '
             'NOT touch OVC.',
-            "Add applyOvcSigned(ACC) / applyOvcUnsigned() on the ACC += P "
+            "Add applyOvcSigned(ovf, ACC) / applyOvcUnsigned() on the ACC += P "
             "(or ACC -= P)\nstep; OR add `# flag-audit-ovc: none` if SPRU430F"
             " explicitly excludes\nthe form (rare -- Table 2-5 is the source"
             " of truth here).")
+        print()
+    if pass4:
+        report(
+            pass4,
+            'V written without keeping its previous value (V is sticky).',
+            "Write `local ovf:1 = ...; $(V) = $(V) | ovf;` and pass `ovf` to "
+            "applyOvcSigned /\napplyOvmSaturate*; OR annotate the line "
+            "`# flag-audit-v: <why>` if SPRU430F says\nthis op clears V.")
     print(f'\n{scanned} constructors scanned.')
     return 1
 

@@ -67,6 +67,7 @@ cp "$module/ghidra_scripts/EmuModuloTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuAddbAxSignTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuSubf32ImmTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuAddLoc16ImmFlagsTest.java" "$tmp/scripts/"
+cp "$module/ghidra_scripts/EmuVFlagTest.java" "$tmp/scripts/"
 cp "$module/tests/fpu_flags.bin" "$module/tests/fpu_cond.bin" "$tmp/"
 
 fail=0
@@ -116,6 +117,7 @@ run_suite EmuModuloTest fpu_flags.bin         # issue #127 follow-up: *AR6%++ ci
 run_suite EmuAddbAxSignTest fpu_flags.bin     # ADDB AX,#8bitSigned sign-extends its constant
 run_suite EmuSubf32ImmTest fpu_flags.bin      # issue #138: SUBF32 RaH,#16FHi,RbH is imm - RbH
 run_suite EmuAddLoc16ImmFlagsTest fpu_flags.bin # ADD loc16,#16bitSigned sets N/Z/C/V
+run_suite EmuVFlagTest fpu_flags.bin          # V is sticky; COND tests clear it; CMP64/MIN/MAX
 
 if [ "$fail" -eq 0 ]; then
   echo "emulation semantics: OK"
