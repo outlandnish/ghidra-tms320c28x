@@ -68,6 +68,7 @@ Copy-Item "$Module\ghidra_scripts\EmuAddLoc16ImmFlagsTest.java" "$ws\scripts\" -
 Copy-Item "$Module\ghidra_scripts\XrefResolveTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\ResolveComputedPointerXrefs.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuVFlagTest.java" "$ws\scripts\" -Force
+Copy-Item "$Module\ghidra_scripts\EmuMovbAccFlagsTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuAspNaspTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\tests\fpu_flags.bin" "$ws\" -Force
 Copy-Item "$Module\tests\fpu_cond.bin" "$ws\" -Force
@@ -131,6 +132,7 @@ Invoke-Suite "EmuAddLoc16ImmFlagsTest" "fpu_flags.bin" # ADD loc16,#16bitSigned 
 Invoke-Suite "XrefResolveTest" "fpu_flags.bin"        # ResolveComputedPointerXrefs: READ/WRITE/RW refs, dry run, idempotent
 Invoke-Suite "EmuVFlagTest" "fpu_flags.bin"           # V is sticky; COND tests clear it; CMP64/MIN/MAX
 Invoke-Suite "EmuAspNaspTest" "fpu_flags.bin"         # ASP/NASP branch-free: SP align/unalign + SPA
+Invoke-Suite "EmuMovbAccFlagsTest" "fpu_flags.bin"    # MOVB ACC,#8bit sets N/Z (missed by #110)
 
 if ($fail -eq 0) { Write-Host "emulation semantics: OK" -ForegroundColor Green }
 else { exit 1 }
