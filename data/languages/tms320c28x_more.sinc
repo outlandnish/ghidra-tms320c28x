@@ -624,6 +624,14 @@ macro unpackst1(in) {
 :PUSH "DP"       is rpt_phase=1 & op16=0x760B { push16(DP); }
 :PUSH "ST0"      is rpt_phase=1 & op16=0x7618 { packst0(ST0); push16(ST0); }
 :PUSH "ST1"      is rpt_phase=1 & op16=0x7608 { packst1(ST1); push16(ST1); }
+# PUSH DP:ST1 / POP DP:ST1  0x7609 / 0x7601 (SPRU430F pp.374 / 358). One 32-bit slot:
+# ST1 in the lower word, DP in the upper. dis2000-confirmed; both were <UNDEF>, so the
+# decode stopped at every site. POP reloads DP from the stack, so it invalidates ctx_DP
+# exactly like POP DP above.
+:PUSH "DP:ST1"   is rpt_phase=1 & op16=0x7609 { packst1(ST1); push16(ST1); push16(DP); }
+:POP "DP:ST1"    is rpt_phase=1 & op16=0x7601
+        [ ctx_DP_valid = 0; globalset(inst_next, ctx_DP_valid); ]
+        { pop16(DP); pop16(ST1); unpackst1(ST1); }
 
 # =============================================================================
 # Batch 5: AX shifts (0xFF-prefix), SP byte-add, MOVL ACC,P — from TI rts validation.

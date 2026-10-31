@@ -90,8 +90,10 @@
 # =============================================================================
 
 # MOVB ACC, #8bit   0000 0010 CCCC CCCC   -- ACC = zero-extended 8-bit
+# SPRU430F p.281: N and Z are tested on ACC after the load (missed by the #110 audit).
 :MOVB ACCreg, "#"imm8  is rpt_phase=1 & op_hi8=0x02 & ACCreg & imm8  {
     ACC = zext(imm8:1);
+    setNZ32(ACC);
 }
 
 # MOVB AX, #8bit    1001 101A CCCC CCCC   -- AL/AH = 8-bit constant

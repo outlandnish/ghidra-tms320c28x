@@ -382,8 +382,11 @@ attach names [ intr4 ] [ "INT1" "INT2" "INT3" "INT4" "INT5" "INT6" "INT7" "INT8"
 :ESTOP0         is rpt_phase=1 & op16=0x7625  { }                 # Emulation stop 0
 # Stack-pointer align/unalign (common in prologues/epilogues). ASP: if SP odd, SP++ and
 # set SPA; NASP: if SPA, SP-- and clear SPA. SPA = ST1[4]. (0x761b / 0x7617.)
-:ASP            is rpt_phase=1 & op16=0x761B  { if ((SP & 1) == 0) goto <even>; SP = SP + 1; $(SPA) = 1; goto inst_next; <even> $(SPA) = 0; }
-:NASP           is rpt_phase=1 & op16=0x7617  { if ($(SPA) == 0) goto inst_next; SP = SP - 1; $(SPA) = 0; }
+# Both are written branch-free. With an intra-instruction `goto <label>` / `goto inst_next`
+# the decompiler reported "Removing unreachable block" at every ASP/NASP site, and ASP is
+# the first instruction of most TI interrupt prologues. Same semantics, no p-code branch.
+:ASP            is rpt_phase=1 & op16=0x761B  { local odd:4 = SP & 1; SP = SP + odd; $(SPA) = (odd != 0); }
+:NASP           is rpt_phase=1 & op16=0x7617  { local adj:4 = zext($(SPA)); SP = SP - adj; $(SPA) = 0; }
 :ESTOP1         is rpt_phase=1 & op16=0x7624  { }                 # Emulation stop 1 (halts only when emulator connected)
 
 # IER/IFR immediate forms (2-word: opcode word + imm16).  SPRU430F encodings:
