@@ -12,3 +12,7 @@
 0xa	25564100	TBIT *-SP[1],T
 0xc	7af8	MOV DP,#0x7a
 0xd	fffb	MOV DP,#0x3ff
+# PUSH DP:ST1 / POP DP:ST1 (SPRU430F pp.374/358). Bytes from asm2000, text checked
+# against dis2000. Both were <UNDEF>.
+0xe	0976	PUSH DP:ST1
+0xf	0176	POP DP:ST1
