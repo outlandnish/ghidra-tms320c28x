@@ -69,6 +69,7 @@ cp "$module/ghidra_scripts/EmuSubf32ImmTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuAddLoc16ImmFlagsTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/XrefResolveTest.java" "$module/ghidra_scripts/ResolveComputedPointerXrefs.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuVFlagTest.java" "$tmp/scripts/"
+cp "$module/ghidra_scripts/EmuAspNaspTest.java" "$tmp/scripts/"
 cp "$module/tests/fpu_flags.bin" "$module/tests/fpu_cond.bin" "$tmp/"
 
 fail=0
@@ -121,6 +122,7 @@ run_suite EmuAddLoc16ImmFlagsTest fpu_flags.bin # ADD loc16,#16bitSigned sets N/
 # Not emulation: a script check that needs the same headless import. Builds its own blocks.
 run_suite XrefResolveTest fpu_flags.bin       # ResolveComputedPointerXrefs: READ/WRITE/RW refs, dry run, idempotent
 run_suite EmuVFlagTest fpu_flags.bin          # V is sticky; COND tests clear it; CMP64/MIN/MAX
+run_suite EmuAspNaspTest fpu_flags.bin        # ASP/NASP branch-free: SP align/unalign + SPA
 
 if [ "$fail" -eq 0 ]; then
   echo "emulation semantics: OK"
