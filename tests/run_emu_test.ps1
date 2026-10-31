@@ -68,6 +68,7 @@ Copy-Item "$Module\ghidra_scripts\EmuAddLoc16ImmFlagsTest.java" "$ws\scripts\" -
 Copy-Item "$Module\ghidra_scripts\XrefResolveTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\ResolveComputedPointerXrefs.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuVFlagTest.java" "$ws\scripts\" -Force
+Copy-Item "$Module\ghidra_scripts\EmuImpyslTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuPushPopDpSt1Test.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuMovbAccFlagsTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuAspNaspTest.java" "$ws\scripts\" -Force
@@ -135,6 +136,7 @@ Invoke-Suite "EmuVFlagTest" "fpu_flags.bin"           # V is sticky; COND tests 
 Invoke-Suite "EmuAspNaspTest" "fpu_flags.bin"         # ASP/NASP branch-free: SP align/unalign + SPA
 Invoke-Suite "EmuMovbAccFlagsTest" "fpu_flags.bin"    # MOVB ACC,#8bit sets N/Z (missed by #110)
 Invoke-Suite "EmuPushPopDpSt1Test" "fpu_flags.bin"    # PUSH/POP DP:ST1 stack layout + ST1 pack/unpack
+Invoke-Suite "EmuImpyslTest" "fpu_flags.bin"          # IMPYSL ACC-=P, P=XT*[loc32], N/Z/C/V/OVCU
 
 if ($fail -eq 0) { Write-Host "emulation semantics: OK" -ForegroundColor Green }
 else { exit 1 }

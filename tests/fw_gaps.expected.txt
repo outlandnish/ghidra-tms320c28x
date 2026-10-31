@@ -16,3 +16,7 @@
 # against dis2000. Both were <UNDEF>.
 0xe	0976	PUSH DP:ST1
 0xf	0176	POP DP:ST1
+# IMPYSL P,XT,loc32 (SPRU430F p.205). Bytes from asm2000, text checked against dis2000.
+0x10	43560200	IMPYSL P,XT,@0x2
+0x12	43568400	IMPYSL P,XT,*XAR4++
+0x14	43564400	IMPYSL P,XT,*-SP[4]
