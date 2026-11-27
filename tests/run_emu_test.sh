@@ -68,6 +68,7 @@ cp "$module/ghidra_scripts/EmuAddbAxSignTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuSubf32ImmTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuAddLoc16ImmFlagsTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/XrefResolveTest.java" "$module/ghidra_scripts/ResolveComputedPointerXrefs.java" "$tmp/scripts/"
+cp "$module/ghidra_scripts/RecontextKeepsRefsTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuVFlagTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuImpyslTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuPushPopDpSt1Test.java" "$tmp/scripts/"
@@ -125,6 +126,7 @@ run_suite EmuSubf32ImmTest fpu_flags.bin      # issue #138: SUBF32 RaH,#16FHi,Rb
 run_suite EmuAddLoc16ImmFlagsTest fpu_flags.bin # ADD loc16,#16bitSigned sets N/Z/C/V
 # Not emulation: a script check that needs the same headless import. Builds its own blocks.
 run_suite XrefResolveTest fpu_flags.bin       # ResolveComputedPointerXrefs: READ/WRITE/RW refs, dry run, idempotent
+run_suite RecontextKeepsRefsTest fpu_flags.bin  # analyzer re-decode keeps user/analysis refs + overrides
 run_suite EmuVFlagTest fpu_flags.bin          # V is sticky; COND tests clear it; CMP64/MIN/MAX
 run_suite EmuAspNaspTest fpu_flags.bin        # ASP/NASP branch-free: SP align/unalign + SPA
 run_suite EmuMovbAccFlagsTest fpu_flags.bin   # MOVB ACC,#8bit sets N/Z (missed by #110)

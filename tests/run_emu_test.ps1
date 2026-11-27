@@ -66,6 +66,7 @@ Copy-Item "$Module\ghidra_scripts\EmuAddbAxSignTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuSubf32ImmTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuAddLoc16ImmFlagsTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\XrefResolveTest.java" "$ws\scripts\" -Force
+Copy-Item "$Module\ghidra_scripts\RecontextKeepsRefsTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\ResolveComputedPointerXrefs.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuVFlagTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuImpyslTest.java" "$ws\scripts\" -Force
@@ -133,6 +134,7 @@ Invoke-Suite "EmuSubf32ImmTest" "fpu_flags.bin"       # issue #138: SUBF32 RaH,#
 Invoke-Suite "EmuAddLoc16ImmFlagsTest" "fpu_flags.bin" # ADD loc16,#16bitSigned sets N/Z/C/V
 # Not emulation: a script check that needs the same headless import. Builds its own blocks.
 Invoke-Suite "XrefResolveTest" "fpu_flags.bin"        # ResolveComputedPointerXrefs: READ/WRITE/RW refs, dry run, idempotent
+Invoke-Suite "RecontextKeepsRefsTest" "fpu_flags.bin" # analyzer re-decode keeps user/analysis refs + overrides
 Invoke-Suite "EmuVFlagTest" "fpu_flags.bin"           # V is sticky; COND tests clear it; CMP64/MIN/MAX
 Invoke-Suite "EmuAspNaspTest" "fpu_flags.bin"         # ASP/NASP branch-free: SP align/unalign + SPA
 Invoke-Suite "EmuMovbAccFlagsTest" "fpu_flags.bin"    # MOVB ACC,#8bit sets N/Z (missed by #110)

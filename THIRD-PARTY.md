@@ -148,6 +148,18 @@ Files adapted so far:
   PMR image is a 64-bit compare with an early exit, so the straight-line rule proved
   1 of 3 returns where the closure proves 3 of 3, with no new match on a second
   image. See #84.
+- **`src/main/java/ghidra/app/plugin/core/analysis/TMS320C28xContextRedisassembly.java`**
+  (new) — their `changeContext` helper from `d7f585d`, the commit in which they adopted this
+  module's FFC closure. Before clearing an instruction to decode it under a new context bit,
+  it saves the non-DEFAULT memory references and the flow / fall-through / length overrides.
+  It restores the references afterwards. With an override present it decodes the
+  instruction at once and restores the override before queued analysis sees it.
+
+  Local change: theirs is private to the FFC analyzer. Here it is a shared class used by
+  all three re-contexting analyzers (FFC return, PM shift, switch canonicalizer). The
+  PM-shift analyzer matters most, because `ResolveComputedPointerXrefs` writes references
+  onto the very deref instructions it re-decodes. Pinned by `RecontextKeepsRefsTest`
+  (8 checks, 4 of which fail on the previous code).
 - **`data/languages/tms320c28x_more.sinc`** (partial) — the three-variant
   `LB *XAR7` constructor split dispatched by (`ffc_return`, `switch_canonical`)
   SLEIGH context bits, plus the `XAR7 & 0x003fffff` 22-bit PC mask on the
