@@ -389,6 +389,27 @@ Files adapted so far:
   22 bits. This image installs handlers as `.cinit` data, not by storing immediates.
   Kept enabled — it is cheap and covers what materialization cannot: a pointer written on
   a path startup never takes. See #61.
+- **`data/languages/tms320c28x_fpu.sinc`** (partial) and **`data/languages/tms320c28x_rpt.sinc`**
+  (partial) — four FPU semantic fixes from their September 2026 FPU batch:
+  - `a846069` — `FRACF32` as `|x| − floor(|x|)` with the sign restored. Ours
+    float-subtracted `trunc()`'s integer bits.
+  - `b0d07b1` — round-to-nearest-even for `F32TOI16R` / `F32TOUI16R` (floor, then step up
+    past one half or on an odd tie). Ours truncated. Reimplemented as
+    `fpu_round_even_int`.
+  - `d272cdf` / `b0d07b1` — saturation of `F32TOUI16` / `F32TOUI16R` to [0, 65535]. Ours
+    wrapped. Their per-constructor branches are folded into one `fpu_ui16_saturate`
+    macro here.
+  - `8a99388` — compute the parallel `MACF32 ‖ MOV32` product before the accumulate writes
+    R3H / R7H. Its R7H-bank opcode-bit half does not apply: our encodings come from
+    dis2000 and were already right.
+  - `3cf8262` — the repeated `RPT ‖ MACF32 R7H,R3H,mem32,*XAR7++` form, which alternates
+    the R3H/R2H and R7H/R6H pairs with the phase in a unique, as a constructor ahead of
+    the RPT wrapper.
+
+  Local change for the repeat: the emulator state modifier normally collapses an
+  internally looped repeat to one iteration per re-issue, and that would reset the phase
+  each time. It now leaves this opcode's whole repeat to the p-code. Pinned by
+  `EmuFpuConvMacTest` (23 cases, 17 of which fail on the previous spec).
 
 Evaluated and **not** adopted:
 

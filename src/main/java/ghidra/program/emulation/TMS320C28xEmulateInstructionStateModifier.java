@@ -125,6 +125,7 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 	// the .cinit walk lands 0x34cc34cc where the table says 0x000134cc. Model it here, where the
 	// repeat is already driven: step XAR7 for each re-issue, then restore it when the repeat ends.
 	private static final int OP_PREAD_OPHI8 = 0x24;   // PREAD  loc16,*XAR7
+	private static final int OP_MACF32_XAR7 = 0xE250; // MACF32 R7H,R3H,mem32,*XAR7++ (LSW)
 	private static final int OP_PWRITE_OPHI8 = 0x26;  // PWRITE *XAR7,loc16
 	private boolean xar7Shadowed = false;
 	private long xar7Saved;    // architectural XAR7, restored when the repeat finishes
@@ -273,6 +274,17 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 	}
 
 	/**
+	 * True for {@code MACF32 R7H,R3H,mem32,*XAR7++} (LSW 0xE250), whose repeated form in
+	 * {@code tms320c28x_rpt.sinc} runs the WHOLE repeat in its own p-code. It cannot be collapsed
+	 * like the transfers above: the accumulator pair alternates per iteration (SPRUHS1C p.68),
+	 * and that phase lives in a unique that a re-issue would reset to the R3H pair every time.
+	 * So the callback does not drive this one at all.
+	 */
+	private static boolean isSelfRepeating(int w) {
+		return w == OP_MACF32_XAR7;
+	}
+
+	/**
 	 * Drive the RPT single-instruction repeat under emulation, which the SLEIGH wrapper
 	 * cannot do (see the class comment: {@code globalset(inst_next, ...)} lands one
 	 * instruction late in the emulator). After each instruction, arm on an RPT opcode and
@@ -332,6 +344,11 @@ public class TMS320C28xEmulateInstructionStateModifier extends EmulateInstructio
 			// reads it. Nothing else consumes RPTC, and hardware leaves it at 0 anyway.
 			if (rptActive && isInternallyLoopedTransfer(repeatedW)) {
 				mem.setValue("RPTC", 0);
+			}
+			// The repeated MACF32 loops on RPTC itself, phase included: leave RPTC as RPT set
+			// it and do not re-issue.
+			if (rptActive && isSelfRepeating(repeatedW)) {
+				rptActive = false;
 			}
 			return;
 		}

@@ -4,7 +4,8 @@
 #
 # Ported from mwdmwd/ghidra-c28x (Apache-2.0): the `:^instruction` prefix-wrapper
 # pattern for the C28x hardware repeats and the `rpt_active` / `rptb_flag` /
-# `rpt_phase` context-bit scheme. See THIRD-PARTY.md.
+# `rpt_phase` context-bit scheme, and the alternating-pair repeated MACF32.
+# See THIRD-PARTY.md.
 #
 # SLEIGH loop models for RPT and RPTB. The loops live in p-code, so the
 # DECOMPILER sees them -- which the Java EmulateInstructionStateModifier never
@@ -285,4 +286,57 @@
     RPTC = RPTC - 1;
     goto <xpwrite_al_loc>;
   <xpwrite_al_loc_done>
+}
+
+# =============================================================================
+# REPEATED MACF32 -- the alternating accumulator pairs
+# =============================================================================
+# SPRUHS1C p.68: MACF32 R7H,R3H,mem32,*XAR7++ is the only FPU instruction RPT can repeat,
+# and repeated it is not the standalone instruction N+1 times: "the destination of the
+# accumulate will alternate between R3H and R7H on each cycle and R2H and R6H are used as
+# temporary storage for each multiply":
+#
+#     cycle 1: R3H = R3H + R2H, R2H = [mem32] * [XAR7++]
+#     cycle 2: R7H = R7H + R6H, R6H = [mem32] * [XAR7++]
+#     cycle 3: R3H = R3H + R2H, ...
+#
+# The generic wrapper re-runs the standalone body, which always uses R3H/R2H, so a
+# `RPT #N || MACF32` dot product summed everything into one pair and never touched R6H/R7H
+# -- the final `ADDF32 R7H,R7H,R3H` then added a stale R7H. The pair is a phase that has to
+# live across iterations, which the wrapper's `goto inst_start` cannot carry, so this form
+# runs the repeat itself with the phase in a unique, like the program transfers above.
+# Both operands advance every iteration: mem32 by `build loc32`, XAR7 architecturally (no
+# shadow here -- the post-increment is the instruction's own).
+#
+# The cascade TI allows (RPT || MACF32 again, with even counts) starts each repeat back on
+# R3H, which an even count leaves as the next pair anyway.
+#
+# EMULATION: unlike the transfers above, the modifier does NOT collapse this loop to one
+# iteration per issue -- doing so would reset the phase on every re-issue. It leaves the
+# whole repeat to this p-code (TMS320C28xEmulateInstructionStateModifier, isSelfRepeating).
+:MACF32 "R7H,R3H", loc32, "*XAR7++"  is rpt_phase=0 & rpt_active=1 & rptb_flag=0 & op16=0xE250 ; op_hi8=0x1F & loc32  {
+    local second:1 = 0;
+  <macf32_iter>
+    build loc32;
+    local v:4 = loc32;
+    local a:4 = XAR7;
+    local m:4 = *[ram]:4 a;
+    fpu_latch2($(FPK_MPY), v, m);
+    local prod:4 = v f* m;
+    if (second != 0) goto <macf32_hi>;
+    fpu_latch2($(FPK_ADD), R3H, R2H);
+    R3H = R3H f+ R2H;
+    R2H = prod;
+    goto <macf32_next>;
+  <macf32_hi>
+    fpu_latch2($(FPK_ADD), R7H, R6H);
+    R7H = R7H f+ R6H;
+    R6H = prod;
+  <macf32_next>
+    XAR7 = XAR7 + 2;
+    if (RPTC == 0) goto <macf32_done>;
+    RPTC = RPTC - 1;
+    second = second ^ 1;
+    goto <macf32_iter>;
+  <macf32_done>
 }

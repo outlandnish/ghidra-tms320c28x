@@ -13,7 +13,10 @@
 #     (compare, with conditioned operands), `update_stf_mov` (MOV loads: ZI/NI
 #     alongside ZF/NF);
 #   * `packstf` / `unpackstf` for the packed-STF sync on STF <-> memory moves;
-#   * the UNCF-vs-conditional split on MOV32 / NEGF32 / SWAPF ... cndf.
+#   * the UNCF-vs-conditional split on MOV32 / NEGF32 / SWAPF ... cndf;
+#   * round-to-nearest-even and unsigned saturation on the F32TO(U)I16(R) converts,
+#     the floor-based FRACF32, and the product-before-accumulate order in the
+#     parallel MACF32 forms.
 # See THIRD-PARTY.md.
 #
 # C28x FPU (F2837x / FPU32) instructions.
@@ -399,7 +402,16 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
     fpu_latch1($(FPK_EISQR), f_rb);
     f_ra = one f/ sqrt(f_rb);
 } # 1/sqrt estimate
-:FRACF32 f_ra, f_rb    is rpt_phase=1 & op16=0xE6F1; f_rb & f_ra & f_msw_hi=0 { f_ra = f_rb f- trunc(f_rb); } # fractional part (approx)
+# FRACF32: the fractional part, keeping the sign (SPRUHS1C: 19.625 -> 0.625). The old body
+# was `f_rb f- trunc(f_rb)`, which float-subtracts the INTEGER bits trunc() returns -- garbage
+# for any value with a non-zero integer part. The integer part is taken with floor() on the
+# magnitude so it stays a float: every finite binary32 at or above 2^23 is already integral,
+# including the ones outside int32 range that a trunc() round-trip would overflow.
+:FRACF32 f_ra, f_rb    is rpt_phase=1 & op16=0xE6F1; f_rb & f_ra & f_msw_hi=0 {
+    local mag:4  = f_rb & 0x7FFFFFFF;
+    local frac:4 = mag f- floor(mag);
+    f_ra = frac | (f_rb & 0x80000000);
+}
 
 # =============================================================================
 # TMU (Trigonometric Math Unit) ops — 0xE27x. MSW reg fields: aaa=RaH dest, bbb=RbH,
@@ -440,6 +452,19 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
 # QUADF32 RaH,RbH,RcH (+RdH) — quadrant determination for ATANPUF32; two dest regs.
 :QUADF32 f_ra, f_rb, f_rc  is rpt_phase=1 & op16=0xE27C; f_rc & f_rb & f_ra { f_ra = QUADF32(f_rb, f_rc); }
 
+# Round to nearest, ties to even, as an INTEGER (the ...R conversions, SPRUHS1C: 1.7 -> 2,
+# -1.7 -> -2). SLEIGH's round() yields a float and does not promise even ties, so: take the
+# floor, then step up when the remainder is over one half, or exactly one half with an odd
+# floor. floor() keeps negatives right (-2.5 -> floor -3, odd, so -2).
+macro fpu_round_even_int(out, in) {
+    local lo:4   = floor(in);
+    local i:4    = trunc(lo);
+    local rem:4  = in f- lo;
+    local half:4 = 0x3F000000;
+    local up:1   = (half f< rem) || ((rem f== half) && ((i & 1) != 0));
+    out = i + zext(up);
+}
+
 # Conversions (reg-reg).  LSW fixed; MSW reg fields. The FP reg holds a float; the
 # int forms hold a 2's-complement int in the 32-bit reg. trunc = float->int (toward 0),
 # int2float = int->float.  For the 16-bit source converts, take the low half.
@@ -450,13 +475,32 @@ cndf: "UNCF"  is fcndf=0b1111 { local b:1 = 1;                                 e
 # F32TOI16 / F32TOI16R (0xE68C): float -> SIGNED int16. MSW bit15=1 = round variant
 # (dis2000-confirmed, DIR image). Result sign-extended into the 32-bit reg.
 :F32TOI16 f_ra, f_rb   is rpt_phase=1 & op16=0xE68C; f_rb & f_ra & f_msw_mid=0 & f_msw_rnd=0 { local v:2 = trunc(f_rb); f_ra = sext(v); }  # truncate
-:F32TOI16R f_ra, f_rb  is rpt_phase=1 & op16=0xE68C; f_rb & f_ra & f_msw_mid=0 & f_msw_rnd=1 { local v:2 = trunc(f_rb); f_ra = sext(v); }  # round
+:F32TOI16R f_ra, f_rb  is rpt_phase=1 & op16=0xE68C; f_rb & f_ra & f_msw_mid=0 & f_msw_rnd=1 {
+    local t:4; fpu_round_even_int(t, f_rb);
+    local v:2 = t:2;
+    f_ra = sext(v);
+}
 :I16TOF32 f_ra, f_rb   is rpt_phase=1 & op16=0xE68D; f_rb & f_ra & f_msw_hi=0 { local v:2 = f_rb:2; f_ra = int2float(v); }
-:F32TOUI16 f_ra, f_rb  is rpt_phase=1 & op16=0xE68E; f_rb & f_ra & f_msw_mid=0 & f_msw_rnd=0 { local v:2 = trunc(f_rb); f_ra = zext(v); }  # float -> uint16 (truncate)
-# F32TOUI16R — same LSW, MSW bit15=1 selects round-to-nearest. dis2000 confirmed the
-# round variant at word 0xe68e:0x8000 (the f_msw_hi=0 form rejected it). Modeled as the
-# same convert (we don't track the rounding mode bit precisely).
-:F32TOUI16R f_ra, f_rb  is rpt_phase=1 & op16=0xE68E; f_rb & f_ra & f_msw_mid=0 & f_msw_rnd=1 { local v:2 = trunc(f_rb); f_ra = zext(v); }  # float -> uint16 (round)
+# F32TOUI16 / F32TOUI16R (0xE68E): float -> UNSIGNED int16, MSW bit15 selects rounding
+# (dis2000 confirmed the round variant at 0xe68e:0x8000). SPRUHS1C: both "saturate the float
+# to what can fit in 16bit integer and then convert" -- 300000 -> 65535, and a negative input
+# has nothing to fit but 0. A bare trunc() wrapped instead.
+macro fpu_ui16_saturate(out, in, round) {
+    local zero:4 = 0;
+    local top:4  = 0x477FFF00;                  # 65535.0f
+    out = 0;
+    if (in f< zero) goto <sat_done>;
+    out = 0xFFFF;
+    if (top f<= in) goto <sat_done>;
+    local t:4 = trunc(in);
+    if (round == 0) goto <sat_store>;
+    fpu_round_even_int(t, in);
+  <sat_store>
+    out = t & 0xFFFF;
+  <sat_done>
+}
+:F32TOUI16 f_ra, f_rb  is rpt_phase=1 & op16=0xE68E; f_rb & f_ra & f_msw_mid=0 & f_msw_rnd=0 { local r:4; fpu_ui16_saturate(r, f_rb, 0:1); f_ra = r; }
+:F32TOUI16R f_ra, f_rb is rpt_phase=1 & op16=0xE68E; f_rb & f_ra & f_msw_mid=0 & f_msw_rnd=1 { local r:4; fpu_ui16_saturate(r, f_rb, 1:1); f_ra = r; }
 :UI16TOF32 f_ra, f_rb  is rpt_phase=1 & op16=0xE68F; f_rb & f_ra & f_msw_hi=0 { local v:2 = f_rb:2; f_ra = int2float(v); }
 
 # =============================================================================
@@ -663,7 +707,8 @@ rptb_end: rel  is rptb_rsz
 # i.e. the accumulate consumes the PREVIOUS product in R2H and only then is R2H overwritten.
 # (The old model multiplied R3H by [XAR7] and accumulated into R7H, which was neither
 # operand pairing nor either destination.) When repeated under RPT the destinations
-# alternate R3H/R7H with R2H/R6H as the temporaries; only the standalone form is modelled.
+# alternate R3H/R7H with R2H/R6H as the temporaries -- that form is the repeat-specific
+# constructor in tms320c28x_rpt.sinc.
 :MACF32 "R7H,R3H", loc32, "*XAR7++"  is rpt_phase=1 & op16=0xE250 ; op_hi8=0x1F & loc32 {
     fpu_latch2($(FPK_ADD), R3H, R2H);
     R3H = R3H f+ R2H;
@@ -1019,38 +1064,45 @@ p_rf7_1: "R7H" is p_ff2=3 { export R7H; }
     p_rd = p_re_h f- p_rf;
     p_ra = loc32;
 }
+# The multiply and the accumulate issue in the same cycle, so the product reads its sources
+# BEFORE the accumulate writes R3H/R7H: `MACF32 R3H,R2H,R2H,R3H,R0H` multiplies the old R3H.
+# Writing the accumulator first made a source that names it read the new sum.
 #   MACF32 R3H,R2H,RdH,ReH,RfH || MOV32 RaH, mem32   LSW: E300 sub 0b0011
 :MACF32 "R3H,R2H", p_rd, p_re_l, p_rf, "||MOV32", p_ra, loc32
         is rpt_phase=1 & op_hi8=0xE3 & loc_hi4=0b0011 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    fpu_latch2($(FPK_MPY), p_re_l, p_rf);
+    local prod:4 = p_re_l f* p_rf;
     fpu_latch2($(FPK_ADD), R3H, R2H);
     R3H = R3H f+ R2H;
-    fpu_latch2($(FPK_MPY), p_re_l, p_rf);
-    p_rd = p_re_l f* p_rf;
+    p_rd = prod;
     p_ra = loc32;
 }
 :MACF32 "R3H,R2H", p_rd, p_re_h, p_rf, "||MOV32", p_ra, loc32
         is rpt_phase=1 & op_hi8=0xE3 & loc_hi4=0b0011 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    fpu_latch2($(FPK_MPY), p_re_h, p_rf);
+    local prod:4 = p_re_h f* p_rf;
     fpu_latch2($(FPK_ADD), R3H, R2H);
     R3H = R3H f+ R2H;
-    fpu_latch2($(FPK_MPY), p_re_h, p_rf);
-    p_rd = p_re_h f* p_rf;
+    p_rd = prod;
     p_ra = loc32;
 }
 #   MACF32 R7H,R6H,RdH,ReH,RfH || MOV32 RaH, mem32   LSW: E300 sub 0b1100
 :MACF32 "R7H,R6H", p_rd, p_re_l, p_rf, "||MOV32", p_ra, loc32
         is rpt_phase=1 & op_hi8=0xE3 & loc_hi4=0b1100 & p_rf & p_re_hi=0 ; p_rd & p_ra & p_re_l & loc32 {
+    fpu_latch2($(FPK_MPY), p_re_l, p_rf);
+    local prod:4 = p_re_l f* p_rf;
     fpu_latch2($(FPK_ADD), R7H, R6H);
     R7H = R7H f+ R6H;
-    fpu_latch2($(FPK_MPY), p_re_l, p_rf);
-    p_rd = p_re_l f* p_rf;
+    p_rd = prod;
     p_ra = loc32;
 }
 :MACF32 "R7H,R6H", p_rd, p_re_h, p_rf, "||MOV32", p_ra, loc32
         is rpt_phase=1 & op_hi8=0xE3 & loc_hi4=0b1100 & p_rf & p_re_hi=1 ; p_rd & p_ra & p_re_h & loc32 {
+    fpu_latch2($(FPK_MPY), p_re_h, p_rf);
+    local prod:4 = p_re_h f* p_rf;
     fpu_latch2($(FPK_ADD), R7H, R6H);
     R7H = R7H f+ R6H;
-    fpu_latch2($(FPK_MPY), p_re_h, p_rf);
-    p_rd = p_re_h f* p_rf;
+    p_rd = prod;
     p_ra = loc32;
 }
 
