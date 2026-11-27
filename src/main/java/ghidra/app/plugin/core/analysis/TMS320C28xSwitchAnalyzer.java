@@ -30,7 +30,6 @@ import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.lang.Processor;
 import ghidra.program.model.lang.Register;
-import ghidra.program.model.listing.ContextChangeException;
 import ghidra.program.model.listing.Function;
 import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.InstructionIterator;
@@ -122,33 +121,27 @@ public class TMS320C28xSwitchAnalyzer extends AbstractAnalyzer {
 			if (branch == null) {
 				continue;
 			}
-			try {
-				List<Instruction> canonicalInstructions = new ArrayList<>();
-				canonicalInstructions.add(descriptor.indexExpression.instruction);
-				if (descriptor.guardCanonicalInstruction != null) {
-					canonicalInstructions.add(descriptor.guardCanonicalInstruction);
-				}
-				for (Instruction canonical : canonicalInstructions) {
-					listing.clearCodeUnits(canonical.getMinAddress(), canonical.getMaxAddress(), false);
-					context.setValue(switchContext, canonical.getMinAddress(), canonical.getMaxAddress(),
-						BigInteger.ONE);
-					redisassemble.add(canonical.getMinAddress());
-				}
-				listing.clearCodeUnits(branch.getMinAddress(), branch.getMaxAddress(), false);
-				context.setValue(switchContext, branch.getMinAddress(), branch.getMaxAddress(),
-					BigInteger.ONE);
-				redisassemble.add(branch.getMinAddress());
-				switchBranches.add(branch.getMinAddress());
-				long highestCase = descriptor.lowestCase + descriptor.count - 1;
-				Msg.info(this,
-					"recognized " + descriptor.variant.description + " switch at " +
-						descriptor.branchAddress + " table=" + descriptor.tableBase + " cases=" +
-						descriptor.lowestCase + "-" + highestCase + " default=" +
-						descriptor.defaultPath);
+			List<Instruction> canonicalInstructions = new ArrayList<>();
+			canonicalInstructions.add(descriptor.indexExpression.instruction);
+			if (descriptor.guardCanonicalInstruction != null) {
+				canonicalInstructions.add(descriptor.guardCanonicalInstruction);
 			}
-			catch (ContextChangeException exception) {
-				log.appendException(exception);
+			boolean ok = true;
+			for (Instruction canonical : canonicalInstructions) {
+				ok &= TMS320C28xContextRedisassembly.recontext(program, canonical, switchContext,
+					BigInteger.ONE, redisassemble, monitor, log, NAME);
 			}
+			if (!ok || !TMS320C28xContextRedisassembly.recontext(program, branch, switchContext,
+				BigInteger.ONE, redisassemble, monitor, log, NAME)) {
+				continue;
+			}
+			switchBranches.add(branch.getMinAddress());
+			long highestCase = descriptor.lowestCase + descriptor.count - 1;
+			Msg.info(this,
+				"recognized " + descriptor.variant.description + " switch at " +
+					descriptor.branchAddress + " table=" + descriptor.tableBase + " cases=" +
+					descriptor.lowestCase + "-" + highestCase + " default=" +
+					descriptor.defaultPath);
 		}
 
 		if (!redisassemble.isEmpty()) {

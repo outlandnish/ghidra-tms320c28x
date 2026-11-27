@@ -30,7 +30,6 @@ import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.lang.Processor;
 import ghidra.program.model.lang.Register;
-import ghidra.program.model.listing.ContextChangeException;
 import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.InstructionIterator;
 import ghidra.program.model.listing.Listing;
@@ -138,34 +137,22 @@ public class TMS320C28xFfcReturnAnalyzer extends AbstractAnalyzer {
 					terminal.getMinAddress(), false))) {
 					continue;
 				}
-				try {
-					listing.clearCodeUnits(terminal.getMinAddress(), terminal.getMaxAddress(),
-						false);
-					context.setValue(returnContext, terminal.getMinAddress(),
-						terminal.getMaxAddress(), BigInteger.ONE);
-					redisassemble.add(terminal.getMinAddress());
-					Msg.info(this,
-						"recognized FFC helper return at " + returnAddress + " entry=" +
-							helper.entryAddress + " callers=" + helper.callerCount +
-							" instructions=" + helper.instructionCount + " returns=" +
-							helper.returnAddresses.size());
+				if (!TMS320C28xContextRedisassembly.recontext(program, terminal, returnContext,
+					BigInteger.ONE, redisassemble, monitor, log, NAME)) {
+					continue;
 				}
-				catch (ContextChangeException exception) {
-					log.appendException(exception);
-				}
+				Msg.info(this,
+					"recognized FFC helper return at " + returnAddress + " entry=" +
+						helper.entryAddress + " callers=" + helper.callerCount +
+						" instructions=" + helper.instructionCount + " returns=" +
+						helper.returnAddresses.size());
 			}
 		}
 		for (Instruction terminal : revocations) {
-			try {
-				Address address = terminal.getMinAddress();
-				listing.clearCodeUnits(terminal.getMinAddress(), terminal.getMaxAddress(), false);
-				context.setValue(returnContext, terminal.getMinAddress(), terminal.getMaxAddress(),
-					BigInteger.ZERO);
-				redisassemble.add(address);
+			Address address = terminal.getMinAddress();
+			if (TMS320C28xContextRedisassembly.recontext(program, terminal, returnContext,
+				BigInteger.ZERO, redisassemble, monitor, log, NAME)) {
 				Msg.info(this, "revoked unproven FFC helper return at " + address);
-			}
-			catch (ContextChangeException exception) {
-				log.appendException(exception);
 			}
 		}
 

@@ -42,7 +42,6 @@ import ghidra.program.model.address.AddressSet;
 import ghidra.program.model.address.AddressSetView;
 import ghidra.program.model.lang.Processor;
 import ghidra.program.model.lang.Register;
-import ghidra.program.model.listing.ContextChangeException;
 import ghidra.program.model.listing.Instruction;
 import ghidra.program.model.listing.InstructionIterator;
 import ghidra.program.model.listing.Listing;
@@ -117,16 +116,9 @@ public class TMS320C28xPmShiftAnalyzer extends AbstractAnalyzer {
 			if (instruction == null) {
 				continue;
 			}
-			try {
-				listing.clearCodeUnits(instruction.getMinAddress(), instruction.getMaxAddress(),
-					false);
-				context.setValue(pmShift, instruction.getMinAddress(), instruction.getMaxAddress(),
-					BigInteger.ONE);
-				redisassemble.add(instruction.getMinAddress());
+			if (TMS320C28xContextRedisassembly.recontext(program, instruction, pmShift,
+				BigInteger.ONE, redisassemble, monitor, log, NAME)) {
 				Msg.info(this, "PM product shift " + proof.mode + " proved at " + proof.address);
-			}
-			catch (ContextChangeException exception) {
-				log.appendException(exception);
 			}
 		}
 		if (!redisassemble.isEmpty()) {
