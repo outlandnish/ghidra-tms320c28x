@@ -70,6 +70,7 @@ cp "$module/ghidra_scripts/EmuAddLoc16ImmFlagsTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/XrefResolveTest.java" "$module/ghidra_scripts/ResolveComputedPointerXrefs.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuVFlagTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuImpyslTest.java" "$tmp/scripts/"
+cp "$module/ghidra_scripts/EmuDualMacXar7Test.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuPushPopDpSt1Test.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuMovbAccFlagsTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuAspNaspTest.java" "$tmp/scripts/"
@@ -131,6 +132,7 @@ run_suite EmuAspNaspTest fpu_flags.bin        # ASP/NASP branch-free: SP align/u
 run_suite EmuMovbAccFlagsTest fpu_flags.bin   # MOVB ACC,#8bit sets N/Z (missed by #110)
 run_suite EmuPushPopDpSt1Test fpu_flags.bin   # PUSH/POP DP:ST1 stack layout + ST1 pack/unpack
 run_suite EmuImpyslTest fpu_flags.bin         # IMPYSL ACC-=P, P=XT*[loc32], N/Z/C/V/OVCU
+run_suite EmuDualMacXar7Test fpu_flags.bin    # MOV PM,AX, MAC *XAR7, dual-MAC XAR7 loc priority, @AX N/Z, MAC *pma T
 run_suite EmuPmProductWriteTest fpu_flags.bin # IMPYL P/IMPYXUL/IMPYAL/IMPYSL/IMACL store the PM window (pm_shift=1)
 run_suite EmuFpuConvMacTest fpu_flags.bin     # FRACF32, F32TO(U)I16(R) round/saturate, MACF32 order + RPT pair alternation
 

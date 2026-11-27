@@ -48,6 +48,11 @@
 #                   the branches, where we print the RESOLVED target instead of the raw
 #                   displacement, and MSETFLG, where we print the raw FLAG/VALUE masks
 #                   like the C28x spec's SETFLG rather than TI's FLAG=VALUE list.
+#   mac_xar7     -- MOV PM,AX and MAC P,loc16,*XAR7[++] (both had no constructor), the
+#                   dual-memory MACs with a loc operand that also moves XAR7, and the
+#                   @AH/@AL destinations of MOVB loc16,#8bit,COND / MOVU / MOV loc16,OVC
+#                   that set N/Z. Encodings from cl2000 -v28, decodes checked against
+#                   dis2000.
 #
 # Usage:  pwsh -File tests\run_disasm_test.ps1 -Ghidra <ghidra-install-dir>
 #   (Ghidra defaults to $env:GHIDRA_INSTALL_DIR; Module defaults to this repo root.)
@@ -56,7 +61,7 @@ param(
   [string]$Module = (Split-Path -Parent $PSScriptRoot),
   [string[]]$Cases = @("addr_modes", "mov_movz", "misc_batch", "io_ports", "vcu_setsh", "bar", "modulo_addr", "sbrk_adrk", "fpu_display", "fpu_parallel", "fpu_flags", "c2xlp",
                        "cla_all", "traps", "mac_ext56", "shifts", "bitops", "loops_intr",
-                       "fw_gaps", "cond_moves")
+                       "fw_gaps", "cond_moves", "mac_xar7")
 )
 # Cases not listed here run on the core C28x language.
 $ProcessorOf = @{ "cla_all" = "TMS320C28x:LE:32:cla" }

@@ -555,15 +555,20 @@ macro packst0(res) {
         | (pm_raw << 7)
         | (ovc_raw << 10));
 }
+# Raw 3-bit PM field -> the decoded signed shift held in PM (SPRU430F Table 2-3). Shared by
+# the ST0 unpack and MOV PM,AX, the two places a raw field is written.
+macro decodePM(pm_raw) {
+    local pm_default:1 = 1 - pm_raw;
+    local pm_plus4:1 = (AMODE != 0) && (pm_raw == 5);
+    local pm_plus4_mask:1 = 0 - pm_plus4;
+    PM = (pm_default & ~pm_plus4_mask) | (4 & pm_plus4_mask);
+}
 macro unpackst0(in) {
     local ovc_raw:1 = in[10,6];
     local ovc_sign_mask:1 = 0 - ovc_raw[5,1];
     OVC = ovc_raw | (ovc_sign_mask & 0xc0);
     local pm_raw:1 = in[7,3];
-    local pm_default:1 = 1 - pm_raw;
-    local pm_plus4:1 = (AMODE != 0) && (pm_raw == 5);
-    local pm_plus4_mask:1 = 0 - pm_plus4;
-    PM = (pm_default & ~pm_plus4_mask) | (4 & pm_plus4_mask);
+    decodePM(pm_raw);
     V   = in[6,1];
     N   = in[5,1];
     Z   = in[4,1];
