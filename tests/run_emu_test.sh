@@ -69,6 +69,10 @@ cp "$module/ghidra_scripts/EmuSubf32ImmTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuAddLoc16ImmFlagsTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/XrefResolveTest.java" "$module/ghidra_scripts/ResolveComputedPointerXrefs.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuVFlagTest.java" "$tmp/scripts/"
+cp "$module/ghidra_scripts/EmuImpyslTest.java" "$tmp/scripts/"
+cp "$module/ghidra_scripts/EmuPushPopDpSt1Test.java" "$tmp/scripts/"
+cp "$module/ghidra_scripts/EmuMovbAccFlagsTest.java" "$tmp/scripts/"
+cp "$module/ghidra_scripts/EmuAspNaspTest.java" "$tmp/scripts/"
 cp "$module/tests/fpu_flags.bin" "$module/tests/fpu_cond.bin" "$tmp/"
 
 fail=0
@@ -121,6 +125,10 @@ run_suite EmuAddLoc16ImmFlagsTest fpu_flags.bin # ADD loc16,#16bitSigned sets N/
 # Not emulation: a script check that needs the same headless import. Builds its own blocks.
 run_suite XrefResolveTest fpu_flags.bin       # ResolveComputedPointerXrefs: READ/WRITE/RW refs, dry run, idempotent
 run_suite EmuVFlagTest fpu_flags.bin          # V is sticky; COND tests clear it; CMP64/MIN/MAX
+run_suite EmuAspNaspTest fpu_flags.bin        # ASP/NASP branch-free: SP align/unalign + SPA
+run_suite EmuMovbAccFlagsTest fpu_flags.bin   # MOVB ACC,#8bit sets N/Z (missed by #110)
+run_suite EmuPushPopDpSt1Test fpu_flags.bin   # PUSH/POP DP:ST1 stack layout + ST1 pack/unpack
+run_suite EmuImpyslTest fpu_flags.bin         # IMPYSL ACC-=P, P=XT*[loc32], N/Z/C/V/OVCU
 
 if [ "$fail" -eq 0 ]; then
   echo "emulation semantics: OK"

@@ -434,6 +434,20 @@ macro normAcc() {
     applyOvcUnsigned();
     local a:8 = sext(XT); local m:8 = sext(loc32); local r:8 = a * m; P = r:4;
 }
+# IMPYSL 0x5643  ACC -= P;  P = sXT * s[loc32] (low 32); N/Z/C/V + UNSIGNED OVCU borrow.
+# The subtract twin of IMPYAL (SPRU430F p.205), modelled the same way: P is subtracted as
+# unsigned ignoring PM, and the new P is the low 32 bits of the product (PM shift not
+# applied, as in IMPYAL). Was <UNDEF>; its loc32 word then decoded as an opcode.
+:IMPYSL Preg, XTreg, loc32  is rpt_phase=1 & op16=0x5643 ; loc32 & Preg & XTreg {
+    local b:4 = P;
+    $(C) = !(ACC < b);
+    local ovf:1 = sborrow(ACC, b);
+    $(V) = $(V) | ovf;
+    ACC = ACC - b;
+    setNZ32(ACC);
+    applyOvcuBorrow();
+    local a:8 = sext(XT); local m:8 = sext(loc32); local r:8 = a * m; P = r:4;
+}
 # =============================================================================
 # DMAC / QMACL / IMACL — 32-bit MAC forms with two syntax variants each. Word 2
 # looks like <mode:8> <loc32:8>: the low byte is the standard loc32 field, while
