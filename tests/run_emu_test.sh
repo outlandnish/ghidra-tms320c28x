@@ -74,6 +74,7 @@ cp "$module/ghidra_scripts/EmuPushPopDpSt1Test.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuMovbAccFlagsTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuAspNaspTest.java" "$tmp/scripts/"
 cp "$module/ghidra_scripts/EmuPmProductWriteTest.java" "$tmp/scripts/"
+cp "$module/ghidra_scripts/EmuFpuConvMacTest.java" "$tmp/scripts/"
 cp "$module/tests/fpu_flags.bin" "$module/tests/fpu_cond.bin" "$tmp/"
 
 fail=0
@@ -131,6 +132,7 @@ run_suite EmuMovbAccFlagsTest fpu_flags.bin   # MOVB ACC,#8bit sets N/Z (missed 
 run_suite EmuPushPopDpSt1Test fpu_flags.bin   # PUSH/POP DP:ST1 stack layout + ST1 pack/unpack
 run_suite EmuImpyslTest fpu_flags.bin         # IMPYSL ACC-=P, P=XT*[loc32], N/Z/C/V/OVCU
 run_suite EmuPmProductWriteTest fpu_flags.bin # IMPYL P/IMPYXUL/IMPYAL/IMPYSL/IMACL store the PM window (pm_shift=1)
+run_suite EmuFpuConvMacTest fpu_flags.bin     # FRACF32, F32TO(U)I16(R) round/saturate, MACF32 order + RPT pair alternation
 
 if [ "$fail" -eq 0 ]; then
   echo "emulation semantics: OK"
