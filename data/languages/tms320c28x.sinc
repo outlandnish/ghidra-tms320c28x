@@ -224,6 +224,22 @@ macro pshift(out) {
     out = (right & neg) | (left & ~neg);
 }
 
+# The PM product shift on the WRITE side, for the 32x32 multiplies that store "the lower 38
+# bits of the 64-bit result" into P (IMPYL P, IMPYXUL, IMPYAL, IMPYSL, IMACL -- SPRU430F:
+# "PM then determines which part of the lower 38 bits ... are stored in the P register").
+# `r` is the full 64-bit product. A positive mode stores r << pm (low bits zero-filled), a
+# negative one stores bits 31-pm..-pm, i.e. r >> -pm; the most that reaches is bit 37, so
+# "lower 38" is not a separate truncation. Same branchless masking as pshift. Reached only
+# under pm_shift=1; the pm_shift=0 forms keep P = r:4.
+macro pshiftProduct(out, r) {
+    local pm:8 = sext($(PM));
+    local neg:8 = 0 - zext(pm s< 0);
+    local left:8 = r << pm;
+    local right:8 = r s>> (0 - pm);
+    local sel:8 = (right & neg) | (left & ~neg);
+    out = sel:4;
+}
+
 # SPRU430F p.255 / p.253 (MOV ACC,loc16<<#0..16 and MOV ACC,#16bit<<#0..15): after the
 # shift-and-load, N reflects bit 31 of ACC and Z reflects ACC==0. All four callers used
 # to leave N/Z untouched -- issue #110. The switch_canonical variant in

@@ -240,8 +240,18 @@ public class TMS320C28xPmShiftAnalyzer extends AbstractAnalyzer {
 	 * form prints {@code MOVL ACC,P} and the store prints {@code MOVL @ACC,P} when its loc32
 	 * happens to be ACC, and the usual field helpers strip the {@code @} that separates them.
 	 *
-	 * <p>The MAC family shifts too, but no site in either surveyed image reaches one with a
-	 * non-zero PM, so those stay on the plain model rather than being paired on speculation.
+	 * <p>The 32x32 low-half multiplies apply PM on the other side -- they READ P unshifted and
+	 * WRITE the PM-selected window of the 64-bit product ("the lower 38 bits", SPRU430F) -- but
+	 * the proof is the same: the mode in force when the instruction executes.
+	 *
+	 * <pre>
+	 * IMPYL P,XT,loc32 | IMPYXUL P,XT,loc32 | IMPYAL P,XT,loc32 | IMPYSL P,XT,loc32
+	 * IMACL P,loc32,*XAR7[++]
+	 * </pre>
+	 *
+	 * <p>The 16-bit MAC family shifts too, but no site in either surveyed image reaches one
+	 * with a non-zero PM, so those stay on the plain model rather than being paired on
+	 * speculation.
 	 */
 	private static boolean isProductConsumer(Instruction instruction) {
 		String text = instruction.toString().toUpperCase().replaceAll("\\s+", " ").trim();
@@ -251,6 +261,13 @@ public class TMS320C28xPmShiftAnalyzer extends AbstractAnalyzer {
 		}
 		if (isMnemonic(instruction, "movl")) {
 			return text.equals("MOVL ACC,P");
+		}
+		if (isMnemonic(instruction, "imacl")) {
+			return true;
+		}
+		if (isMnemonic(instruction, "impyl") || isMnemonic(instruction, "impyxul") ||
+			isMnemonic(instruction, "impyal") || isMnemonic(instruction, "impysl")) {
+			return text.startsWith(instruction.getMnemonicString().toUpperCase() + " P,");
 		}
 		return (isMnemonic(instruction, "mov") || isMnemonic(instruction, "movh")) &&
 			isPrintedRegister(instruction, 1, "P");
