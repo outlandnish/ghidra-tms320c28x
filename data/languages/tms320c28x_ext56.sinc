@@ -7,7 +7,9 @@
 # on XPREAD that gives SPRU430F's exact N/Z rule; and most of the C2xLP X* family
 # below -- the 0x3F program page, the software-stack XCALL/XRETC model, the
 # XB / XBANZ / XCALL / XRETC forms this module was missing, and the &XAR0 + ARP*4
-# register indexing XBANZ uses. See THIRD-PARTY.md.
+# register indexing XBANZ uses; MOV PM,AX via a decoded PM field; the dual-memory MAC
+# rule that the loc operand wins XAR7 conflicts; and N/Z on the @AH / @AL destinations
+# of MOVB loc16,#8bit,COND, MOVU loc16,OVC and MOV loc16,OVC. See THIRD-PARTY.md.
 #
 # C28x 0x56-prefix 2-word "extended" instruction family.
 # Included by tms320c28x.sinc. Encodings from docs/c28x/ch6_instruction_detail.txt.
@@ -209,13 +211,22 @@
 :MOVU loc16, "OVC" is rpt_phase=1 & op16=0x5628 ; loc16  {
     loc16 = zext(OVC) & 0x3f;
 }
+# @AH / @AL destination sets N and Z (SPRU430F p.314). N is always 0 here, bits 15:6 being
+# zero; Z reports OVC == 0.
+:MOVU loc16, "OVC" is rpt_phase=1 & op16=0x5628 & ctx_AMODE=0 ; (loc_full8=0xA8 | loc_full8=0xA9) & loc16  {
+    loc16 = zext(OVC) & 0x3f;
+    setNZ16(loc16);
+}
 # MOV loc16,OVC     0x5629 : loc16  (STORE OVC into the UPPER 6 bits of [loc16], lower
 # 10 bits zeroed). Signed-store counterpart of MOVU above. Missing from prior spec.
 # SPRU430F: `[loc16(15:10)]=OVC; [loc16(9:0)]=0`. N/Z on @AX destinations only per
-# manual, and the AX loc16 lands here via the shared loc16 sub-table -- setNZ16 is
-# safe regardless because @AX writes update the AX view first.
+# manual -- that is the @AH/@AL constructor that follows.
 :MOV loc16, "OVC"  is rpt_phase=1 & op16=0x5629 ; loc16  {
     loc16 = (zext(OVC) & 0x3f) << 10;
+}
+:MOV loc16, "OVC"  is rpt_phase=1 & op16=0x5629 & ctx_AMODE=0 ; (loc_full8=0xA8 | loc_full8=0xA9) & loc16  {
+    loc16 = (zext(OVC) & 0x3f) << 10;
+    setNZ16(loc16);
 }
 # MOV OVC,loc16     0x5602 : loc16  (LOAD OVC from the UPPER 6 bits of [loc16]).
 # SPRU430F: `OVC = [loc16(15:10)]`. Missing from prior spec.
@@ -482,6 +493,19 @@ macro normAcc() {
     applyOvcuBorrow();
     local a:8 = sext(XT); local m:8 = sext(loc32); local r:8 = a * m; pshiftProduct(P, r);
 }
+# DUAL-MEMORY CONFLICTS ON XAR7 (SPRU430F pp.187/199/244/385). The data operand (loc) and
+# the program operand (*XAR7/++) have separate address generators. When loc also moves XAR7
+# the C28x gives the loc field priority: `IMACL P,*XAR7++,*XAR7` reads the program side at
+# the OLD XAR7 and leaves XAR7 advanced once, by the loc mode; `MAC P,*XAR7,*XAR7++` is the
+# ordinary case. So every *XAR7 form latches the program address BEFORE `build loc`, and a
+# *XAR7++ form drops its own increment when the loc mode is one that writes XAR7.
+# Previously loc's side effects ran first, so the program side read the moved pointer and
+# then stepped it again.
+# The loc modes that write XAR7 in this model are *XAR7++ and *--XAR7 (AMODE=0). The
+# ARP-indirect modes resolve through XAR0 here (ARP is not tracked), so they never name XAR7.
+xar7_pstep: is ctx_AMODE=0 & (loc_full8=0x87 | loc_full8=0x8f) { local s:4 = 0; export s; }
+xar7_pstep: is loc_full8                                        { local s:4 = 1; export s; }
+
 # =============================================================================
 # DMAC / QMACL / IMACL — 32-bit MAC forms with two syntax variants each. Word 2
 # looks like <mode:8> <loc32:8>: the low byte is the standard loc32 field, while
@@ -507,8 +531,10 @@ macro normAcc() {
 # For DMAC, ACC and P both accumulate; flag effects on ACC only per manual.
 # =============================================================================
 :DMAC "ACC:P,"loc32",*XAR7"  is rpt_phase=1 & op16=0x564B ; xar7_mode=0xC7 & loc32 {
+    local pa:4 = XAR7;   # program side: latched before loc32 runs
+    build loc32;
     local xt:4  = loc32;
-    local tmp:4 = *[ram]:4 XAR7;
+    local tmp:4 = *[ram]:4 pa;
     local xt_hi:2  = xt(2);   local xt_lo:2  = xt:2;
     local tmp_hi:2 = tmp(2);  local tmp_lo:2 = tmp:2;
     local a:4 = sext(xt_hi);  local mh:4 = sext(tmp_hi);
@@ -523,9 +549,11 @@ macro normAcc() {
     local b:4 = sext(xt_lo);  local ml:4 = sext(tmp_lo);
     P = P + (b * ml);
 }
-:DMAC "ACC:P,"loc32",*XAR7++"  is rpt_phase=1 & op16=0x564B ; xar7_mode=0x87 & loc32 {
+:DMAC "ACC:P,"loc32",*XAR7++"  is rpt_phase=1 & op16=0x564B ; xar7_mode=0x87 & loc32 & xar7_pstep {
+    local pa:4 = XAR7;   # program side: latched before loc32 runs
+    build loc32;
     local xt:4  = loc32;
-    local tmp:4 = *[ram]:4 XAR7;
+    local tmp:4 = *[ram]:4 pa;
     local xt_hi:2  = xt(2);   local xt_lo:2  = xt:2;
     local tmp_hi:2 = tmp(2);  local tmp_lo:2 = tmp:2;
     local a:4 = sext(xt_hi);  local mh:4 = sext(tmp_hi);
@@ -539,9 +567,11 @@ macro normAcc() {
     setNZ32(ACC);
     local b:4 = sext(xt_lo);  local ml:4 = sext(tmp_lo);
     P = P + (b * ml);
-    XAR7 = XAR7 + 2;   # post-increment (2 word-addresses = 32 bits)
+    XAR7 = XAR7 + (xar7_pstep << 1);
 }
 :QMACL "P,"loc32",*XAR7"  is rpt_phase=1 & op16=0x564F ; xar7_mode=0xC7 & loc32 {
+    local pa:4 = XAR7;   # program side: latched before loc32 runs
+    build loc32;
     local b:4 = P;
     $(C) = carry(ACC, b);
     local ovf:1 = scarry(ACC, b);
@@ -551,12 +581,14 @@ macro normAcc() {
     applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
     local a:8   = sext(loc32);
-    local tmp:4 = *[ram]:4 XAR7;
+    local tmp:4 = *[ram]:4 pa;
     local m:8   = sext(tmp);
     local r:8   = (a * m) >> 32;
     P = r:4;
 }
-:QMACL "P,"loc32",*XAR7++"  is rpt_phase=1 & op16=0x564F ; xar7_mode=0x87 & loc32 {
+:QMACL "P,"loc32",*XAR7++"  is rpt_phase=1 & op16=0x564F ; xar7_mode=0x87 & loc32 & xar7_pstep {
+    local pa:4 = XAR7;   # program side: latched before loc32 runs
+    build loc32;
     local b:4 = P;
     $(C) = carry(ACC, b);
     local ovf:1 = scarry(ACC, b);
@@ -566,13 +598,15 @@ macro normAcc() {
     applyOvmSaturateSigned(ovf, ACC);
     setNZ32(ACC);
     local a:8   = sext(loc32);
-    local tmp:4 = *[ram]:4 XAR7;
+    local tmp:4 = *[ram]:4 pa;
     local m:8   = sext(tmp);
     local r:8   = (a * m) >> 32;
     P = r:4;
-    XAR7 = XAR7 + 2;
+    XAR7 = XAR7 + (xar7_pstep << 1);
 }
 :IMACL "P,"loc32",*XAR7"  is rpt_phase=1 & pm_shift=0 & op16=0x564D ; xar7_mode=0xC7 & loc32 {
+    local pa:4 = XAR7;   # program side: latched before loc32 runs
+    build loc32;
     local b:4 = P;
     $(C) = carry(ACC, b);
     local ovf:1 = scarry(ACC, b);
@@ -581,12 +615,14 @@ macro normAcc() {
     setNZ32(ACC);
     applyOvcUnsigned();
     local a:8   = sext(loc32);
-    local tmp:4 = *[ram]:4 XAR7;
+    local tmp:4 = *[ram]:4 pa;
     local m:8   = sext(tmp);
     local r:8   = a * m;
     P = r:4;   # low 32 bits (PM=0; pm_shift=1 twin below)
 }
 :IMACL "P,"loc32",*XAR7"  is rpt_phase=1 & pm_shift=1 & op16=0x564D ; xar7_mode=0xC7 & loc32 {
+    local pa:4 = XAR7;   # program side: latched before loc32 runs
+    build loc32;
     local b:4 = P;
     $(C) = carry(ACC, b);
     local ovf:1 = scarry(ACC, b);
@@ -595,12 +631,14 @@ macro normAcc() {
     setNZ32(ACC);
     applyOvcUnsigned();
     local a:8   = sext(loc32);
-    local tmp:4 = *[ram]:4 XAR7;
+    local tmp:4 = *[ram]:4 pa;
     local m:8   = sext(tmp);
     local r:8   = a * m;
     pshiftProduct(P, r);
 }
-:IMACL "P,"loc32",*XAR7++"  is rpt_phase=1 & pm_shift=0 & op16=0x564D ; xar7_mode=0x87 & loc32 {
+:IMACL "P,"loc32",*XAR7++"  is rpt_phase=1 & pm_shift=0 & op16=0x564D ; xar7_mode=0x87 & loc32 & xar7_pstep {
+    local pa:4 = XAR7;   # program side: latched before loc32 runs
+    build loc32;
     local b:4 = P;
     $(C) = carry(ACC, b);
     local ovf:1 = scarry(ACC, b);
@@ -609,13 +647,15 @@ macro normAcc() {
     setNZ32(ACC);
     applyOvcUnsigned();
     local a:8   = sext(loc32);
-    local tmp:4 = *[ram]:4 XAR7;
+    local tmp:4 = *[ram]:4 pa;
     local m:8   = sext(tmp);
     local r:8   = a * m;
     P = r:4;
-    XAR7 = XAR7 + 2;
+    XAR7 = XAR7 + (xar7_pstep << 1);
 }
-:IMACL "P,"loc32",*XAR7++"  is rpt_phase=1 & pm_shift=1 & op16=0x564D ; xar7_mode=0x87 & loc32 {
+:IMACL "P,"loc32",*XAR7++"  is rpt_phase=1 & pm_shift=1 & op16=0x564D ; xar7_mode=0x87 & loc32 & xar7_pstep {
+    local pa:4 = XAR7;   # program side: latched before loc32 runs
+    build loc32;
     local b:4 = P;
     $(C) = carry(ACC, b);
     local ovf:1 = scarry(ACC, b);
@@ -624,11 +664,42 @@ macro normAcc() {
     setNZ32(ACC);
     applyOvcUnsigned();
     local a:8   = sext(loc32);
-    local tmp:4 = *[ram]:4 XAR7;
+    local tmp:4 = *[ram]:4 pa;
     local m:8   = sext(tmp);
     local r:8   = a * m;
     pshiftProduct(P, r);
-    XAR7 = XAR7 + 2;
+    XAR7 = XAR7 + (xar7_pstep << 1);
+}
+# MAC P,loc16,*XAR7 / *XAR7++   0x5607 ; word2 mode|loc16 (0xC7 / 0x87, the same
+# selector byte as DMAC/QMACL/IMACL). dis2000: `MAC P, *XAR4++, *XAR7` = 5607 c784.
+# SPRU430F p.244: ACC = ACC + P<<PM; T = [loc16]; P = signed T * signed Prog[*XAR7];
+# post-increment by 1 (16-bit operand). Had no constructor, so the second word decoded as
+# an instruction of its own. P<<PM is the plain model, like its *pma sibling (mac.sinc):
+# the 16-bit MAC family is not paired on pm_shift.
+macro macXar7(pa) {
+    local b:4 = P;
+    $(C) = carry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
+    ACC = ACC + b;
+    applyOvcSigned(ovf, ACC);
+    applyOvmSaturateSigned(ovf, ACC);
+    setNZ32(ACC);
+    local pv:2 = *[ram]:2 pa;
+    P = sext(T) * sext(pv);
+}
+:MAC Preg, loc16, "*XAR7"  is rpt_phase=1 & op16=0x5607 ; xar7_mode=0xC7 & loc16 & Preg {
+    local pa:4 = XAR7;
+    build loc16;
+    T = loc16;
+    macXar7(pa);
+}
+:MAC Preg, loc16, "*XAR7++"  is rpt_phase=1 & op16=0x5607 ; xar7_mode=0x87 & loc16 & Preg & xar7_pstep {
+    local pa:4 = XAR7;
+    build loc16;
+    T = loc16;
+    macXar7(pa);
+    XAR7 = XAR7 + xar7_pstep;
 }
 # Square-and-accumulate (MAC-style; 2-word, loc16 in word2). dis2000-confirmed.
 # SQRA: ACC += P (PM=0); T=[loc16]; P = T*T.  SQRS: ACC -= P; T=[loc16]; P = T*T.
@@ -775,6 +846,14 @@ macro normAcc() {
     local take:1 = CC;
     if (take == 0) goto inst_next;
     loc16 = zext(imm8_hi:1);
+}
+# @AH / @AL destination: SPRU430F p.288 tests the moved AX for N and Z when the condition
+# holds, and only then.
+:MOVB loc16, "#"imm8_hi, CC  is rpt_phase=1 & op_hi8=0x56 & loc_hi4=0b1011 & cond4 & CC & ctx_AMODE=0 ; (loc_full8=0xA8 | loc_full8=0xA9) & loc16 & imm8_hi {
+    local take:1 = CC;
+    if (take == 0) goto inst_next;
+    loc16 = zext(imm8_hi:1);
+    setNZ16(loc16);
 }
 
 # =============================================================================
@@ -1085,6 +1164,14 @@ macro arp_xar_ptr(p) {
     if (AXb0 s>= m) goto inst_next;
     $(V) = 1;
     AXb0 = m;
+}
+# MOV PM,AX  0101 0110 0011 100A  (dis2000: 5638 = MOV PM,AL, 5639 = MOV PM,AH). SPRU430F
+# p.275: PM = AX(2:0), the RAW field, decoded into PM's signed shift as the ST0 unpack does.
+# Had no constructor. TMS320C28xPmShiftAnalyzer treats any instruction whose results include
+# PM as a barrier, so this ends an SPM proof like POP ST0 does.
+:MOV "PM", AXb0  is rpt_phase=1 & op_hi8=0x56 & op_lo71=0b0011100 & AXb0  {
+    local raw:1 = AXb0:1 & 7;
+    decodePM(raw);
 }
 # FLIP AX  0101 0110 0111 000A  (bit-reverse AL/AH). dis2000-confirmed (0x5670/0x5671 —
 # previously MIS-DECODED as the 2-word MAX, which consumed an extra word and skewed flow).

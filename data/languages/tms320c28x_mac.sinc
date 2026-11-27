@@ -143,9 +143,10 @@
 }
 
 # MAC P,loc16,0:pma 0001 0100 LLLL LLLL : pma word
-# Multiply-accumulate: ACC += P (shifted by PM, approximated >>0); P = loc16 * (*pma).
-# The second word is the low 16 bits of a program-memory address (0:pma). We model
-# the accumulate of the previous product and the new product load.
+# Multiply-accumulate: ACC += P (shifted by PM, approximated >>0); T = loc16;
+# P = T * (*pma). The second word is the low 16 bits of a program-memory address (0:pma).
+# SPRU430F p.243 loads T as step 2; that write was missing, so code reading T after a MAC
+# (a following MPY T,... or MOV loc16,T) saw a stale value.
 :MAC Preg, loc16, "*"imm16  is rpt_phase=1 & op_hi8=0x14 & Preg & loc16 ; imm16  {
     local b:4 = P;
     $(C) = carry(ACC, b);
@@ -157,7 +158,8 @@
     setNZ32(ACC);
     local pma:4 = zext(imm16:2);
     local pv:2 = *[ram]:2 pma;
-    local a:4 = sext(loc16);
+    T = loc16;
+    local a:4 = sext(T);
     local mb:4 = sext(pv);
     P = a * mb;
 }

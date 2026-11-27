@@ -1,0 +1,23 @@
+# MOV PM,AX and MAC P,loc16,*XAR7[++] had no constructor; the dual-memory MAC lines put a
+# loc operand on XAR7 (SPRU430F: the loc field wins the conflict, which is semantics, not
+# rendering -- see EmuDualMacXar7Test). The MOVB/MOVU/MOV lines hit the @AH/@AL
+# constructors that set N/Z. Bytes from cl2000 -v28; every decode checked against dis2000,
+# which prints the @AX destinations without the "@".
+0x0	3856	MOV PM,AL
+0x1	3956	MOV PM,AH
+0x2	075684c7	MAC P,*XAR4++,*XAR7
+0x4	07560587	MAC P,@0x5,*XAR7++
+0x6	075687c7	MAC P,*XAR7++,*XAR7
+0x8	0756c787	MAC P,*+XAR7[0x0],*XAR7++
+0xa	07568f87	MAC P,*--XAR7,*XAR7++
+0xc	07564387	MAC P,*-SP[0x3],*XAR7++
+0xe	4d568787	IMACL P,*XAR7++,*XAR7++
+0x10	4b568f87	DMAC ACC:P,*--XAR7,*XAR7++
+0x12	4f5687c7	QMACL P,*XAR7++,*XAR7
+0x14	b156a980	MOVB @AL,#0x80,EQ
+0x16	bf56a800	MOVB @AH,#0x0,UNC
+0x18	b056a912	MOVB @AL,#0x12,NEQ
+0x1a	2856a900	MOVU @AL,OVC
+0x1c	2856a800	MOVU @AH,OVC
+0x1e	2956a900	MOV @AL,OVC
+0x20	2956a800	MOV @AH,OVC

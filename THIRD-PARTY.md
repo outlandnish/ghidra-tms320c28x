@@ -247,6 +247,23 @@ Files adapted so far:
   titles it "Store the P Register", against "Store Lower Half of *Shifted* P Register" for
   `MOV loc16,P`. Telling them apart needs the raw printed text, since `MOVL ACC,P` (shifted)
   and `MOVL @ACC,P` (not) differ only by the `@` that the field helpers strip.
+- **`data/languages/tms320c28x_ext56.sinc`** (partial) and **`data/languages/tms320c28x_more.sinc`**
+  (partial, the `decodePM` macro) — core fixes from their September 2026 batch:
+  - `2b8428d` — `MOV PM,AX` through a raw-to-signed PM decode shared with the ST0 unpack.
+    Here it was a missing constructor (0x5638/0x5639), not a wrong one.
+  - `2d4b325` — the dual-memory MAC rule that the loc field wins XAR7 conflicts: latch the
+    program address before `build loc`, and drop the program-side step when the loc mode
+    moves XAR7. Applied to `DMAC`, `QMACL`, `IMACL`, and the new `MAC P,loc16,*XAR7[++]`
+    (0x5607, also a missing constructor). Their `xar7_prog_step` table also covers
+    ARP-indirect modes with ARP=7. This model resolves those through XAR0 and never names
+    XAR7, so `xar7_pstep` matches only `*XAR7++` / `*--XAR7`.
+  - `f92fadf` / `194a648` — N/Z when the destination of `MOVB loc16,#8bit,COND`,
+    `MOVU loc16,OVC` or `MOV loc16,OVC` is `@AH` / `@AL`. The zero-extension and 6-bit mask
+    halves of those commits were already in place here.
+
+  Found while porting, not in theirs: `MAC P,loc16,0:pma` never loaded T (SPRU430F step
+  2). Pinned by `tests/mac_xar7` (18 decodes, all checked against dis2000) and
+  `EmuDualMacXar7Test` (23 cases, 34 checks fail on the previous spec).
 - **`data/languages/tms320c28x.sinc`** (partial, the `mext_value` / `mext` /
   `mov_acc_mext_shift` macros) and the `MOV` / `ADD` / `SUB ACC,{loc16|#imm16}<<shift`
   constructors in **`_more.sinc`** and **`_ext56.sinc`** that call them — port of
@@ -493,6 +510,11 @@ to the default one. Measured over the same two images as #75 (DIR / PMR):
   has SP 16-bit; the 32-bit `SP` register here is a Ghidra stack-pointer requirement), so
   a wider delta would be the modelling artifact, not the fix.
 
+- **`MOV XARn,PC` as `inst_start`** (`cf94224`) — kept as `inst_next`. SPRU430F's own
+  example (`MOV XAR5,PC ; SUBB XAR5,#($−TableA) ; MOVL ACC,*+XAR5[2]` loads CONST2) only
+  works out if XAR5 holds the address of the following SUBB. The rest of that commit
+  (return addresses in word units) is convergent; see below.
+
 Convergent, so nothing to adopt:
 
 - **`33fe70b`** ("Keep RPTB loop-back addresses in word units") — the same defect this
@@ -515,6 +537,17 @@ Convergent, so nothing to adopt:
   driven by `tests/run_assembler_check.{sh,ps1}`, rewritten for this repo's harness layout
   (PyGhidra standalone → headless Java script) and extended with a round trip through our
   own disassembler, which their matrix does not cover. No code taken. See #76.
+
+- **Their September–November 2026 batch, the rest of it.** These were either already
+  correct here or adopted from this module: the `SBF` conditions (`24b7475`), the
+  `== 0` / `!= 0` flag-test style (`19e72ab`), word-unit return addresses on
+  `LC`/`LCR`/`FFC`/`XCALL` (`cf94224`), 16-bit `ADD`/`SUB`/`INC`/`DEC` carry and sticky V
+  (`5faa535`), the reversed `TBIT loc16,T` index (`4f24f55`), the `MOV DP,#10bit` mask
+  (`bc697e5`), the FFC helper CFG closure (`d7f585d`), `MAXCUL` (`d711462`), `IMACL` /
+  `IMPYSL` status (`40f45f3`), `ADDL`/`SUBL`/`SUBRL loc32,ACC` flags (`39b497c`, which
+  here also has OVC/OVM), `ASR AX` / `LSLL ACC,T` carry (`a6e99df`) and the plain `NOP`
+  assembly (`7fee548`). `0853272` changes their device-profile script, whose profile
+  format this module does not share.
 
 Deferred (tracked as a follow-up):
 
