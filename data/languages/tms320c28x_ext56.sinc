@@ -366,8 +366,11 @@ macro normAcc() {
     local a:8 = sext(XT); local b:8 = sext(loc32); local r:8 = a * b; ACC = r:4;  # low 32
     setNZ32(ACC);  # SPRU430F: N,Z on the ACC-writing form (was missing)
 }
-:IMPYL Preg, XTreg, loc32    is rpt_phase=1 & op16=0x5605 ; loc32 & Preg & XTreg {
+:IMPYL Preg, XTreg, loc32    is rpt_phase=1 & pm_shift=0 & op16=0x5605 ; loc32 & Preg & XTreg {
     local a:8 = sext(XT); local b:8 = sext(loc32); local r:8 = a * b; P = r:4;
+}
+:IMPYL Preg, XTreg, loc32    is rpt_phase=1 & pm_shift=1 & op16=0x5605 ; loc32 & Preg & XTreg {
+    local a:8 = sext(XT); local b:8 = sext(loc32); local r:8 = a * b; pshiftProduct(P, r);
 }
 :QMPYL ACCreg, XTreg, loc32  is rpt_phase=1 & op16=0x5663 ; loc32 & ACCreg & XTreg {
     local a:8 = sext(XT); local b:8 = sext(loc32); local r:8 = (a * b) >> 32; ACC = r:4;  # high 32
@@ -388,8 +391,11 @@ macro normAcc() {
 # IMPYXUL P,XT,loc32  0x5665  (SIGNED XT x UNSIGNED loc32, LOWER 32 -> P). dis2000-confirmed
 # (PCS411 image, word 0x95a43 — in a QMPYXUL/IMPYL extended-precision multiply). Mixed-sign,
 # low half: sext(XT) * zext(loc32).
-:IMPYXUL Preg, XTreg, loc32  is rpt_phase=1 & op16=0x5665 ; loc32 & Preg & XTreg {
+:IMPYXUL Preg, XTreg, loc32  is rpt_phase=1 & pm_shift=0 & op16=0x5665 ; loc32 & Preg & XTreg {
     local a:8 = sext(XT); local b:8 = zext(loc32); local r:8 = a * b; P = r:4;  # low 32 -> P
+}
+:IMPYXUL Preg, XTreg, loc32  is rpt_phase=1 & pm_shift=1 & op16=0x5665 ; loc32 & Preg & XTreg {
+    local a:8 = sext(XT); local b:8 = zext(loc32); local r:8 = a * b; pshiftProduct(P, r);
 }
 # =============================================================================
 # 32x32 multiply-accumulate forms. Same word1=0x56<sub> / word2=loc32 shape as
@@ -401,6 +407,13 @@ macro normAcc() {
 # IMPYAL adds P as UNSIGNED (ignoring PM) and counts on unsigned carry (OVCU); its
 # spec sheet is explicit that OVM does not gate OVCU -- the applyOvcUnsigned macro
 # was fixed to match while this batch was in flight.
+#
+# PM is ignored on the READ of P but applied on the WRITE: the low-38-bit products
+# (IMPYL P, IMPYXUL, IMPYAL, IMPYSL, IMACL) store the PM-selected window of the 64-bit
+# result. Each comes in a pm_shift pair like ADDL ACC,P<<PM in _mac.sinc: pm_shift=0
+# stores the low 32 bits (PM=0, the C runtime default), and pm_shift=1 -- set by
+# TMS320C28xPmShiftAnalyzer where an SPM proves PM non-zero -- applies pshiftProduct.
+# The Q forms (QMPYAL/QMPYSL/QMPYL/QMACL) store the upper 32 bits and ignore PM.
 # =============================================================================
 :QMPYAL Preg, XTreg, loc32  is rpt_phase=1 & op16=0x5646 ; loc32 & Preg & XTreg {
     local b:4 = P;
@@ -424,7 +437,7 @@ macro normAcc() {
     setNZ32(ACC);
     local a:8 = sext(XT); local m:8 = sext(loc32); local r:8 = (a * m) >> 32; P = r:4;
 }
-:IMPYAL Preg, XTreg, loc32  is rpt_phase=1 & op16=0x564C ; loc32 & Preg & XTreg {
+:IMPYAL Preg, XTreg, loc32  is rpt_phase=1 & pm_shift=0 & op16=0x564C ; loc32 & Preg & XTreg {
     local b:4 = P;
     $(C) = carry(ACC, b);
     local ovf:1 = scarry(ACC, b);
@@ -434,11 +447,22 @@ macro normAcc() {
     applyOvcUnsigned();
     local a:8 = sext(XT); local m:8 = sext(loc32); local r:8 = a * m; P = r:4;
 }
-# IMPYSL 0x5643  ACC -= P;  P = sXT * s[loc32] (low 32); N/Z/C/V + UNSIGNED OVCU borrow.
-# The subtract twin of IMPYAL (SPRU430F p.205), modelled the same way: P is subtracted as
-# unsigned ignoring PM, and the new P is the low 32 bits of the product (PM shift not
-# applied, as in IMPYAL). Was <UNDEF>; its loc32 word then decoded as an opcode.
-:IMPYSL Preg, XTreg, loc32  is rpt_phase=1 & op16=0x5643 ; loc32 & Preg & XTreg {
+:IMPYAL Preg, XTreg, loc32  is rpt_phase=1 & pm_shift=1 & op16=0x564C ; loc32 & Preg & XTreg {
+    local b:4 = P;
+    $(C) = carry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
+    ACC = ACC + b;
+    setNZ32(ACC);
+    applyOvcUnsigned();
+    local a:8 = sext(XT); local m:8 = sext(loc32); local r:8 = a * m; pshiftProduct(P, r);
+}
+# IMPYSL 0x5643  ACC -= P;  P = sXT * s[loc32] (low 38, PM window); N/Z/C/V + UNSIGNED OVCU
+# borrow. The subtract twin of IMPYAL (SPRU430F p.205), modelled the same way: P is
+# subtracted as unsigned ignoring PM, and the new P is the PM-selected window of the
+# product (pm_shift pair, see above). No OVM row: OVM does not saturate. Was <UNDEF>; its
+# loc32 word then decoded as an opcode.
+:IMPYSL Preg, XTreg, loc32  is rpt_phase=1 & pm_shift=0 & op16=0x5643 ; loc32 & Preg & XTreg {
     local b:4 = P;
     $(C) = !(ACC < b);
     local ovf:1 = sborrow(ACC, b);
@@ -447,6 +471,16 @@ macro normAcc() {
     setNZ32(ACC);
     applyOvcuBorrow();
     local a:8 = sext(XT); local m:8 = sext(loc32); local r:8 = a * m; P = r:4;
+}
+:IMPYSL Preg, XTreg, loc32  is rpt_phase=1 & pm_shift=1 & op16=0x5643 ; loc32 & Preg & XTreg {
+    local b:4 = P;
+    $(C) = !(ACC < b);
+    local ovf:1 = sborrow(ACC, b);
+    $(V) = $(V) | ovf;
+    ACC = ACC - b;
+    setNZ32(ACC);
+    applyOvcuBorrow();
+    local a:8 = sext(XT); local m:8 = sext(loc32); local r:8 = a * m; pshiftProduct(P, r);
 }
 # =============================================================================
 # DMAC / QMACL / IMACL — 32-bit MAC forms with two syntax variants each. Word 2
@@ -538,7 +572,7 @@ macro normAcc() {
     P = r:4;
     XAR7 = XAR7 + 2;
 }
-:IMACL "P,"loc32",*XAR7"  is rpt_phase=1 & op16=0x564D ; xar7_mode=0xC7 & loc32 {
+:IMACL "P,"loc32",*XAR7"  is rpt_phase=1 & pm_shift=0 & op16=0x564D ; xar7_mode=0xC7 & loc32 {
     local b:4 = P;
     $(C) = carry(ACC, b);
     local ovf:1 = scarry(ACC, b);
@@ -550,9 +584,23 @@ macro normAcc() {
     local tmp:4 = *[ram]:4 XAR7;
     local m:8   = sext(tmp);
     local r:8   = a * m;
-    P = r:4;   # low 32 bits (PM=0 modeled)
+    P = r:4;   # low 32 bits (PM=0; pm_shift=1 twin below)
 }
-:IMACL "P,"loc32",*XAR7++"  is rpt_phase=1 & op16=0x564D ; xar7_mode=0x87 & loc32 {
+:IMACL "P,"loc32",*XAR7"  is rpt_phase=1 & pm_shift=1 & op16=0x564D ; xar7_mode=0xC7 & loc32 {
+    local b:4 = P;
+    $(C) = carry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
+    ACC = ACC + b;
+    setNZ32(ACC);
+    applyOvcUnsigned();
+    local a:8   = sext(loc32);
+    local tmp:4 = *[ram]:4 XAR7;
+    local m:8   = sext(tmp);
+    local r:8   = a * m;
+    pshiftProduct(P, r);
+}
+:IMACL "P,"loc32",*XAR7++"  is rpt_phase=1 & pm_shift=0 & op16=0x564D ; xar7_mode=0x87 & loc32 {
     local b:4 = P;
     $(C) = carry(ACC, b);
     local ovf:1 = scarry(ACC, b);
@@ -565,6 +613,21 @@ macro normAcc() {
     local m:8   = sext(tmp);
     local r:8   = a * m;
     P = r:4;
+    XAR7 = XAR7 + 2;
+}
+:IMACL "P,"loc32",*XAR7++"  is rpt_phase=1 & pm_shift=1 & op16=0x564D ; xar7_mode=0x87 & loc32 {
+    local b:4 = P;
+    $(C) = carry(ACC, b);
+    local ovf:1 = scarry(ACC, b);
+    $(V) = $(V) | ovf;
+    ACC = ACC + b;
+    setNZ32(ACC);
+    applyOvcUnsigned();
+    local a:8   = sext(loc32);
+    local tmp:4 = *[ram]:4 XAR7;
+    local m:8   = sext(tmp);
+    local r:8   = a * m;
+    pshiftProduct(P, r);
     XAR7 = XAR7 + 2;
 }
 # Square-and-accumulate (MAC-style; 2-word, loc16 in word2). dis2000-confirmed.

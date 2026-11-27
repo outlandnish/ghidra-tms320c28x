@@ -21,6 +21,7 @@ public class EmuImpyslTest extends GhidraScript {
     private static final long LOC_SP1 = 0x41L;      // *-SP[1] loc32 selector
 
     private int failures = 0;
+    private long preV = 0;          // V before the step; V is sticky, so 0 except the sticky case
     private long codeCursor = CODE;
 
     @Override
@@ -37,9 +38,14 @@ public class EmuImpyslTest extends GhidraScript {
                 "IMPYSL : 1-2 borrows -> C=0, N=1, OVCU-1");
             check(emu, sp, 0x80000000L, 1L,          1L,          1L,          0x7fffffffL, 1L,          0,0,1,1, 0,
                 "IMPYSL : 0x80000000-1 signed overflow -> V=1, no borrow");
+            // V is sticky: a V left set by an earlier op survives a non-overflowing IMPYSL.
+            preV = 1;
+            check(emu, sp, 10L,         3L,          2L,          3L,          7L,          6L,          0,0,1,1, 0,
+                "IMPYSL : 10-3 no overflow, V=1 beforehand -> V stays 1");
+            preV = 0;
 
             if (failures == 0) {
-                println("EmuImpyslTest.java> PASS: IMPYSL ACC-=P, P=XT*[loc32], N/Z/C/V/OVCU (4 cases)");
+                println("EmuImpyslTest.java> PASS: IMPYSL ACC-=P, P=XT*[loc32], N/Z/C/V/OVCU (5 cases)");
             } else {
                 println("EmuImpyslTest.java> FAIL: " + failures + " check(s) failed");
             }
@@ -62,7 +68,7 @@ public class EmuImpyslTest extends GhidraScript {
         emu.writeRegister("N", wantN == 1 ? 0L : 1L);
         emu.writeRegister("Z", wantZ == 1 ? 0L : 1L);
         emu.writeRegister("C", wantC == 1 ? 0L : 1L);
-        emu.writeRegister("V", 0L);                     // V is sticky: only a set is observable
+        emu.writeRegister("V", preV);
         long here = codeCursor; codeCursor += 4;
         emu.writeMemoryValue(sp.getAddress(here * 2), 2, 0x5643L);
         emu.writeMemoryValue(sp.getAddress((here + 1) * 2), 2, LOC_SP1);

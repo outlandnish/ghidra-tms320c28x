@@ -72,6 +72,7 @@ Copy-Item "$Module\ghidra_scripts\EmuImpyslTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuPushPopDpSt1Test.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuMovbAccFlagsTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\ghidra_scripts\EmuAspNaspTest.java" "$ws\scripts\" -Force
+Copy-Item "$Module\ghidra_scripts\EmuPmProductWriteTest.java" "$ws\scripts\" -Force
 Copy-Item "$Module\tests\fpu_flags.bin" "$ws\" -Force
 Copy-Item "$Module\tests\fpu_cond.bin" "$ws\" -Force
 
@@ -137,6 +138,7 @@ Invoke-Suite "EmuAspNaspTest" "fpu_flags.bin"         # ASP/NASP branch-free: SP
 Invoke-Suite "EmuMovbAccFlagsTest" "fpu_flags.bin"    # MOVB ACC,#8bit sets N/Z (missed by #110)
 Invoke-Suite "EmuPushPopDpSt1Test" "fpu_flags.bin"    # PUSH/POP DP:ST1 stack layout + ST1 pack/unpack
 Invoke-Suite "EmuImpyslTest" "fpu_flags.bin"          # IMPYSL ACC-=P, P=XT*[loc32], N/Z/C/V/OVCU
+Invoke-Suite "EmuPmProductWriteTest" "fpu_flags.bin"  # IMPYL P/IMPYXUL/IMPYAL/IMPYSL/IMACL store the PM window (pm_shift=1)
 
 if ($fail -eq 0) { Write-Host "emulation semantics: OK" -ForegroundColor Green }
 else { exit 1 }
